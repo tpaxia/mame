@@ -58,8 +58,8 @@ void wd1000_device::set_sector_base(uint32_t base)
 void wd1000_device::device_start()
 {
 	// Resolve callbacks
-	m_intrq_cb.resolve();
-	m_drq_cb.resolve();
+	m_intrq_cb.resolve_safe();
+	m_drq_cb.resolve_safe();
 
 	// Allocate timers
 	m_seek_timer = timer_alloc(TIMER_SEEK);
@@ -554,7 +554,7 @@ void wd1000_device::write(offs_t offset, uint8_t data)
 				// transferred, so just start the transfer
 				// here.
 				m_buffer_index = 0;
-				m_buffer_end = 512;
+				m_buffer_end = sector_bytes();
 				set_drq();
 				break;
 			}
@@ -581,7 +581,7 @@ void wd1000_device::cmd_read_sector()
 	hard_disk_read(file, get_lbasector(), m_buffer);
 
 	m_buffer_index = 0;
-	m_buffer_end = 512;
+	m_buffer_end = sector_bytes();
 
 	m_status &= ~S_BSY;
 

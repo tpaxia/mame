@@ -50,6 +50,8 @@ E I1     Vectored interrupt error
 #include "machine/pit8253.h"
 #include "machine/ram.h"
 #include "machine/wd_fdc.h"
+#include "imagedev/harddriv.h"
+#include "machine/wd1000.h"
 #include "video/mc6845.h"
 
 #include "emupal.h"
@@ -75,6 +77,7 @@ public:
 		m_floppy0(*this, "fd1797:0:5dd"),
 		m_floppy1(*this, "fd1797:1:5dd"),
 		m_apb(*this, "apb"),
+		m_hdc(*this, "hdc"),
 		m_p_videoram(*this, "videoram"),
 		m_palette(*this, "palette")
 	{
@@ -93,6 +96,7 @@ private:
 	required_device<floppy_image_device> m_floppy0;
 	required_device<floppy_image_device> m_floppy1;
 	optional_device<m20_8086_device> m_apb;
+	optional_device<wd1000_device> m_hdc;
 
 	required_shared_ptr<uint16_t> m_p_videoram;
 	required_device<palette_device> m_palette;
@@ -664,6 +668,7 @@ void m20_state::m20_io(address_map &map)
 	map.unmap_value_high();
 
 	map(0x00, 0x07).rw(m_fd1797, FUNC(fd1797_device::read), FUNC(fd1797_device::write)).umask16(0x00ff);
+	map(0x1c0, 0x1cf).rw(m_hdc, FUNC(wd1000_device::read), FUNC(wd1000_device::write)).umask16(0x00ff);
 
 	map(0x20, 0x21).rw(FUNC(m20_state::port21_r), FUNC(m20_state::port21_w));
 
@@ -773,6 +778,19 @@ void m20_state::m20(machine_config &config)
 	FLOPPY_CONNECTOR(config, "fd1797:0", m20_floppies, "5dd", m20_state::floppy_formats);
 	FLOPPY_CONNECTOR(config, "fd1797:1", m20_floppies, "5dd", m20_state::floppy_formats);
 
+	WD1000(config, m_hdc, 20_MHz_XTAL / 4);
+	
+	/*
+	 default hard drive is 9Mb (180,6,33), 256 bytes per sector
+	 Bad block table at CHS 0 0 1
+	 Format: 
+	 	1st byte = number of bad blocks
+		2nd byte = 0xff
+		List of Bad blocks (4 bytes per block) follows
+		| CYL L | CYL H| x x x S1 S0 S4 S3 S2  |  HEAD | 
+	*/
+	HARDDISK(config, "hdc:0", 0);
+	
 	mc6845_device &crtc(MC6845(config, "crtc", PIXEL_CLOCK/8)); /* hand tuned to get ~50 fps */
 	crtc.set_screen("screen");
 	crtc.set_show_border_area(false);

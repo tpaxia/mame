@@ -1618,7 +1618,7 @@ void z8002_device::Z0D_ddN0_0000()
 	uint32_t addr = addr_from_reg(dst);
 	WRMEM_W(space, addr, COMW(RDMEM_W(space, addr)));
 }
-
+ 
 /******************************************
  cp      @rd,imm16
  flags:  CZSV--
@@ -1878,7 +1878,7 @@ void z8002_device::Z18_ssN0_dddd()
 {
 	GET_DST(OP0,NIB3);
 	GET_SRC(OP0,NIB2);
-	RQ(dst) = MULTL(RQ(dst), RL(src)); //@@@
+	RQ(dst) = MULTL(RQ(dst), RDIR_L(src));
 }
 
 /******************************************
