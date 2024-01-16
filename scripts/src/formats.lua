@@ -1391,6 +1391,20 @@ if opt_tool(FORMATS, "MTX_DSK") then
 	}
 end
 
+
+--------------------------------------------------
+--
+--@src/lib/formats/mcz_dsk.h,FORMATS["MCZ_DSK"] = true
+--------------------------------------------------
+
+if opt_tool(FORMATS, "MCZ_DSK") then
+	files {
+		MAME_DIR.. "src/lib/formats/mcz_dsk.cpp",
+		MAME_DIR.. "src/lib/formats/mcz_dsk.h",
+	}
+end
+
+
 --------------------------------------------------
 --
 --@src/lib/formats/mz_cas.h,FORMATS["MZ_CAS"] = true

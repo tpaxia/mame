@@ -1273,6 +1273,25 @@ if (BUSES["ELECTRON"]~=null) then
 	}
 end
 
+---------------------------------------------------
+--
+--@src/devices/bus/mcz/sysbus.h,BUSES["MCZ_SYSBUS"] = true
+---------------------------------------------------
+
+if (BUSES["MCZ_SYSBUS"]~=null) then
+	files {
+		MAME_DIR .. "src/devices/bus/mcz/sysbus.cpp",
+		MAME_DIR .. "src/devices/bus/mcz/sysbus.h",
+		MAME_DIR .. "src/devices/bus/mcz/z80_mcb.cpp",
+		MAME_DIR .. "src/devices/bus/mcz/z80_mcb.h",
+		MAME_DIR .. "src/devices/bus/mcz/z8000_mcb.cpp",
+		MAME_DIR .. "src/devices/bus/mcz/z8000_mcb.h",
+		MAME_DIR .. "src/devices/bus/mcz/mdc.cpp",
+		MAME_DIR .. "src/devices/bus/mcz/mdc.h",
+		MAME_DIR .. "src/devices/bus/mcz/modules.cpp",
+		MAME_DIR .. "src/devices/bus/mcz/modules.h",
+	}
+end
 
 ---------------------------------------------------
 --

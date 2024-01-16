@@ -1878,7 +1878,8 @@ void z8002_device::Z18_ssN0_dddd()
 {
 	GET_DST(OP0,NIB3);
 	GET_SRC(OP0,NIB2);
-	RQ(dst) = MULTL(RQ(dst), RL(src)); //@@@
+	printf("MULTL\n");getchar();
+	RQ(dst) = MULTL(RQ(dst), RDIR_L(src));
 }
 
 /******************************************
@@ -2581,7 +2582,6 @@ void z8002_device::Z3A_ssss_0001_0000_aaaa_dddd_x000()
 	GET_CCC(OP1,NIB3);
 	WRIR_B(dst, RDPORT_B( 1, RW(src)));
 	RW(dst)++;
-	RW(src)++;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
 
@@ -2615,7 +2615,6 @@ void z8002_device::Z3A_ssss_0011_0000_aaaa_dddd_x000()
 	GET_DST(OP1,NIB2);
 	GET_CCC(OP1,NIB3);
 	WRPORT_B( 1, RW(dst), RDIR_W(src));
-	RW(dst)++;
 	RW(src)++;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
@@ -2682,7 +2681,6 @@ void z8002_device::Z3A_ssss_1000_0000_aaaa_dddd_x000()
 	GET_CCC(OP1,NIB3);
 	WRIR_B(dst, RDPORT_B( 0, RW(src)));
 	RW(dst)--;
-	RW(src)--;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
 
@@ -2700,7 +2698,6 @@ void z8002_device::Z3A_ssss_1001_0000_aaaa_dddd_x000()
 	GET_CCC(OP1,NIB3);
 	WRIR_B(dst, RDPORT_B( 1, RW(src)));
 	RW(dst)--;
-	RW(src)--;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
 
@@ -2717,7 +2714,6 @@ void z8002_device::Z3A_ssss_1010_0000_aaaa_dddd_x000()
 	GET_DST(OP1,NIB2);
 	GET_CCC(OP1,NIB3);
 	WRPORT_B( 0, RW(dst), RDIR_B(src));
-	RW(dst)--;
 	RW(src)--;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
@@ -2735,7 +2731,6 @@ void z8002_device::Z3A_ssss_1011_0000_aaaa_dddd_x000()
 	GET_DST(OP1,NIB2);
 	GET_CCC(OP1,NIB3);
 	WRPORT_B( 1, RW(dst), RDIR_B(src));
-	RW(dst)--;
 	RW(src)--;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
@@ -2754,7 +2749,6 @@ void z8002_device::Z3B_ssss_0000_0000_aaaa_dddd_x000()
 	GET_CCC(OP1,NIB3);
 	WRIR_W(dst, RDPORT_W( 0, RW(src)));
 	RW(dst) += 2;
-	RW(src) += 2;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
 
@@ -2772,7 +2766,6 @@ void z8002_device::Z3B_ssss_0001_0000_aaaa_dddd_x000()
 	GET_CCC(OP1,NIB3);
 	WRIR_W(dst, RDPORT_W( 1, RW(src)));
 	RW(dst) += 2;
-	RW(src) += 2;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
 
@@ -2789,7 +2782,6 @@ void z8002_device::Z3B_ssss_0010_0000_aaaa_dddd_x000()
 	GET_DST(OP1,NIB2);
 	GET_CCC(OP1,NIB3);
 	WRPORT_W( 0, RW(dst), RDIR_W(src));
-	RW(dst) += 2;
 	RW(src) += 2;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
@@ -2807,7 +2799,6 @@ void z8002_device::Z3B_ssss_0011_0000_aaaa_dddd_x000()
 	GET_DST(OP1,NIB2);
 	GET_CCC(OP1,NIB3);
 	WRPORT_W( 1, RW(dst), RDIR_W(src));
-	RW(dst) += 2;
 	RW(src) += 2;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
@@ -2874,7 +2865,6 @@ void z8002_device::Z3B_ssss_1000_0000_aaaa_dddd_x000()
 	GET_CCC(OP1,NIB3);
 	WRIR_W(dst, RDPORT_W( 0, RW(src)));
 	RW(dst) -= 2;
-	RW(src) -= 2;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
 
@@ -2892,7 +2882,6 @@ void z8002_device::Z3B_ssss_1001_0000_aaaa_dddd_x000()
 	GET_CCC(OP1,NIB3);
 	WRIR_W(dst, RDPORT_W( 1, RW(src)));
 	RW(dst) -= 2;
-	RW(src) -= 2;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
 
@@ -2909,7 +2898,6 @@ void z8002_device::Z3B_ssss_1010_0000_aaaa_dddd_x000()
 	GET_DST(OP1,NIB2);
 	GET_CCC(OP1,NIB3);
 	WRPORT_W( 0, RW(dst), RDIR_W(src));
-	RW(dst) -= 2;
 	RW(src) -= 2;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
@@ -2927,7 +2915,6 @@ void z8002_device::Z3B_ssss_1011_0000_aaaa_dddd_x000()
 	GET_DST(OP1,NIB2);
 	GET_CCC(OP1,NIB3);
 	WRPORT_W( 1, RW(dst), RDIR_W(src));
-	RW(dst) -= 2;
 	RW(src) -= 2;
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
@@ -3275,7 +3262,7 @@ void z8002_device::Z4B_ssN0_dddd_addr()
 void z8002_device::Z4C_0000_0000_addr()
 {
 	GET_ADDR(OP1);
-	WRMEM_B(m_data,  addr, COMB(RDMEM_W(m_data, addr)));
+	WRMEM_B(m_data,  addr, COMB(RDMEM_B(m_data, addr)));
 }
 
 /******************************************
@@ -5614,7 +5601,7 @@ void z8002_device::ZAF_dddd_cccc()
 {
 	GET_CCC(OP0,NIB3);
 	GET_DST(OP0,NIB2);
-	uint16_t tmp = RW(dst) & ~1;
+	uint16_t tmp = RW(dst);// & ~1;
 	switch (cc) {
 		case  0: if (CC0) tmp |= 1; break;
 		case  1: if (CC1) tmp |= 1; break;
