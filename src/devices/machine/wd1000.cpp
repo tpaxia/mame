@@ -538,7 +538,7 @@ void wd1000_device::write(offs_t offset, uint8_t data)
 				// transferred, so just start the transfer
 				// here.
 				m_buffer_index = 0;
-				m_buffer_end = 512;
+				m_buffer_end = sector_bytes();
 				set_drq();
 				break;
 			}
@@ -572,7 +572,7 @@ void wd1000_device::cmd_read_sector()
 	file->read(get_lbasector(), m_buffer);
 
 	m_buffer_index = 0;
-	m_buffer_end = 512;
+	m_buffer_end = sector_bytes();
 
 	m_status &= ~S_BSY;
 
@@ -610,13 +610,14 @@ void wd1000_device::cmd_format_sector()
 {
 	harddisk_image_device *file = m_drives[drive()];
 	uint8_t buffer[512];
+	int bytes = sector_bytes();
 
 	// The m_buffer appears to be loaded with an interleave table which is
 	// not used here. The sectors are zero filled.
 
 	for (int i = 0; i < m_sector_count; i++)
 	{
-		std::fill(std::begin(buffer), std::end(buffer), 0);
+		std::fill(buffer, buffer + bytes, 0);
 		file->write(get_lbasector(), buffer);
 	}
 
