@@ -5672,7 +5672,7 @@ void z8002_device::ZB1_dddd_0000()
 void z8002_device::ZB1_dddd_0111()
 {
 	GET_DST(OP0,NIB2);
-	RQ(dst) = (int64_t)(int32_t)RQ(dst);
+	RL(dst) = (int32_t)RL(dst + 2) < 0 ? 0xffffffffUL : 0x00000000UL;
 }
 
 /******************************************
