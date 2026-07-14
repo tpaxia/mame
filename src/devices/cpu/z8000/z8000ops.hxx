@@ -1877,7 +1877,9 @@ void z8002_device::Z18_00N0_dddd_imm32()
 {
 	GET_DST(OP0,NIB3);
 	GET_IMM32;
-	RQ(dst) = MULTL(RQ(dst), imm32);
+	uint64_t result = MULTL((uint32_t)RL(dst), imm32);
+	RL(dst) = (uint32_t)(result >> 32);
+	RL(dst+2) = (uint32_t)(result & 0xffffffff);
 }
 
 /******************************************
@@ -1888,7 +1890,9 @@ void z8002_device::Z18_ssN0_dddd()
 {
 	GET_DST(OP0,NIB3);
 	GET_SRC(OP0,NIB2);
-	RQ(dst) = MULTL(RQ(dst), RL(src)); //@@@
+	uint64_t result = MULTL((uint32_t)RL(dst), RDIR_L(src));
+	RL(dst) = (uint32_t)(result >> 32);
+	RL(dst+2) = (uint32_t)(result & 0xffffffff);
 }
 
 /******************************************
@@ -1921,7 +1925,10 @@ void z8002_device::Z1A_0000_dddd_imm32()
 {
 	GET_DST(OP0,NIB3);
 	GET_IMM32;
-	RQ(dst) = DIVL(RQ(dst), imm32);
+	uint64_t dividend = ((uint64_t)RL(dst) << 32) | (uint32_t)RL(dst+2);
+	uint64_t result = DIVL(dividend, imm32);
+	RL(dst) = (uint32_t)(result >> 32);
+	RL(dst+2) = (uint32_t)(result & 0xffffffff);
 }
 
 /******************************************
@@ -1932,7 +1939,10 @@ void z8002_device::Z1A_ssN0_dddd()
 {
 	GET_DST(OP0,NIB3);
 	GET_SRC(OP0,NIB2);
-	RQ(dst) = DIVL(RQ(dst), RDIR_L(src));
+	uint64_t dividend = ((uint64_t)RL(dst) << 32) | (uint32_t)RL(dst+2);
+	uint64_t result = DIVL(dividend, RDIR_L(src));
+	RL(dst) = (uint32_t)(result >> 32);
+	RL(dst+2) = (uint32_t)(result & 0xffffffff);
 }
 
 /******************************************
@@ -3798,7 +3808,9 @@ void z8002_device::Z58_0000_dddd_addr()
 {
 	GET_DST(OP0,NIB3);
 	GET_ADDR(OP1);
-	RQ(dst) = MULTL(RQ(dst), RDMEM_L(m_data, addr));
+	uint64_t result = MULTL((uint32_t)RL(dst), RDMEM_L(m_data, addr));
+	RL(dst) = (uint32_t)(result >> 32);
+	RL(dst+2) = (uint32_t)(result & 0xffffffff);
 }
 
 /******************************************
@@ -3811,7 +3823,9 @@ void z8002_device::Z58_ssN0_dddd_addr()
 	GET_SRC(OP0,NIB2);
 	GET_ADDR(OP1);
 	addr = addr_add(addr, RW(src));
-	RQ(dst) = MULTL(RQ(dst), RDMEM_L(m_data, addr));
+	uint64_t result = MULTL((uint32_t)RL(dst), RDMEM_L(m_data, addr));
+	RL(dst) = (uint32_t)(result >> 32);
+	RL(dst+2) = (uint32_t)(result & 0xffffffff);
 }
 
 /******************************************
@@ -3846,7 +3860,10 @@ void z8002_device::Z5A_0000_dddd_addr()
 {
 	GET_DST(OP0,NIB3);
 	GET_ADDR(OP1);
-	RQ(dst) = DIVL(RQ(dst), RDMEM_L(m_data, addr));
+	uint64_t dividend = ((uint64_t)RL(dst) << 32) | (uint32_t)RL(dst+2);
+	uint64_t result = DIVL(dividend, RDMEM_L(m_data, addr));
+	RL(dst) = (uint32_t)(result >> 32);
+	RL(dst+2) = (uint32_t)(result & 0xffffffff);
 }
 
 /******************************************
@@ -3859,7 +3876,10 @@ void z8002_device::Z5A_ssN0_dddd_addr()
 	GET_SRC(OP0,NIB2);
 	GET_ADDR(OP1);
 	addr = addr_add(addr, RW(src));
-	RQ(dst) = DIVL(RQ(dst), RDMEM_L(m_data, addr));
+	uint64_t dividend = ((uint64_t)RL(dst) << 32) | (uint32_t)RL(dst+2);
+	uint64_t result = DIVL(dividend, RDMEM_L(m_data, addr));
+	RL(dst) = (uint32_t)(result >> 32);
+	RL(dst+2) = (uint32_t)(result & 0xffffffff);
 }
 
 /******************************************
@@ -5293,7 +5313,9 @@ void z8002_device::Z98_ssss_dddd()
 {
 	GET_DST(OP0,NIB3);
 	GET_SRC(OP0,NIB2);
-	RQ(dst) = MULTL(RQ(dst), RL(src));
+	uint64_t result = MULTL((uint32_t)RL(dst), RL(src));
+	RL(dst) = (uint32_t)(result >> 32);
+	RL(dst+2) = (uint32_t)(result & 0xffffffff);
 }
 
 /******************************************
@@ -5315,7 +5337,10 @@ void z8002_device::Z9A_ssss_dddd()
 {
 	GET_DST(OP0,NIB3);
 	GET_SRC(OP0,NIB2);
-	RQ(dst) = DIVL(RQ(dst), RL(src));
+	uint64_t dividend = ((uint64_t)RL(dst) << 32) | (uint32_t)RL(dst+2);
+	uint64_t result = DIVL(dividend, RL(src));
+	RL(dst) = (uint32_t)(result >> 32);
+	RL(dst+2) = (uint32_t)(result & 0xffffffff);
 }
 
 /******************************************
