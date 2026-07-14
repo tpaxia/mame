@@ -5734,7 +5734,7 @@ void z8002_device::ZB2_dddd_0011_0000_ssss_0000_0000()
 {
 	GET_DST(OP0,NIB2);
 	GET_SRC(OP1,NIB1);
-	RB(dst) = SRLB(RB(dst), (int8_t)RW(src));
+	RB(dst) = SDLB(RB(dst), (int8_t)RW(src));
 }
 
 /******************************************
@@ -5870,7 +5870,7 @@ void z8002_device::ZB3_dddd_0111_0000_ssss_0000_0000()
 {
 	GET_DST(OP0,NIB2);
 	GET_SRC(OP1,NIB1);
-	RL(dst) = SDLL(RL(dst), RW(src) & 0xff);
+	RL(dst) = SDLL(RL(dst), (int8_t)RW(src));
 }
 
 /******************************************
@@ -5946,7 +5946,7 @@ void z8002_device::ZB3_dddd_1111_0000_ssss_0000_0000()
 {
 	GET_DST(OP0,NIB2);
 	GET_SRC(OP1,NIB1);
-	RL(dst) = SDAL(RL(dst), RW(src) & 0xff);
+	RL(dst) = SDAL(RL(dst), (int8_t)RW(src));
 }
 
 /******************************************
