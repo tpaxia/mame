@@ -181,11 +181,14 @@ void m40_state::mmu_w(offs_t offset, uint8_t data)
 	if (!BIT(offset, 0))
 	{
 		uint8_t reg = (uint8_t)(offset >> 8);
-		if (reg == 0x00) m_mmu_mode = data;   // shadow master-enable / translate bits
 		m_mmu->write(reg, data);
-		m_maincpu->space(AS_PROGRAM).invalidate_caches(read_or_write::READWRITE);
-		m_maincpu->space(AS_DATA).invalidate_caches(read_or_write::READWRITE);
-		m_maincpu->space(z8001_device::AS_STACK).invalidate_caches(read_or_write::READWRITE);
+		if (reg == 0x00)   // mode change -> re-map; do NOT invalidate on every
+		{                  // descriptor byte (that disrupts the SOTIRB block load)
+			m_mmu_mode = data;
+			m_maincpu->space(AS_PROGRAM).invalidate_caches(read_or_write::READWRITE);
+			m_maincpu->space(AS_DATA).invalidate_caches(read_or_write::READWRITE);
+			m_maincpu->space(z8001_device::AS_STACK).invalidate_caches(read_or_write::READWRITE);
+		}
 	}
 }
 
@@ -283,8 +286,9 @@ void m40_state::m40(machine_config &config)
 	Z8010(config, m_mmu, 32_MHz_XTAL / 8);
 
 	PIT8253(config, m_pit);
+	// ch0 (mode 2 rate gen) prescales ch1 (mode 0) — ch0 OUT -> ch1 CLK cascade
 	m_pit->set_clk<0>(32_MHz_XTAL / 16);
-	m_pit->set_clk<1>(32_MHz_XTAL / 16);
+	m_pit->out_handler<0>().set(m_pit, FUNC(pit8253_device::write_clk1));
 	m_pit->set_clk<2>(32_MHz_XTAL / 16);
 
 	RAM(config, m_ram).set_default_size("512K").set_default_value(0)
