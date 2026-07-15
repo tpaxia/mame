@@ -820,19 +820,7 @@ ROM_START(m20)
 	ROMX_LOAD("m20-20f.bin", 0x0000, 0x2000, CRC(db7198d8) SHA1(149d8513867081d31c73c2965dabb36d5f308041), ROM_BIOS(2))
 ROM_END
 
-ROM_START(m40)
-	ROM_REGION(0x14000,"maincpu", 0)
-	ROM_SYSTEM_BIOS( 0, "m40-81", "M40 15.dec.81" )
-	ROMX_LOAD( "m40rom-15-dec-81", 0x0000, 0x2000, CRC(e8e7df84) SHA1(e86018043bf5a23ff63434f9beef7ce2972d8153), ROM_BIOS(0))
-	ROM_SYSTEM_BIOS( 1, "m40-82", "M40 17.dec.82" )
-	ROMX_LOAD( "m40rom-17-dec-82", 0x0000, 0x2000, CRC(cf55681c) SHA1(fe4ae14a6751fef5d7bde49439286f1da3689437), ROM_BIOS(1))
-	ROM_SYSTEM_BIOS( 2, "m40-41", "M40 4.1" )
-	ROMX_LOAD( "m40rom-4.1", 0x0000, 0x2000, CRC(cf55681c) SHA1(fe4ae14a6751fef5d7bde49439286f1da3689437), ROM_BIOS(2))
-	ROM_SYSTEM_BIOS( 3, "m40-60", "M40 6.0" )
-	ROMX_LOAD( "m40rom-6.0", 0x0000, 0x4000, CRC(8114ebec) SHA1(4e2c65b95718c77a87dbee0288f323bd1c8837a3), ROM_BIOS(3))
-
-	ROM_REGION(0x4000, "apb_bios", ROMREGION_ERASEFF) // Processor board with 8086
-ROM_END
+// m40 moved to its own driver (olivetti/m40.cpp) — proper Z8001 + Z8010 hardware.
 
 // CPU board: Z8001BPS CPU, Z8010BPS MMU, 32MHz XTAL, P8253 PIT, MC68B50P ACIA, 1 4-dip bank, 512K RAM
 // FDC board: D765AC-2 FDC, D8237AC-5 DMAC, GA04-CF11051, TMP8253P-5, 1 4-dip bank, 1 barely readable chip (AMI8520JFT or something resembling it)
@@ -851,5 +839,4 @@ ROM_END
 
 //    YEAR  NAME  PARENT  COMPAT  MACHINE  INPUT  CLASS      INIT        COMPANY     FULLNAME           FLAGS
 COMP( 1981, m20,  0,      0,      m20,     0,     m20_state, empty_init, "Olivetti", "Olivetti L1 M20", MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
-COMP( 1981, m40,  m20,    0,      m20,     0,     m20_state, empty_init, "Olivetti", "Olivetti L1 M40", MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
 COMP( 1986, m44,  0,      0,      m20,     0,     m20_state, empty_init, "Olivetti", "Olivetti L1 M44", MACHINE_NO_SOUND | MACHINE_NOT_WORKING )
