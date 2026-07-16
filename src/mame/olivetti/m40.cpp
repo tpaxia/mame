@@ -47,6 +47,7 @@ public:
 		, m_palette(*this, "palette")
 		, m_fdc(*this, "fdc")
 		, m_floppy(*this, "fdc:0")
+		, m_fdu_timer(*this, "fdu_timer")
 		, m_rom(*this, "maincpu")
 	{ }
 
@@ -65,6 +66,7 @@ private:
 	required_device<palette_device> m_palette;
 	required_device<upd765a_device> m_fdc;
 	required_device<floppy_connector> m_floppy;
+	required_device<pit8253_device> m_fdu_timer;
 	required_region_ptr<uint16_t> m_rom;
 
 	std::unique_ptr<uint8_t[]> m_vram;   // 64 KB video window @ 0xFF0000
@@ -81,6 +83,7 @@ private:
 
 	// GO280 FDU floppy governo (slot 2): upd765 FDC + (TODO) AM9517 DMAC
 	bool    m_fdc_int = false;   // FDC INTRQ level (INTOO, reg 0xF7 bit 1)
+	bool    m_timer_int = false; // 8253 ch1 end-of-count (INTMO, reg 0xF7 bit 0)
 	bool    m_fdu_pending = false; // governo pending-interrupt latch INTP1 (edge-set, VIACK-cleared)
 	bool    m_fdu_ien = false;   // governo interrupt enable (EN100/ENSOO, reg 0xE7 bit 0)
 	uint8_t m_fdu_vector = 0;    // governo interrupt vector (VETTN, reg 0xEF)
@@ -115,6 +118,7 @@ private:
 	void     fdu_w(offs_t offset, uint8_t data);
 	void     fdc_intrq_w(int state);
 	void     fdc_drq_w(int state);
+	void     fdu_timer_out(int state);   // 8253 ch1 -> INTMO
 	void     update_fdu_irq();
 	uint16_t vi_ack_r();   // VI vector = interrupting governo's VETTN; clears INTP1
 	static void floppy_formats(format_registration &fr);
@@ -350,7 +354,9 @@ uint8_t m40_state::fdu_r(offs_t offset)
 	{
 	case 0x1d: data = m_fdc->msr_r(); break;         // uPD765 main status
 	case 0x1f: data = m_fdc->fifo_r(); break;        // uPD765 data
-	case 0xf7: data = m_fdc_int ? 0x02 : 0x00; break; // RD1NT: INTOO (FDC INTRQ level) = bit 1
+	case 0x99: case 0x9b: case 0x9d:                 // 8253 timer (ch0/ch1/ch2 read)
+		data = m_fdu_timer->read((reg >> 1) & 3); break;
+	case 0xf7: data = (m_timer_int ? 0x01 : 0) | (m_fdc_int ? 0x02 : 0); break;  // RD1NT: INTMO|INTOO
 	case 0xff: data = 0xe1;            break;        // RD1DN identifier: 0xE0 | NOM10(=1 FDU)
 	case 0xed: data = 0xff;            break;        // RDGNN diagnostic port
 	default:   data = 0xff;            break;
@@ -360,9 +366,12 @@ uint8_t m40_state::fdu_r(offs_t offset)
 
 void m40_state::fdu_w(offs_t offset, uint8_t data)
 {
-	switch (offset & 0xff)
+	uint8_t const reg = offset & 0xff;
+	switch (reg)
 	{
 	case 0x1f: m_fdc->fifo_w(data); break;           // uPD765 command/parameter
+	case 0x99: case 0x9b: case 0x9d: case 0x9f:      // 8253 timer (mode 0x9f, ch2 0x9d, ch1 0x9b, ch0 0x99)
+		m_fdu_timer->write((reg >> 1) & 3, data); break;
 	case 0xef: m_fdu_vector = data; break;           // VETTN — governo interrupt vector
 	case 0xe7:                                        // CONTR (manual 3963590 p.3-5)
 		m_fdu_ien = BIT(data, 0);                     // EN100 — interrupt-request enable
@@ -370,7 +379,7 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 		update_fdu_irq();
 		if (floppy_image_device *f = m_floppy->get_device()) f->mon_w(0);  // FDU motor runs
 		break;                                        // bit6 SCRVO dir, bit3/7 MOTO1/2 (MFDU)
-	default: break;                                   // TODO: AM9517 DMAC 0x40-5E, 0xF6, 8253 0x9x
+	default: break;                                   // TODO: AM9517 DMAC 0x40-5E, 0xF6
 	}
 }
 
@@ -389,6 +398,16 @@ void m40_state::fdc_intrq_w(int state)
 	if (state && !m_fdc_int)     // rising edge latches INTP1
 		m_fdu_pending = true;
 	m_fdc_int = bool(state);
+	update_fdu_irq();
+}
+
+// 8253 channel-1 end-of-count = INTMO (manual §3.4): motor spin-up (500 ms),
+// motor-off (2 s), and the read/write time-out (800 ms). Same INTP1 latch path.
+void m40_state::fdu_timer_out(int state)
+{
+	if (state && !m_timer_int)
+		m_fdu_pending = true;
+	m_timer_int = bool(state);
 	update_fdu_irq();
 }
 
@@ -591,6 +610,7 @@ void m40_state::machine_start()
 	save_item(NAME(m_ff41));
 	save_item(NAME(m_vid_live));
 	save_item(NAME(m_fdc_int));
+	save_item(NAME(m_timer_int));
 	save_item(NAME(m_fdu_pending));
 	save_item(NAME(m_fdu_vector));
 }
@@ -647,6 +667,14 @@ void m40_state::m40(machine_config &config)
 	m_fdc->intrq_wr_callback().set(FUNC(m40_state::fdc_intrq_w));
 	m_fdc->drq_wr_callback().set(FUNC(m40_state::fdc_drq_w));
 	FLOPPY_CONNECTOR(config, "fdc:0", m40_floppies, "8dsdd", m40_state::floppy_formats);
+
+	// FDU on-board 8253 (manual §3.4): ch0 = ~10 ms time base from CLK10 (1 us),
+	// cascaded to ch1 which generates INTMO (motor spin-up 500 ms / rd-wr time-out
+	// 800 ms); ch2 masks the FDC index signal.
+	PIT8253(config, m_fdu_timer);
+	m_fdu_timer->set_clk<0>(1'000'000);   // CLK10 = 1 us
+	m_fdu_timer->out_handler<0>().set(m_fdu_timer, FUNC(pit8253_device::write_clk1));
+	m_fdu_timer->out_handler<1>().set(FUNC(m40_state::fdu_timer_out));   // ch1 -> INTMO
 }
 
 //**************************************************************************
