@@ -96,7 +96,10 @@ private:
 	bool    m_fdu_pending = false; // governo pending-interrupt latch INTP1 (edge-set, VIACK-cleared)
 	bool    m_fdu_ien = false;   // governo interrupt enable (EN100/ENSOO, reg 0xE7 bit 0)
 	uint8_t m_fdu_vector = 0;    // governo interrupt vector (VETTN, reg 0xEF)
-	uint8_t m_fdu_dma_hi = 0;    // ADRLN (0xF6): high byte (A16-23) of the 24-bit DMA address
+	uint8_t  m_fdu_dma_hi = 0;   // ADRLN (0xF6): high byte of the DMA *word* address
+	uint16_t m_dma_ch1 = 0;      // AM9517 ch1 = low 16 bits of the DMA word address (0x44)
+	bool     m_dma_ff = false;   // flip-flop for the two-byte 0x44 address load
+	uint32_t m_dma_byte = 0;     // running byte offset within the current transfer
 
 	// translated memory access over the whole segmented space
 	uint16_t mem_r(address_space &space, offs_t offset, uint16_t mem_mask);
@@ -130,7 +133,8 @@ private:
 	void     fdc_drq_w(int state);
 	void     dma_hreq_w(int state);           // AM9517 bus request -> hold/grant
 	void     dma_eop_w(int state);            // AM9517 EOP/TC -> FDC TC
-	uint8_t  dma_memr(offs_t offset);         // DMA physical-memory read  (24-bit via 0xF6 latch)
+	uint32_t dma_phys();                      // next DMA physical byte address
+	uint8_t  dma_memr(offs_t offset);         // DMA physical-memory read
 	void     dma_memw(offs_t offset, uint8_t data); // DMA physical-memory write
 	void     fdu_timer_out(int state);   // 8253 ch1 -> INTMO
 	void     update_fdu_irq();
@@ -401,8 +405,19 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 	case 0x48: case 0x4a: case 0x4c: case 0x4e:
 	case 0x50: case 0x52: case 0x54: case 0x56:
 	case 0x58: case 0x5a: case 0x5c: case 0x5e:
-		m_dmac->write((reg >> 1) & 0x0f, data); break;
-	case 0xf6: m_fdu_dma_hi = data; break;           // ADRLN — DMA address bits A16-23
+		// Capture the ch1 (0x44) load — it carries the real transfer address (low
+		// 16 bits of the DMA *word* address); ch2 only counts bytes. 0x58 clears
+		// the address flip-flop and starts a fresh transfer.
+		if (reg == 0x58) { m_dma_ff = false; m_dma_byte = 0; }
+		else if (reg == 0x44)
+		{
+			if (!m_dma_ff) m_dma_ch1 = (m_dma_ch1 & 0xff00) | data;
+			else           m_dma_ch1 = (m_dma_ch1 & 0x00ff) | (uint16_t(data) << 8);
+			m_dma_ff = !m_dma_ff;
+		}
+		m_dmac->write((reg >> 1) & 0x0f, data);
+		break;
+	case 0xf6: m_fdu_dma_hi = data; break;           // ADRLN — high byte of the word address
 	case 0xff:                                        // E01NT — acknowledge/reset the pending interrupt
 		m_intoo_lat = false;
 		m_intmo_lat = false;
@@ -480,14 +495,22 @@ void m40_state::dma_eop_w(int state)
 	m_fdc->tc_w(state);
 }
 
-// The AM9517A drives only the low 16 address bits; the high byte comes from the
-// ADRLN latch (0xF6), forming the 24-bit physical address (manual §3.3.4). DMA
-// bypasses the MMU and hits physical memory directly. RAM is stored big-endian
-// (byte X of a word at even A is the MS byte), so a physical byte address maps
-// straight onto the backing array.
-uint8_t m40_state::dma_memr(offs_t offset)
+// GO280's DMA uses an "anomalous" 2-channel scheme (manual §3.3.2): ch2 streams
+// the FDC bytes while ch1 (+ the 0xF6 latch) holds the *word* address, which the
+// ROM formed by shifting the byte address right by one (0f96: srll rr2,#1). So the
+// running physical byte address is (word_addr << 1) + byte_offset, incrementing per
+// byte. ch2's own AM9517 address (0xFFFF) is ignored. DMA bypasses the MMU. RAM is
+// stored big-endian (byte X of a word at even A is the MS byte), so a physical byte
+// address maps straight onto the backing array.
+uint32_t m40_state::dma_phys()
 {
-	uint32_t const addr = ((uint32_t(m_fdu_dma_hi) << 16) | offset) & 0xffffff;
+	uint32_t const base = ((uint32_t(m_fdu_dma_hi) << 16) | m_dma_ch1) << 1;
+	return (base + m_dma_byte++) & 0xffffff;
+}
+
+uint8_t m40_state::dma_memr(offs_t /*offset*/)
+{
+	uint32_t const addr = dma_phys();
 	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
 		return m_ramptr[addr - 0x010000];
 	if (addr >= 0xff0000)
@@ -497,9 +520,9 @@ uint8_t m40_state::dma_memr(offs_t offset)
 	return 0xff;
 }
 
-void m40_state::dma_memw(offs_t offset, uint8_t data)
+void m40_state::dma_memw(offs_t /*offset*/, uint8_t data)
 {
-	uint32_t const addr = ((uint32_t(m_fdu_dma_hi) << 16) | offset) & 0xffffff;
+	uint32_t const addr = dma_phys();
 	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
 		m_ramptr[addr - 0x010000] = data;
 	else if (addr >= 0xff0000)
