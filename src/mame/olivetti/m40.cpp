@@ -58,6 +58,8 @@ private:
 	uint32_t m_ramsize = 0;
 	uint8_t m_ff41 = 0;
 	uint8_t m_mmu_mode = 0;   // shadow of Z8010 mode reg (bit7 = master enable)
+	emu_timer *m_arb_timer = nullptr;
+	bool m_arb_busy = false;  // a bus-arbitration cycle is in progress
 
 	// translated memory access over the whole segmented space
 	uint16_t mem_r(address_space &space, offs_t offset, uint16_t mem_mask);
@@ -78,6 +80,12 @@ private:
 	uint8_t  ffa0_r();
 	uint8_t  pit_r(offs_t offset)            { return m_pit->read((offset >> 1) & 3); }
 	void     pit_w(offs_t offset, uint8_t d) { m_pit->write((offset >> 1) & 3, d); }
+
+	// MB15652 bus/DMA arbiter (0xFF80-8F)
+	uint8_t  arb_r(offs_t offset) { return 0; }   // grant register (stub)
+	void     arb_w(offs_t offset, uint8_t data);
+	TIMER_CALLBACK_MEMBER(arb_done);
+	uint16_t nviack_r();
 
 	void mem_map(address_map &map) ATTR_COLD {}   // empty; real handlers installed in machine_start
 	void io_map(address_map &map) ATTR_COLD;
@@ -222,6 +230,7 @@ void m40_state::io_map(address_map &map)
 	map.unmap_value_high();
 	// UC (slot 15) on-board registers, byte-wide
 	map(0xff41, 0xff41).rw(FUNC(m40_state::ff41_r), FUNC(m40_state::ff41_w));
+	map(0xff80, 0xff8f).rw(FUNC(m40_state::arb_r), FUNC(m40_state::arb_w)); // MB15652 arbiter
 	map(0xffa0, 0xffa0).r(FUNC(m40_state::ffa0_r));
 	map(0xffc0, 0xffc7).rw(FUNC(m40_state::pit_r), FUNC(m40_state::pit_w)); // 8253: 0xC1/C3/C5=ch0-2, C7=ctl
 	map(0xffe0, 0xffe0).w(FUNC(m40_state::console_w));
@@ -240,6 +249,32 @@ void m40_state::sio_map(address_map &map)
 uint16_t m40_state::segtack_r() { return m_mmu->segtack_r(); }
 uint16_t m40_state::nmiack_r()  { return 0; }
 
+// MB15652 arbiter: a request write (0xFF84-8F) starts one bus-arbitration cycle
+// (ignored while one is in progress); it completes after a fixed latency and
+// raises the NVI. 0xFF80-83 are the per-channel acknowledge registers.
+// NOTE: the latency is a plausible approximation (no MB15652 datasheet); it must
+// outlast the ROM's request-write burst. To be refined against disk-A's arbiter test.
+void m40_state::arb_w(offs_t offset, uint8_t data)
+{
+	if ((offset & 0x0f) >= 4 && !m_arb_busy)
+	{
+		m_arb_busy = true;
+		m_arb_timer->adjust(attotime::from_usec(50));
+	}
+}
+
+TIMER_CALLBACK_MEMBER(m40_state::arb_done)
+{
+	m_arb_busy = false;
+	m_maincpu->set_input_line(z8001_device::NVI_LINE, ASSERT_LINE);   // arbitration done -> NVI
+}
+
+uint16_t m40_state::nviack_r()
+{
+	m_maincpu->set_input_line(z8001_device::NVI_LINE, CLEAR_LINE);    // acknowledge
+	return 0;
+}
+
 //**************************************************************************
 //  MACHINE
 //**************************************************************************
@@ -249,6 +284,7 @@ void m40_state::machine_start()
 	m_vram = std::make_unique<uint8_t[]>(0x10000);
 	m_ramptr = m_ram->pointer();
 	m_ramsize = m_ram->size();
+	m_arb_timer = timer_alloc(FUNC(m40_state::arb_done), this);
 
 	// translating handlers over the whole 24-bit segmented byte space
 	// (installed on program / data / stack)
@@ -278,7 +314,7 @@ void m40_state::m40(machine_config &config)
 	m_maincpu->set_addrmap(AS_IO, &m40_state::io_map);
 	m_maincpu->set_addrmap(z8001_device::AS_SIO, &m40_state::sio_map);
 	m_maincpu->viack().set(FUNC(m40_state::nmiack_r));
-	m_maincpu->nviack().set(FUNC(m40_state::nmiack_r));
+	m_maincpu->nviack().set(FUNC(m40_state::nviack_r));
 
 	Z8010(config, m_mmu, 32_MHz_XTAL / 8);
 
