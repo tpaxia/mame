@@ -97,6 +97,10 @@ private:
 	void     vid_w(offs_t offset, uint8_t data);
 	MC6845_UPDATE_ROW(crtc_update_row);
 
+	// GO280 FDU floppy governo I/O (slot 2) — stub for tracing
+	uint8_t  fdu_r(offs_t offset);
+	void     fdu_w(offs_t offset, uint8_t data);
+
 	// MB15652 bus/DMA arbiter (0xFF80-8F)
 	uint8_t  arb_r(offs_t offset) { return 0; }   // grant register (stub)
 	void     arb_w(offs_t offset, uint8_t data);
@@ -248,6 +252,8 @@ void m40_state::io_map(address_map &map)
 	map.unmap_value_high();
 	// GO252 video/keyboard governo — slot 1 window (register = low byte)
 	map(0x1000, 0x1fff).rw(FUNC(m40_state::vid_r), FUNC(m40_state::vid_w));
+	// GO280 FDU floppy governo — slot 2 window
+	map(0x2000, 0x2fff).rw(FUNC(m40_state::fdu_r), FUNC(m40_state::fdu_w));
 	// UC (slot 15) on-board registers, byte-wide
 	map(0xff41, 0xff41).rw(FUNC(m40_state::ff41_r), FUNC(m40_state::ff41_w));
 	map(0xff80, 0xff8f).rw(FUNC(m40_state::arb_r), FUNC(m40_state::arb_w)); // MB15652 arbiter
@@ -307,6 +313,31 @@ void m40_state::vid_w(offs_t offset, uint8_t data)
 	}
 }
 
+// GO280 FDU floppy governo (type 0xE1) — recognition stub.
+//
+// Reporting 0xE1 at register 0xFF makes the boot select the FDU and run its full
+// init + IPL disk-read sequence (reset FDC via 0xE7, int-vector 0xEF, 8253 motor
+// timing 0x9x, then poll FDC main-status 0x1D, program the AM9517 DMAC 0x40-0x5E,
+// and spin on <<1>>0x02fc at ROM 0x06be waiting for load-complete). Booting the
+// diagnostic still needs the actual devices modelled here:
+//   TODO: upd765 FDC (0x1D main-status / 0x1F data) + i8237/am9517 DMAC (0x40-0x5E)
+//   + 0xF6 DMA high-address latch + control 0xE7 / int-status 0xF7 + a floppy with
+//   the diag_A image, DMAing the boot track into logical segment 60 and validating
+//   the "SYS0" header (see HARDWARE.md §6.3). Until then the IPL read never
+//   completes and the ROM retries.
+uint8_t m40_state::fdu_r(offs_t offset)
+{
+	switch (offset & 0xff)
+	{
+	case 0xff: return 0xe1;          // identifier -> FDU
+	default:   return 0xff;
+	}
+}
+
+void m40_state::fdu_w(offs_t offset, uint8_t data)
+{
+}
+
 // The framebuffer holds 2 bytes/cell in the seg-61 window; the character code is
 // the low (odd) byte of each big-endian word. No character-generator ROM is
 // dumped yet, so glyphs are a placeholder: non-blank cells are drawn solid so the
@@ -326,14 +357,17 @@ MC6845_UPDATE_ROW(m40_state::crtc_update_row)
 	}
 }
 
-// MB15652 arbiter: a request write (0xFF84-8F) starts one bus-arbitration cycle
-// (ignored while one is in progress); it completes after a fixed latency and
-// raises the NVI. 0xFF80-83 are the per-channel acknowledge registers.
+// MB15652 arbiter: a DMA-request write (0xFF84-87) starts one bus-arbitration
+// cycle (ignored while one is in progress); it completes after a fixed latency
+// and raises the NVI. 0xFF80-83 = per-channel acknowledge, 0xFF8C-8F = DMA
+// control (writing control must NOT trigger arbitration — the device-enumeration
+// loop writes 0xFF8C, and a spurious NVI there resumes via a stale rr12).
 // NOTE: the latency is a plausible approximation (no MB15652 datasheet); it must
 // outlast the ROM's request-write burst. To be refined against disk-A's arbiter test.
 void m40_state::arb_w(offs_t offset, uint8_t data)
 {
-	if ((offset & 0x0f) >= 4 && !m_arb_busy)
+	uint8_t const reg = offset & 0x0f;
+	if (reg >= 4 && reg <= 7 && !m_arb_busy)             // request registers only
 	{
 		m_arb_busy = true;
 		m_arb_timer->adjust(attotime::from_usec(50));
