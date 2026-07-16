@@ -101,9 +101,11 @@ private:
 
 void m40_state::ready_fault()
 {
-	// no READY -> set 0xFF41 bit 6 and pulse NMI; the ROM's NMI handler
-	// records the boundary and resumes via rr12.
-	m_ff41 |= 0x40;
+	// no READY -> NMI. The RAM-sizing NMI handler reads 0xFF41 and, when
+	// bit6 is CLEAR (a plain READY/unpopulated fault), resumes via rr12 to
+	// record the boundary; bit6 SET would make it keep scanning. Mark the
+	// NMI cause in bit7 and leave bit6 clear.
+	m_ff41 = (m_ff41 & ~0x40) | 0x80;
 	m_maincpu->set_input_line(z8001_device::NMI_LINE, ASSERT_LINE);
 }
 
