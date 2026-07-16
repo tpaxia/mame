@@ -25,6 +25,9 @@
 #include "machine/z8010.h"
 #include "machine/pit8253.h"
 #include "machine/ram.h"
+#include "machine/upd765.h"
+#include "imagedev/floppy.h"
+#include "formats/imd_dsk.h"
 #include "video/mc6845.h"
 #include "emupal.h"
 #include "screen.h"
@@ -42,6 +45,8 @@ public:
 		, m_ram(*this, RAM_TAG)
 		, m_crtc(*this, "crtc")
 		, m_palette(*this, "palette")
+		, m_fdc(*this, "fdc")
+		, m_floppy(*this, "fdc:0")
 		, m_rom(*this, "maincpu")
 	{ }
 
@@ -58,6 +63,8 @@ private:
 	required_device<ram_device> m_ram;
 	required_device<mc6845_device> m_crtc;
 	required_device<palette_device> m_palette;
+	required_device<upd765a_device> m_fdc;
+	required_device<floppy_connector> m_floppy;
 	required_region_ptr<uint16_t> m_rom;
 
 	std::unique_ptr<uint8_t[]> m_vram;   // 64 KB video window @ 0xFF0000
@@ -71,6 +78,9 @@ private:
 	// GO252 video/keyboard governo (KDC): I/O window at slot 1 (0x1000-0x1FFF,
 	// register = low byte); framebuffer is the seg-61 window (m_vram)
 	bool    m_vid_live = false;  // CRTC live-signal state exposed in status bit 3
+
+	// GO280 FDU floppy governo (slot 2): upd765 FDC + (TODO) AM9517 DMAC
+	bool    m_fdc_int = false;   // FDC INTRQ latched (reg 0xF7 / 0xFF int-pending)
 
 	// translated memory access over the whole segmented space
 	uint16_t mem_r(address_space &space, offs_t offset, uint16_t mem_mask);
@@ -97,9 +107,12 @@ private:
 	void     vid_w(offs_t offset, uint8_t data);
 	MC6845_UPDATE_ROW(crtc_update_row);
 
-	// GO280 FDU floppy governo I/O (slot 2) — stub for tracing
+	// GO280 FDU floppy governo I/O (slot 2)
 	uint8_t  fdu_r(offs_t offset);
 	void     fdu_w(offs_t offset, uint8_t data);
+	void     fdc_intrq_w(int state) { m_fdc_int = bool(state); }
+	void     fdc_drq_w(int state);
+	static void floppy_formats(format_registration &fr);
 
 	// MB15652 bus/DMA arbiter (0xFF80-8F)
 	uint8_t  arb_r(offs_t offset) { return 0; }   // grant register (stub)
@@ -313,29 +326,58 @@ void m40_state::vid_w(offs_t offset, uint8_t data)
 	}
 }
 
-// GO280 FDU floppy governo (type 0xE1) — recognition stub.
+// GO280 FDU floppy governo (type 0xE1). The µPD765 FDC (P8272) is wired to the
+// governo's register window: 0x1D = main status, 0x1F = command/data. Identifier
+// 0xFF = 0xE1. The boot's IPL then programs the interrupt vector (0xEF), 8253
+// motor timing (0x9x), control (0xE7), and the AM9517 DMAC (0x40-0x5E, high byte
+// 0xF6) and issues a µPD765 READ, DMAing the boot track into logical segment 60,
+// then validates the "SYS0" header (HARDWARE.md §6.3).
 //
-// Reporting 0xE1 at register 0xFF makes the boot select the FDU and run its full
-// init + IPL disk-read sequence (reset FDC via 0xE7, int-vector 0xEF, 8253 motor
-// timing 0x9x, then poll FDC main-status 0x1D, program the AM9517 DMAC 0x40-0x5E,
-// and spin on <<1>>0x02fc at ROM 0x06be waiting for load-complete). Booting the
-// diagnostic still needs the actual devices modelled here:
-//   TODO: upd765 FDC (0x1D main-status / 0x1F data) + i8237/am9517 DMAC (0x40-0x5E)
-//   + 0xF6 DMA high-address latch + control 0xE7 / int-status 0xF7 + a floppy with
-//   the diag_A image, DMAing the boot track into logical segment 60 and validating
-//   the "SYS0" header (see HARDWARE.md §6.3). Until then the IPL read never
-//   completes and the ROM retries.
+// TODO (to complete the boot): the AM9517 DMA path (transfer FDC bytes to the
+// physical address 0xF6<<16|ch2-addr, i.e. segment 60), the exact 0xE7 CONTR bit
+// map (RESFD/EN10/MOTO/SCRVO), and the 0xF7/0xFF interrupt-status polling. Right
+// now the ROM reaches the READ but the transfer never completes, so it retries.
 uint8_t m40_state::fdu_r(offs_t offset)
 {
-	switch (offset & 0xff)
+	uint8_t const reg = offset & 0xff;
+	uint8_t data;
+	switch (reg)
 	{
-	case 0xff: return 0xe1;          // identifier -> FDU
-	default:   return 0xff;
+	case 0x1d: data = m_fdc->msr_r();  break;        // uPD765 main status
+	case 0x1f: data = m_fdc->fifo_r(); break;        // uPD765 data
+	case 0xf7: data = m_fdc_int ? 0x40 : 0x00; break; // int status: INTOO (FDC)
+	case 0xed: data = m_fdc_int ? 0x01 : 0x00; break; // int-pending (fallback)
+	case 0xff: data = 0xe1;            break;        // identifier -> FDU
+	default:   data = 0xff;            break;
 	}
+	return data;
 }
 
 void m40_state::fdu_w(offs_t offset, uint8_t data)
 {
+	switch (offset & 0xff)
+	{
+	case 0x1f: m_fdc->fifo_w(data); break;           // uPD765 command/parameter
+	case 0xe7:                                        // CONTR: reset / motor / direction
+		if (floppy_image_device *f = m_floppy->get_device()) f->mon_w(0);  // motor on
+		break;                                        // TODO: decode RESFD/EN10/SCRVO bits
+	default: break;                                   // TODO: AM9517 DMAC 0x40-5E, 0xF6, 8253 0x9x, vector 0xEF
+	}
+}
+
+void m40_state::fdc_drq_w(int state)
+{
+	// TODO: AM9517 ch2 DMA to physical (0xF6<<16 | ch2-addr) into segment 60.
+}
+
+void m40_state::floppy_formats(format_registration &fr)
+{
+	fr.add(FLOPPY_IMD_FORMAT);
+}
+
+static void m40_floppies(device_slot_interface &device)
+{
+	device.option_add("8dsdd", FLOPPY_8_DSDD);
 }
 
 // 8x16 placeholder character generator (ASCII 0x20-0x7F), rendered from a
@@ -509,11 +551,13 @@ void m40_state::machine_start()
 
 	save_item(NAME(m_ff41));
 	save_item(NAME(m_vid_live));
+	save_item(NAME(m_fdc_int));
 }
 
 void m40_state::machine_reset()
 {
 	m_ff41 = 0x01;   // BBU-valid clear? start with a defined value
+	m_fdc->set_floppy(m_floppy->get_device());
 }
 
 void m40_state::m40(machine_config &config)
@@ -556,6 +600,12 @@ void m40_state::m40(machine_config &config)
 	m_crtc->set_show_border_area(false);
 	m_crtc->set_char_width(8);
 	m_crtc->set_update_row_callback(FUNC(m40_state::crtc_update_row));
+
+	// GO280 FDU floppy governo — uPD765 FDC (P8272) + 8" drive
+	UPD765A(config, m_fdc, 8_MHz_XTAL, true, true);
+	m_fdc->intrq_wr_callback().set(FUNC(m40_state::fdc_intrq_w));
+	m_fdc->drq_wr_callback().set(FUNC(m40_state::fdc_drq_w));
+	FLOPPY_CONNECTOR(config, "fdc:0", m40_floppies, "8dsdd", m40_state::floppy_formats);
 }
 
 //**************************************************************************
