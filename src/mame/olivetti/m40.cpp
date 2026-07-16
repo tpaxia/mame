@@ -25,6 +25,9 @@
 #include "machine/z8010.h"
 #include "machine/pit8253.h"
 #include "machine/ram.h"
+#include "video/mc6845.h"
+#include "emupal.h"
+#include "screen.h"
 
 namespace {
 
@@ -37,6 +40,8 @@ public:
 		, m_mmu(*this, "mmu")
 		, m_pit(*this, "pit")
 		, m_ram(*this, RAM_TAG)
+		, m_crtc(*this, "crtc")
+		, m_palette(*this, "palette")
 		, m_rom(*this, "maincpu")
 	{ }
 
@@ -51,6 +56,8 @@ private:
 	required_device<z8010_device> m_mmu;
 	required_device<pit8253_device> m_pit;
 	required_device<ram_device> m_ram;
+	required_device<mc6845_device> m_crtc;
+	required_device<palette_device> m_palette;
 	required_region_ptr<uint16_t> m_rom;
 
 	std::unique_ptr<uint8_t[]> m_vram;   // 64 KB video window @ 0xFF0000
@@ -60,6 +67,10 @@ private:
 	uint8_t m_mmu_mode = 0;   // shadow of Z8010 mode reg (bit7 = master enable)
 	emu_timer *m_arb_timer = nullptr;
 	bool m_arb_busy = false;  // a bus-arbitration cycle is in progress
+
+	// GO252 video/keyboard governo (KDC): I/O window at slot 1 (0x1000-0x1FFF,
+	// register = low byte); framebuffer is the seg-61 window (m_vram)
+	bool    m_vid_live = false;  // CRTC live-signal state exposed in status bit 3
 
 	// translated memory access over the whole segmented space
 	uint16_t mem_r(address_space &space, offs_t offset, uint16_t mem_mask);
@@ -80,6 +91,11 @@ private:
 	uint8_t  ffa0_r();
 	uint8_t  pit_r(offs_t offset)            { return m_pit->read((offset >> 1) & 3); }
 	void     pit_w(offs_t offset, uint8_t d) { m_pit->write((offset >> 1) & 3, d); }
+
+	// GO252 video/keyboard governo I/O (slot 1)
+	uint8_t  vid_r(offs_t offset);
+	void     vid_w(offs_t offset, uint8_t data);
+	MC6845_UPDATE_ROW(crtc_update_row);
 
 	// MB15652 bus/DMA arbiter (0xFF80-8F)
 	uint8_t  arb_r(offs_t offset) { return 0; }   // grant register (stub)
@@ -233,6 +249,8 @@ uint8_t m40_state::ffa0_r()
 void m40_state::io_map(address_map &map)
 {
 	map.unmap_value_high();
+	// GO252 video/keyboard governo — slot 1 window (register = low byte)
+	map(0x1000, 0x1fff).rw(FUNC(m40_state::vid_r), FUNC(m40_state::vid_w));
 	// UC (slot 15) on-board registers, byte-wide
 	map(0xff41, 0xff41).rw(FUNC(m40_state::ff41_r), FUNC(m40_state::ff41_w));
 	map(0xff80, 0xff8f).rw(FUNC(m40_state::arb_r), FUNC(m40_state::arb_w)); // MB15652 arbiter
@@ -253,6 +271,63 @@ void m40_state::sio_map(address_map &map)
 
 uint16_t m40_state::segtack_r() { return m_mmu->segtack_r(); }
 uint16_t m40_state::nmiack_r()  { return 0; }
+
+//**************************************************************************
+//  GO252 video/keyboard governo (KDC)
+//**************************************************************************
+//
+// The board answers on its slot's I/O window (register = low byte). The boot
+// scans slots reading register 0xFF (type-ID); reporting 0xFE routes the ROM to
+// the video self-test (ROM 0x0bc6), which:
+//   - reads status reg 0x81: low 3 bits = monitor type (0 = 80x25), bit 3 = a
+//     "live signal" (CRTC vsync/display) that it polls for a *change*;
+//   - programs the MC6845 via reg 0x41 (index) / 0x43 (data);
+//   - walks the seg-61 framebuffer (m_vram);
+//   - arms control reg 0x01 (0x03), then enables video via reg 0x6a on success.
+uint8_t m40_state::vid_r(offs_t offset)
+{
+	switch (offset & 0xff)
+	{
+	case 0xff:                     // type-ID register -> video/KDC governo
+		return 0xfe;
+	case 0x81:                     // status: monitor type 0 + toggling live-signal (bit 3)
+		m_vid_live = !m_vid_live;
+		return m_vid_live ? 0x08 : 0x00;
+	default:
+		return 0xff;
+	}
+}
+
+void m40_state::vid_w(offs_t offset, uint8_t data)
+{
+	switch (offset & 0xff)
+	{
+	case 0x41: m_crtc->address_w(data); break;   // MC6845 address (register select)
+	case 0x43: m_crtc->register_w(data); break;  // MC6845 data
+	case 0x01: break;                       // control latch (armed 0x03 in self-test)
+	case 0x6a: break;                       // "enable normal video"
+	default:   break;
+	}
+}
+
+// The framebuffer holds 2 bytes/cell in the seg-61 window; the character code is
+// the low (odd) byte of each big-endian word. No character-generator ROM is
+// dumped yet, so glyphs are a placeholder: non-blank cells are drawn solid so the
+// on-screen text layout is visible. Swap in a font ROM here for real glyphs.
+MC6845_UPDATE_ROW(m40_state::crtc_update_row)
+{
+	uint32_t *p = &bitmap.pix(y);
+	rgb_t const *const pal = m_palette->palette()->entry_list_raw();
+	for (int col = 0; col < x_count; col++)
+	{
+		uint8_t const ch = m_vram[(((ma + col) << 1) + 1) & 0xffff];
+		bool const cursor = (col == cursor_x);
+		bool const on = (ch > 0x20);            // placeholder glyph: solid if not blank
+		rgb_t const fg = pal[(on ^ cursor) ? 1 : 0];
+		for (int b = 0; b < 8; b++)
+			*p++ = fg;
+	}
+}
 
 // MB15652 arbiter: a request write (0xFF84-8F) starts one bus-arbitration cycle
 // (ignored while one is in progress); it completes after a fixed latency and
@@ -302,6 +377,7 @@ void m40_state::machine_start()
 	}
 
 	save_item(NAME(m_ff41));
+	save_item(NAME(m_vid_live));
 }
 
 void m40_state::machine_reset()
@@ -331,6 +407,25 @@ void m40_state::m40(machine_config &config)
 
 	RAM(config, m_ram).set_default_size("512K").set_default_value(0)
 		.set_extra_options("128K,256K,384K,640K,768K,896K,1024K");
+
+	// GO252 video/keyboard governo — MC6845 CRTC over the seg-61 framebuffer.
+	// Monitor type 0 (80x25, 17-line cells): the ROM programs H-total 106,
+	// V-total 26 char rows. Char width (dots) is not yet known — assume 8; the
+	// char clock is chosen for a ~57 Hz frame and will be refined with the dot
+	// clock. No character-generator ROM is dumped, so glyphs are placeholders.
+	screen_device &screen(SCREEN(config, "screen", SCREEN_TYPE_RASTER));
+	screen.set_refresh_hz(57);
+	screen.set_vblank_time(ATTOSECONDS_IN_USEC(2500));
+	screen.set_size(848, 442);
+	screen.set_visarea(0, 640 - 1, 0, 425 - 1);
+	screen.set_screen_update("crtc", FUNC(mc6845_device::screen_update));
+	PALETTE(config, m_palette, palette_device::MONOCHROME);
+
+	MC6845(config, m_crtc, 32_MHz_XTAL / 12);   // ~2.67 MHz char clock (dots/char assumed 8)
+	m_crtc->set_screen("screen");
+	m_crtc->set_show_border_area(false);
+	m_crtc->set_char_width(8);
+	m_crtc->set_update_row_callback(FUNC(m40_state::crtc_update_row));
 }
 
 //**************************************************************************
