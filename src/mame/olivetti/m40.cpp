@@ -764,6 +764,10 @@ void m40_state::machine_reset()
 {
 	m_ff41 = 0x01;   // BBU-valid clear? start with a defined value
 	m_fdc->set_floppy(m_floppy->get_device());
+	// 8" governo runs at a fixed 500 kbps data rate (there is no rate register; the
+	// FDC's MF bit picks FM vs MFM per command). MAME's µPD765 defaults to 250 kbps,
+	// which halves the cell clock and makes every read miss the address mark.
+	m_fdc->set_rate(500000);
 }
 
 void m40_state::m40(machine_config &config)
