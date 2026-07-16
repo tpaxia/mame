@@ -80,8 +80,9 @@ private:
 	bool    m_vid_live = false;  // CRTC live-signal state exposed in status bit 3
 
 	// GO280 FDU floppy governo (slot 2): upd765 FDC + (TODO) AM9517 DMAC
-	bool    m_fdc_int = false;   // FDC INTRQ latched (reg 0xF7 / 0xFF int-pending)
-	bool    m_fdu_ien = false;   // governo interrupt enable (EN10, reg 0xE7)
+	bool    m_fdc_int = false;   // FDC INTRQ level (INTOO, reg 0xF7 bit 1)
+	bool    m_fdu_pending = false; // governo pending-interrupt latch INTP1 (edge-set, VIACK-cleared)
+	bool    m_fdu_ien = false;   // governo interrupt enable (EN100/ENSOO, reg 0xE7 bit 0)
 	uint8_t m_fdu_vector = 0;    // governo interrupt vector (VETTN, reg 0xEF)
 
 	// translated memory access over the whole segmented space
@@ -115,7 +116,7 @@ private:
 	void     fdc_intrq_w(int state);
 	void     fdc_drq_w(int state);
 	void     update_fdu_irq();
-	uint16_t vi_ack_r() { return m_fdu_vector; }   // VI vector = interrupting governo's VETTN
+	uint16_t vi_ack_r();   // VI vector = interrupting governo's VETTN; clears INTP1
 	static void floppy_formats(format_registration &fr);
 
 	// MB15652 bus/DMA arbiter (0xFF80-8F)
@@ -352,9 +353,9 @@ uint8_t m40_state::fdu_r(offs_t offset)
 	{
 	case 0x1d: data = m_fdc->msr_r(); break;         // uPD765 main status
 	case 0x1f: data = m_fdc->fifo_r(); break;        // uPD765 data
-	case 0xf7: data = m_fdc_int ? 0x40 : 0x00; break; // int status: INTOO (FDC)
-	case 0xed: data = m_fdc_int ? 0x01 : 0x00; break; // int-pending (fallback)
-	case 0xff: data = 0xe1;            break;        // identifier -> FDU
+	case 0xf7: data = m_fdc_int ? 0x02 : 0x00; break; // RD1NT: INTOO (FDC INTRQ level) = bit 1
+	case 0xff: data = 0xe1;            break;        // RD1DN identifier: 0xE0 | NOM10(=1 FDU)
+	case 0xed: data = 0xff;            break;        // RDGNN diagnostic port
 	default:   data = 0xff;            break;
 	}
 	return data;
@@ -366,28 +367,39 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 	{
 	case 0x1f: m_fdc->fifo_w(data); break;           // uPD765 command/parameter
 	case 0xef: m_fdu_vector = data; break;           // VETTN — governo interrupt vector
-	case 0xe7:                                        // CONTR: reset / motor / direction / IRQ-en
-		m_fdu_ien = BIT(data, 4);                     // EN10 (guess: bit 4)
+	case 0xe7:                                        // CONTR (manual 3963590 p.3-5)
+		m_fdu_ien = BIT(data, 0);                     // EN100 — interrupt-request enable
+		m_fdc->reset_w(BIT(data, 1) ? 0 : 1);         // RESFD — reset FDC (active low)
 		update_fdu_irq();
-		if (floppy_image_device *f = m_floppy->get_device()) f->mon_w(0);  // motor on
-		break;                                        // TODO: confirm RESFD/EN10/SCRVO bits
+		if (floppy_image_device *f = m_floppy->get_device()) f->mon_w(0);  // FDU motor runs
+		break;                                        // bit6 SCRVO dir, bit3/7 MOTO1/2 (MFDU)
 	default: break;                                   // TODO: AM9517 DMAC 0x40-5E, 0xF6, 8253 0x9x
 	}
 }
 
-// The governo gates the FDC INTRQ behind its interrupt-enable (EN10) and, when
-// enabled, raises the CPU's vectored interrupt (VI) carrying its vector (VETTN).
-// The ISR reads the FDC result, clearing INTRQ and dropping VI.
+// Governo interrupt logic (manual 3963590 §3.5): the FDC INTRQ (INTOO) is latched
+// on its rising edge into the pending flag INTP1; when INTP1 and the enable
+// (ENSOO/EN100) are both set the governo raises the CPU's VI. INTP1 is cleared by
+// the VI-acknowledge (the same strobe that gates the vector onto the bus).
 void m40_state::update_fdu_irq()
 {
 	m_maincpu->set_input_line(z8001_device::VI_LINE,
-		(m_fdc_int && m_fdu_ien) ? ASSERT_LINE : CLEAR_LINE);
+		(m_fdu_pending && m_fdu_ien) ? ASSERT_LINE : CLEAR_LINE);
 }
 
 void m40_state::fdc_intrq_w(int state)
 {
+	if (state && !m_fdc_int)     // rising edge latches INTP1
+		m_fdu_pending = true;
 	m_fdc_int = bool(state);
 	update_fdu_irq();
+}
+
+uint16_t m40_state::vi_ack_r()
+{
+	m_fdu_pending = false;       // vector-enable strobe also resets INTP1
+	update_fdu_irq();
+	return m_fdu_vector;
 }
 
 void m40_state::fdc_drq_w(int state)
@@ -577,6 +589,7 @@ void m40_state::machine_start()
 	save_item(NAME(m_ff41));
 	save_item(NAME(m_vid_live));
 	save_item(NAME(m_fdc_int));
+	save_item(NAME(m_fdu_pending));
 	save_item(NAME(m_fdu_vector));
 }
 
