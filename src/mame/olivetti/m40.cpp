@@ -81,6 +81,8 @@ private:
 
 	// GO280 FDU floppy governo (slot 2): upd765 FDC + (TODO) AM9517 DMAC
 	bool    m_fdc_int = false;   // FDC INTRQ latched (reg 0xF7 / 0xFF int-pending)
+	bool    m_fdu_ien = false;   // governo interrupt enable (EN10, reg 0xE7)
+	uint8_t m_fdu_vector = 0;    // governo interrupt vector (VETTN, reg 0xEF)
 
 	// translated memory access over the whole segmented space
 	uint16_t mem_r(address_space &space, offs_t offset, uint16_t mem_mask);
@@ -110,8 +112,10 @@ private:
 	// GO280 FDU floppy governo I/O (slot 2)
 	uint8_t  fdu_r(offs_t offset);
 	void     fdu_w(offs_t offset, uint8_t data);
-	void     fdc_intrq_w(int state) { m_fdc_int = bool(state); }
+	void     fdc_intrq_w(int state);
 	void     fdc_drq_w(int state);
+	void     update_fdu_irq();
+	uint16_t vi_ack_r() { return m_fdu_vector; }   // VI vector = interrupting governo's VETTN
 	static void floppy_formats(format_registration &fr);
 
 	// MB15652 bus/DMA arbiter (0xFF80-8F)
@@ -346,7 +350,7 @@ uint8_t m40_state::fdu_r(offs_t offset)
 	uint8_t data;
 	switch (reg)
 	{
-	case 0x1d: data = m_fdc->msr_r();  break;        // uPD765 main status
+	case 0x1d: data = m_fdc->msr_r(); break;         // uPD765 main status
 	case 0x1f: data = m_fdc->fifo_r(); break;        // uPD765 data
 	case 0xf7: data = m_fdc_int ? 0x40 : 0x00; break; // int status: INTOO (FDC)
 	case 0xed: data = m_fdc_int ? 0x01 : 0x00; break; // int-pending (fallback)
@@ -361,11 +365,29 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 	switch (offset & 0xff)
 	{
 	case 0x1f: m_fdc->fifo_w(data); break;           // uPD765 command/parameter
-	case 0xe7:                                        // CONTR: reset / motor / direction
+	case 0xef: m_fdu_vector = data; break;           // VETTN — governo interrupt vector
+	case 0xe7:                                        // CONTR: reset / motor / direction / IRQ-en
+		m_fdu_ien = BIT(data, 4);                     // EN10 (guess: bit 4)
+		update_fdu_irq();
 		if (floppy_image_device *f = m_floppy->get_device()) f->mon_w(0);  // motor on
-		break;                                        // TODO: decode RESFD/EN10/SCRVO bits
-	default: break;                                   // TODO: AM9517 DMAC 0x40-5E, 0xF6, 8253 0x9x, vector 0xEF
+		break;                                        // TODO: confirm RESFD/EN10/SCRVO bits
+	default: break;                                   // TODO: AM9517 DMAC 0x40-5E, 0xF6, 8253 0x9x
 	}
+}
+
+// The governo gates the FDC INTRQ behind its interrupt-enable (EN10) and, when
+// enabled, raises the CPU's vectored interrupt (VI) carrying its vector (VETTN).
+// The ISR reads the FDC result, clearing INTRQ and dropping VI.
+void m40_state::update_fdu_irq()
+{
+	m_maincpu->set_input_line(z8001_device::VI_LINE,
+		(m_fdc_int && m_fdu_ien) ? ASSERT_LINE : CLEAR_LINE);
+}
+
+void m40_state::fdc_intrq_w(int state)
+{
+	m_fdc_int = bool(state);
+	update_fdu_irq();
 }
 
 void m40_state::fdc_drq_w(int state)
@@ -555,6 +577,7 @@ void m40_state::machine_start()
 	save_item(NAME(m_ff41));
 	save_item(NAME(m_vid_live));
 	save_item(NAME(m_fdc_int));
+	save_item(NAME(m_fdu_vector));
 }
 
 void m40_state::machine_reset()
@@ -572,7 +595,7 @@ void m40_state::m40(machine_config &config)
 	m_maincpu->set_addrmap(z8001_device::AS_STACK, &m40_state::mem_map);
 	m_maincpu->set_addrmap(AS_IO, &m40_state::io_map);
 	m_maincpu->set_addrmap(z8001_device::AS_SIO, &m40_state::sio_map);
-	m_maincpu->viack().set(FUNC(m40_state::nmiack_r));
+	m_maincpu->viack().set(FUNC(m40_state::vi_ack_r));   // governo VI vector (VETTN)
 	m_maincpu->nviack().set(FUNC(m40_state::nviack_r));
 
 	Z8010(config, m_mmu, 32_MHz_XTAL / 8);
