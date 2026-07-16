@@ -33,7 +33,14 @@
 #include "emupal.h"
 #include "screen.h"
 
+#include <cstdio>
+#include <cstdlib>
+
 namespace {
+
+#ifndef M40_DEBUG_TRACE
+#define M40_DEBUG_TRACE 1
+#endif
 
 class m40_state : public driver_device
 {
@@ -50,6 +57,7 @@ public:
 		, m_floppy(*this, "fdc:0")
 		, m_fdu_timer(*this, "fdu_timer")
 		, m_dmac(*this, "dmac")
+		, m_kbd(*this, "K%u", 0U)
 		, m_rom(*this, "maincpu")
 	{ }
 
@@ -70,6 +78,7 @@ private:
 	required_device<floppy_connector> m_floppy;
 	required_device<pit8253_device> m_fdu_timer;
 	required_device<am9517a_device> m_dmac;
+	required_ioport_array<4> m_kbd;
 	required_region_ptr<uint16_t> m_rom;
 
 	std::unique_ptr<uint8_t[]> m_vram;   // 64 KB video window @ 0xFF0000
@@ -87,6 +96,20 @@ private:
 	// GO252 video/keyboard governo (KDC): I/O window at slot 1 (0x1000-0x1FFF,
 	// register = low byte); framebuffer is the seg-61 window (m_vram)
 	bool    m_vid_live = false;  // CRTC live-signal state exposed in status bit 3
+	uint8_t m_crtc_index = 0;
+	uint8_t m_kdc_ctrl = 0;      // FE reg 0x01 shadow/readback (keyboard/video handshake)
+	uint8_t m_kdc_data = 0;      // UC 0xFF22 byte-data latch
+	uint8_t m_kdc_status = 0;    // UC 0xFF20 status/control latch
+	uint8_t m_kdc_vector = 0;    // keyboard VI vector, installed by the disk monitor's PSA
+	bool    m_kdc_pending = false;
+	bool    m_kdc_armed = false;  // KDC VI enabled only once the disk monitor installs its vector (reg 0x20/0x21)
+	bool    m_kdc_fe_data_armed = false;
+	emu_timer *m_kdc_timer = nullptr;
+	uint16_t m_kbd_prev[4] = {};
+	uint8_t  m_kbd_fifo[16] = {};
+	uint8_t  m_kbd_head = 0;
+	uint8_t  m_kbd_tail = 0;
+	uint8_t  m_kbd_count = 0;
 
 	// GO280 FDU floppy governo (slot 2): upd765 FDC + (TODO) AM9517 DMAC
 	bool    m_fdc_int = false;   // FDC INTRQ level (INTOO, reg 0xF7 bit 1)
@@ -118,12 +141,26 @@ private:
 	uint8_t  ff41_r();
 	void     ff41_w(uint8_t data);
 	uint8_t  ffa0_r();
+	uint8_t  kdc_uc_status_r();
+	void     kdc_uc_status_w(uint8_t data);
+	uint8_t  kdc_uc_data_r();
+	void     kdc_uc_data_w(uint8_t data);
 	uint8_t  pit_r(offs_t offset)            { return m_pit->read((offset >> 1) & 3); }
 	void     pit_w(offs_t offset, uint8_t d) { m_pit->write((offset >> 1) & 3, d); }
 
 	// GO252 video/keyboard governo I/O (slot 1)
+	uint16_t vid16_r(offs_t offset, uint16_t mem_mask);
+	void     vid16_w(offs_t offset, uint16_t data, uint16_t mem_mask);
 	uint8_t  vid_r(offs_t offset);
 	void     vid_w(offs_t offset, uint8_t data);
+#if M40_DEBUG_TRACE
+	std::FILE *m_vram_trace = nullptr;
+	void     debug_vram_w(offs_t addr, uint8_t data, uint16_t mem_mask);
+	void     debug_crtc_w(uint8_t reg, uint8_t data);
+#endif
+	void     kdc_queue(uint8_t data);
+	void     kdc_update_irq();
+	TIMER_CALLBACK_MEMBER(kdc_poll);
 	MC6845_UPDATE_ROW(crtc_update_row);
 
 	// GO280 FDU floppy governo I/O (slot 2)
@@ -193,17 +230,54 @@ void m40_state::phys_w(offs_t addr, uint16_t data, uint16_t mem_mask)
 {
 	addr &= 0xffffff;
 	uint8_t *p = nullptr;
+	bool const is_vram = (addr >= 0xff0000);
 	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
 		p = m_ramptr + (addr - 0x010000);
-	else if (addr >= 0xff0000)
+	else if (is_vram)
 		p = &m_vram[addr & 0xffff];
 	else if (addr < 0x4000)
 		return;                                          // ROM: ignore writes
 	else { ready_fault(); return; }                      // unpopulated
 
-	if (ACCESSING_BITS_8_15) p[0] = data >> 8;
-	if (ACCESSING_BITS_0_7)  p[1] = data & 0xff;
+	if (ACCESSING_BITS_8_15)
+	{
+		p[0] = data >> 8;
+#if M40_DEBUG_TRACE
+		if (is_vram)
+			debug_vram_w(addr & 0xffff, p[0], mem_mask);
+#endif
+	}
+	if (ACCESSING_BITS_0_7)
+	{
+		p[1] = data & 0xff;
+#if M40_DEBUG_TRACE
+		if (is_vram)
+			debug_vram_w((addr + 1) & 0xffff, p[1], mem_mask);
+#endif
+	}
 }
+
+#if M40_DEBUG_TRACE
+void m40_state::debug_vram_w(offs_t addr, uint8_t data, uint16_t mem_mask)
+{
+	if (m_vram_trace)
+	{
+		std::fprintf(m_vram_trace, "VRAM pc=%08X off=%04X data=%02X mask=%04X\n",
+			unsigned(m_maincpu->pc()), unsigned(addr & 0xffff), data, mem_mask);
+		std::fflush(m_vram_trace);
+	}
+}
+
+void m40_state::debug_crtc_w(uint8_t reg, uint8_t data)
+{
+	if (m_vram_trace)
+	{
+		std::fprintf(m_vram_trace, "CRTC pc=%08X reg=%02X data=%02X\n",
+			unsigned(m_maincpu->pc()), reg, data);
+		std::fflush(m_vram_trace);
+	}
+}
+#endif
 
 bool m40_state::xlate(int spacenum, bool write, offs_t &addr)
 {
@@ -291,14 +365,49 @@ uint8_t m40_state::ffa0_r()
 	return 0xff;   // config/jumpers — all-ones for now
 }
 
+uint8_t m40_state::kdc_uc_status_r()
+{
+	// Disk-B's resident FE/KDC handler reads 0xFF20 before dispatching keyboard
+	// callbacks. Bit 2 is the only status bit currently backed by trace evidence:
+	// when set, the handler reads the data byte from 0xFF22 into rl0.
+	return m_kbd_count ? 0x04 : 0x00;
+}
+
+void m40_state::kdc_uc_status_w(uint8_t data)
+{
+	m_kdc_status = data;
+}
+
+uint8_t m40_state::kdc_uc_data_r()
+{
+	if (m_kbd_count)
+	{
+		m_kdc_data = m_kbd_fifo[m_kbd_tail];
+		m_kbd_tail = (m_kbd_tail + 1) & 0x0f;
+		m_kbd_count--;
+	}
+	m_kdc_pending = (m_kbd_count != 0);
+	kdc_update_irq();
+	return m_kdc_data;
+}
+
+void m40_state::kdc_uc_data_w(uint8_t data)
+{
+	// Several resident handlers write the byte latch as an acknowledge/echo path.
+	// Keep the value visible without feeding it back into the host-key queue.
+	m_kdc_data = data;
+}
+
 void m40_state::io_map(address_map &map)
 {
 	map.unmap_value_high();
 	// GO252 video/keyboard governo — slot 1 window (register = low byte)
-	map(0x1000, 0x1fff).rw(FUNC(m40_state::vid_r), FUNC(m40_state::vid_w));
+	map(0x1000, 0x1fff).rw(FUNC(m40_state::vid16_r), FUNC(m40_state::vid16_w));
 	// GO280 FDU floppy governo — slot 2 window
 	map(0x2000, 0x2fff).rw(FUNC(m40_state::fdu_r), FUNC(m40_state::fdu_w));
 	// UC (slot 15) on-board registers, byte-wide
+	map(0xff20, 0xff21).rw(FUNC(m40_state::kdc_uc_status_r), FUNC(m40_state::kdc_uc_status_w)).umask16(0xff00);
+	map(0xff22, 0xff23).rw(FUNC(m40_state::kdc_uc_data_r), FUNC(m40_state::kdc_uc_data_w)).umask16(0xff00);
 	map(0xff41, 0xff41).rw(FUNC(m40_state::ff41_r), FUNC(m40_state::ff41_w));
 	map(0xff80, 0xff8f).rw(FUNC(m40_state::arb_r), FUNC(m40_state::arb_w)); // MB15652 arbiter
 	map(0xffa0, 0xffa0).r(FUNC(m40_state::ffa0_r));
@@ -319,6 +428,45 @@ void m40_state::sio_map(address_map &map)
 uint16_t m40_state::segtack_r() { return m_mmu->segtack_r(); }
 uint16_t m40_state::nmiack_r()  { return 0; }
 
+void m40_state::kdc_queue(uint8_t data)
+{
+	if (m_kbd_count == sizeof(m_kbd_fifo))
+		return;
+
+	m_kbd_fifo[m_kbd_head] = data;
+	m_kbd_head = (m_kbd_head + 1) & 0x0f;
+	m_kbd_count++;
+	m_kdc_pending = true;
+	kdc_update_irq();
+}
+
+void m40_state::kdc_update_irq()
+{
+	update_fdu_irq();
+}
+
+TIMER_CALLBACK_MEMBER(m40_state::kdc_poll)
+{
+	static constexpr uint8_t codes[4][16] =
+	{
+		{ 0x5f,0x60,0x5d,0x57,0x58,0x55,0x4f,0x50,0x4d,0x67,0x52,0x1b,0x20,0x08,0x09,0x7f },
+		{ 0x71,0x77,0x65,0x72,0x74,0x79,0x75,0x69,0x6f,0x70,0x61,0x73,0x64,0x66,0x67,0x68 },
+		{ 0x6a,0x6b,0x6c,0x7a,0x78,0x63,0x76,0x62,0x6e,0x6d,0x2c,0x2e,0x2f,0x2d,0x3d,0x27 },
+		{ 0x6f,0x77,0x6e,0x76,0x70,0x78,0xfe,0xfd,0xfc,0xfb,0xfa,0xf9,0xf8,0xf7,0xf6,0xf5 }
+	};
+
+	for (int row = 0; row < 4; row++)
+	{
+		uint16_t const now = m_kbd[row]->read();
+		uint16_t const changed = now ^ m_kbd_prev[row];
+		uint16_t const pressed = changed & now;
+		for (int bit = 0; bit < 16; bit++)
+			if (BIT(pressed, bit))
+				kdc_queue(codes[row][bit]);
+		m_kbd_prev[row] = now;
+	}
+}
+
 //**************************************************************************
 //  GO252 video/keyboard governo (KDC)
 //**************************************************************************
@@ -331,15 +479,57 @@ uint16_t m40_state::nmiack_r()  { return 0; }
 //   - programs the MC6845 via reg 0x41 (index) / 0x43 (data);
 //   - walks the seg-61 framebuffer (m_vram);
 //   - arms control reg 0x01 (0x03), then enables video via reg 0x6a on success.
+uint16_t m40_state::vid16_r(offs_t offset, uint16_t mem_mask)
+{
+	uint8_t const reg = ((offset << 1) + (ACCESSING_BITS_0_7 ? 1 : 0)) & 0xff;
+	uint8_t const data = vid_r(reg);
+	return (data << 8) | data;
+}
+
+void m40_state::vid16_w(offs_t offset, uint16_t data, uint16_t mem_mask)
+{
+	uint8_t const reg = (offset << 1) & 0xff;
+	if (ACCESSING_BITS_8_15)
+		vid_w(reg, data >> 8);
+	if (ACCESSING_BITS_0_7)
+		vid_w((reg + 1) & 0xff, data & 0xff);
+}
+
 uint8_t m40_state::vid_r(offs_t offset)
 {
 	switch (offset & 0xff)
 	{
+	case 0x00:
+	case 0x01:                     // FE/KDC control-status latch readback
+		if (m_kbd_count)
+		{
+			m_kdc_fe_data_armed = true;
+			return 0x04;           // bit 2 = byte ready
+		}
+		return 0x02;               // bit 1 = ready/accepted for resident helper command 9
+	case 0x02:
+	case 0x03:                     // FE/KDC data register selected by resident vector 0x2c
+		if (m_kdc_fe_data_armed && m_kbd_count)
+		{
+			m_kdc_data = m_kbd_fifo[m_kbd_tail];
+			m_kbd_tail = (m_kbd_tail + 1) & 0x0f;
+			m_kbd_count--;
+			m_kdc_fe_data_armed = false;
+			m_kdc_pending = (m_kbd_count != 0);
+			kdc_update_irq();
+			return m_kdc_data;
+		}
+		return m_kdc_data;
+	case 0xfe:
 	case 0xff:                     // type-ID register -> video/KDC governo
 		return 0xfe;
+	case 0x80:
 	case 0x81:                     // status: monitor type 0 + toggling live-signal (bit 3)
 		m_vid_live = !m_vid_live;
 		return m_vid_live ? 0x08 : 0x00;
+	case 0x42:
+	case 0x43:
+		return m_crtc->register_r();
 	default:
 		return 0xff;
 	}
@@ -349,9 +539,30 @@ void m40_state::vid_w(offs_t offset, uint8_t data)
 {
 	switch (offset & 0xff)
 	{
-	case 0x41: m_crtc->address_w(data); break;   // MC6845 address (register select)
-	case 0x43: m_crtc->register_w(data); break;  // MC6845 data
-	case 0x01: break;                       // control latch (armed 0x03 in self-test)
+	case 0x40:
+	case 0x41:
+		m_crtc_index = data & 0x1f;
+		m_crtc->address_w(data);                 // MC6845 address (register select)
+		break;
+	case 0x42:
+	case 0x43:
+		m_crtc->register_w(data);                // MC6845 data
+#if M40_DEBUG_TRACE
+		debug_crtc_w(m_crtc_index, data);
+#endif
+		break;
+	case 0x00:
+	case 0x01:
+		m_kdc_ctrl = data;                       // control latch / KDC handshake shadow
+		m_kdc_fe_data_armed = false;
+		break;
+	case 0x02:
+	case 0x03:
+		m_kdc_data = data;
+		m_kdc_fe_data_armed = false;
+		break;
+	case 0x20:
+	case 0x21: m_kdc_vector = data; m_kdc_armed = true; break;  // keyboard/FE interrupt vector latch (arms the KDC VI)
 	case 0x6a: break;                       // "enable normal video"
 	default:   break;
 	}
@@ -442,7 +653,7 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 void m40_state::update_fdu_irq()
 {
 	m_maincpu->set_input_line(z8001_device::VI_LINE,
-		(m_fdu_pending && m_fdu_ien) ? ASSERT_LINE : CLEAR_LINE);
+		((m_fdu_pending && m_fdu_ien) || (m_kdc_pending && m_kdc_armed)) ? ASSERT_LINE : CLEAR_LINE);
 }
 
 void m40_state::fdc_intrq_w(int state)
@@ -471,6 +682,13 @@ void m40_state::fdu_timer_out(int state)
 
 uint16_t m40_state::vi_ack_r()
 {
+	if (m_kdc_pending && m_kdc_armed)
+	{
+		m_kdc_pending = false;
+		update_fdu_irq();
+		return m_kdc_vector;
+	}
+
 	m_fdu_pending = false;       // vector-enable strobe also resets INTP1
 	update_fdu_irq();
 	return m_fdu_vector;
@@ -741,6 +959,14 @@ void m40_state::machine_start()
 	m_ramptr = m_ram->pointer();
 	m_ramsize = m_ram->size();
 	m_arb_timer = timer_alloc(FUNC(m40_state::arb_done), this);
+	m_kdc_timer = timer_alloc(FUNC(m40_state::kdc_poll), this);
+#if M40_DEBUG_TRACE
+	if (char const *const path = std::getenv("M40_VRAM_TRACE"))
+	{
+		if (path[0] != '\0')
+			m_vram_trace = std::fopen(path, "w");
+	}
+#endif
 
 	// translating handlers over the whole 24-bit segmented byte space
 	// (installed on program / data / stack)
@@ -754,6 +980,19 @@ void m40_state::machine_start()
 
 	save_item(NAME(m_ff41));
 	save_item(NAME(m_vid_live));
+	save_item(NAME(m_crtc_index));
+	save_item(NAME(m_kdc_ctrl));
+	save_item(NAME(m_kdc_data));
+	save_item(NAME(m_kdc_status));
+	save_item(NAME(m_kdc_vector));
+	save_item(NAME(m_kdc_pending));
+	save_item(NAME(m_kdc_armed));
+	save_item(NAME(m_kdc_fe_data_armed));
+	save_item(NAME(m_kbd_prev));
+	save_item(NAME(m_kbd_fifo));
+	save_item(NAME(m_kbd_head));
+	save_item(NAME(m_kbd_tail));
+	save_item(NAME(m_kbd_count));
 	save_item(NAME(m_fdc_int));
 	save_item(NAME(m_timer_int));
 	save_item(NAME(m_fdu_pending));
@@ -763,6 +1002,22 @@ void m40_state::machine_start()
 void m40_state::machine_reset()
 {
 	m_ff41 = 0x01;   // BBU-valid clear? start with a defined value
+	m_crtc_index = 0;
+	m_kdc_ctrl = 0;
+	m_kdc_data = 0;
+	m_kdc_status = 0;
+	m_kdc_vector = 0x28;
+	m_kdc_pending = false;
+	m_kdc_armed = false;   // KDC VI stays masked until the disk monitor installs its vector
+	m_kdc_fe_data_armed = false;
+	for (auto &v : m_kbd_prev)
+		v = 0;
+	m_kbd_head = 0;
+	m_kbd_tail = 0;
+	m_kbd_count = 0;
+	for (auto &v : m_kbd_fifo)
+		v = 0;
+	m_kdc_timer->adjust(attotime::from_hz(120), 0, attotime::from_hz(120));
 	m_fdc->set_floppy(m_floppy->get_device());
 	// 8" governo runs at a fixed 500 kbps data rate (there is no rate register; the
 	// FDC's MF bit picks FM vs MFM per command). MAME's µPD765 defaults to 250 kbps,
@@ -839,6 +1094,80 @@ void m40_state::m40(machine_config &config)
 	m_fdu_timer->out_handler<1>().set(FUNC(m40_state::fdu_timer_out));   // ch1 -> INTMO
 }
 
+static INPUT_PORTS_START( m40 )
+	PORT_START("K0")
+	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_1) PORT_CHAR('1')
+	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_2) PORT_CHAR('2')
+	PORT_BIT(0x0004, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_3) PORT_CHAR('3')
+	PORT_BIT(0x0008, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_4) PORT_CHAR('4')
+	PORT_BIT(0x0010, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_5) PORT_CHAR('5')
+	PORT_BIT(0x0020, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_6) PORT_CHAR('6')
+	PORT_BIT(0x0040, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_7) PORT_CHAR('7')
+	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_8) PORT_CHAR('8')
+	PORT_BIT(0x0100, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_9) PORT_CHAR('9')
+	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_0) PORT_CHAR('0')
+	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER) PORT_CHAR(13)
+	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ESC) PORT_CHAR(27)
+	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_SPACE) PORT_CHAR(' ')
+	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_BACKSPACE) PORT_CHAR(8)
+	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_TAB) PORT_CHAR(9)
+	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_DEL) PORT_CHAR(127)
+
+	PORT_START("K1")
+	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_Q) PORT_CHAR('q') PORT_CHAR('Q')
+	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_W) PORT_CHAR('w') PORT_CHAR('W')
+	PORT_BIT(0x0004, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_E) PORT_CHAR('e') PORT_CHAR('E')
+	PORT_BIT(0x0008, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_R) PORT_CHAR('r') PORT_CHAR('R')
+	PORT_BIT(0x0010, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_T) PORT_CHAR('t') PORT_CHAR('T')
+	PORT_BIT(0x0020, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_Y) PORT_CHAR('y') PORT_CHAR('Y')
+	PORT_BIT(0x0040, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_U) PORT_CHAR('u') PORT_CHAR('U')
+	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_I) PORT_CHAR('i') PORT_CHAR('I')
+	PORT_BIT(0x0100, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_O) PORT_CHAR('o') PORT_CHAR('O')
+	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_P) PORT_CHAR('p') PORT_CHAR('P')
+	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_A) PORT_CHAR('a') PORT_CHAR('A')
+	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_S) PORT_CHAR('s') PORT_CHAR('S')
+	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_D) PORT_CHAR('d') PORT_CHAR('D')
+	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F) PORT_CHAR('f') PORT_CHAR('F')
+	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_G) PORT_CHAR('g') PORT_CHAR('G')
+	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_H) PORT_CHAR('h') PORT_CHAR('H')
+
+	PORT_START("K2")
+	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_J) PORT_CHAR('j') PORT_CHAR('J')
+	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_K) PORT_CHAR('k') PORT_CHAR('K')
+	PORT_BIT(0x0004, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_L) PORT_CHAR('l') PORT_CHAR('L')
+	PORT_BIT(0x0008, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_Z) PORT_CHAR('z') PORT_CHAR('Z')
+	PORT_BIT(0x0010, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_X) PORT_CHAR('x') PORT_CHAR('X')
+	PORT_BIT(0x0020, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_C) PORT_CHAR('c') PORT_CHAR('C')
+	PORT_BIT(0x0040, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_V) PORT_CHAR('v') PORT_CHAR('V')
+	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_B) PORT_CHAR('b') PORT_CHAR('B')
+	PORT_BIT(0x0100, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_N) PORT_CHAR('n') PORT_CHAR('N')
+	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_M) PORT_CHAR('m') PORT_CHAR('M')
+	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_COMMA) PORT_CHAR(',')
+	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_STOP) PORT_CHAR('.')
+	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_SLASH) PORT_CHAR('/')
+	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_MINUS) PORT_CHAR('-')
+	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_EQUALS) PORT_CHAR('=')
+	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_QUOTE) PORT_CHAR('\'')
+
+	PORT_START("K3")
+	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F1) PORT_NAME("LK make") PORT_CHAR(UCHAR_MAMEKEY(F1))
+	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F2) PORT_NAME("LK break") PORT_CHAR(UCHAR_MAMEKEY(F2))
+	PORT_BIT(0x0004, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_LSHIFT) PORT_NAME("SH make") PORT_CHAR(UCHAR_SHIFT_1)
+	PORT_BIT(0x0008, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_RSHIFT) PORT_NAME("SH break")
+	PORT_BIT(0x0010, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_LCONTROL) PORT_NAME("CN make")
+	PORT_BIT(0x0020, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_RCONTROL) PORT_NAME("CN break")
+	PORT_BIT(0x0040, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F3) PORT_NAME("Simultaneous keys") PORT_CHAR(UCHAR_MAMEKEY(F3))
+	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F4) PORT_NAME("Raw FD") PORT_CHAR(UCHAR_MAMEKEY(F4))
+	PORT_BIT(0x0100, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F5) PORT_NAME("Raw FC") PORT_CHAR(UCHAR_MAMEKEY(F5))
+	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F6) PORT_NAME("Raw FB") PORT_CHAR(UCHAR_MAMEKEY(F6))
+	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F7) PORT_NAME("Raw FA") PORT_CHAR(UCHAR_MAMEKEY(F7))
+	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F8) PORT_NAME("Raw F9") PORT_CHAR(UCHAR_MAMEKEY(F8))
+	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F9) PORT_NAME("Raw F8") PORT_CHAR(UCHAR_MAMEKEY(F9))
+	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F10) PORT_NAME("Raw F7") PORT_CHAR(UCHAR_MAMEKEY(F10))
+	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F11) PORT_NAME("Raw F6") PORT_CHAR(UCHAR_MAMEKEY(F11))
+	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F12) PORT_NAME("Raw F5") PORT_CHAR(UCHAR_MAMEKEY(F12))
+INPUT_PORTS_END
+
 //**************************************************************************
 //  ROM
 //**************************************************************************
@@ -851,4 +1180,4 @@ ROM_END
 } // anonymous namespace
 
 //    YEAR  NAME  PARENT  COMPAT  MACHINE  INPUT  CLASS      INIT        COMPANY     FULLNAME           FLAGS
-COMP( 1982, m40,  0,      0,      m40,     0,     m40_state, empty_init, "Olivetti", "M40 (L1)",        MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
+COMP( 1982, m40,  0,      0,      m40,     m40,  m40_state, empty_init, "Olivetti", "M40 (L1)",        MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
