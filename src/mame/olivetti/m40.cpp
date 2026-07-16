@@ -74,6 +74,8 @@ private:
 	uint8_t m_mmu_mode = 0;   // shadow of Z8010 mode reg (bit7 = master enable)
 	emu_timer *m_arb_timer = nullptr;
 	bool m_arb_busy = false;  // a bus-arbitration cycle is in progress
+	bool m_arb_test = true;   // arbiter NVI only for the early self-test; governo
+	                          // DMA bus-requests (BAXXN, manual §3.3.1) are holds, not NVIs
 
 	// GO252 video/keyboard governo (KDC): I/O window at slot 1 (0x1000-0x1FFF,
 	// register = low byte); framebuffer is the seg-61 window (m_vram)
@@ -363,7 +365,7 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 	switch (offset & 0xff)
 	{
 	case 0x1f: m_fdc->fifo_w(data); break;           // uPD765 command/parameter
-	case 0xef: m_fdu_vector = data; break;           // VETTN — governo interrupt vector
+	case 0xef: m_fdu_vector = data; m_arb_test = false; break;  // VETTN vector; FDU active -> arbiter self-test done
 	case 0xe7:                                        // CONTR (manual 3963590 p.3-5)
 		m_fdu_ien = BIT(data, 0);                     // EN100 — interrupt-request enable
 		m_fdc->reset_w(BIT(data, 1) ? 0 : 1);         // RESFD — reset FDC (active low)
@@ -543,7 +545,10 @@ MC6845_UPDATE_ROW(m40_state::crtc_update_row)
 void m40_state::arb_w(offs_t offset, uint8_t data)
 {
 	uint8_t const reg = offset & 0x0f;
-	if (reg >= 4 && reg <= 7 && !m_arb_busy)             // request registers only
+	// Channels 1-3 (0xFF85-87) complete via NVI (the bus-arbiter self-test uses
+	// these). Channel 0 (0xFF84) is the FDU governo's system-bus (DMA) request —
+	// a bus hold, NOT an NVI; firing one there disrupts the FDU command phase.
+	if (m_arb_test && reg >= 5 && reg <= 7 && !m_arb_busy)
 	{
 		m_arb_busy = true;
 		m_arb_timer->adjust(attotime::from_usec(50));
@@ -588,6 +593,7 @@ void m40_state::machine_start()
 	save_item(NAME(m_fdc_int));
 	save_item(NAME(m_fdu_pending));
 	save_item(NAME(m_fdu_vector));
+	save_item(NAME(m_arb_test));
 }
 
 void m40_state::machine_reset()
