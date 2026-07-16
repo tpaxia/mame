@@ -26,6 +26,7 @@
 #include "machine/pit8253.h"
 #include "machine/ram.h"
 #include "machine/upd765.h"
+#include "machine/am9517a.h"
 #include "imagedev/floppy.h"
 #include "formats/imd_dsk.h"
 #include "video/mc6845.h"
@@ -48,6 +49,7 @@ public:
 		, m_fdc(*this, "fdc")
 		, m_floppy(*this, "fdc:0")
 		, m_fdu_timer(*this, "fdu_timer")
+		, m_dmac(*this, "dmac")
 		, m_rom(*this, "maincpu")
 	{ }
 
@@ -67,6 +69,7 @@ private:
 	required_device<upd765a_device> m_fdc;
 	required_device<floppy_connector> m_floppy;
 	required_device<pit8253_device> m_fdu_timer;
+	required_device<am9517a_device> m_dmac;
 	required_region_ptr<uint16_t> m_rom;
 
 	std::unique_ptr<uint8_t[]> m_vram;   // 64 KB video window @ 0xFF0000
@@ -74,8 +77,12 @@ private:
 	uint32_t m_ramsize = 0;
 	uint8_t m_ff41 = 0;
 	uint8_t m_mmu_mode = 0;   // shadow of Z8010 mode reg (bit7 = master enable)
-	emu_timer *m_arb_timer = nullptr;
-	bool m_arb_busy = false;  // a bus-arbitration cycle is in progress
+	// MB15652/UCY805 bus arbiter (0xFF80-8F), per re/UCY805_bus_arbiter.md, model
+	// verified against disk test 13 and the ROM power-on test in a standalone bench.
+	emu_timer *m_arb_timer = nullptr;   // delays the grant NVI to the ROM's spin-loop
+	uint8_t m_arb_req = 0;    // pending channel requests   (bit0=ch0 .. bit3=ch3)
+	uint8_t m_arb_grant = 0;  // channels currently granted (bit0=ch0 .. bit3=ch3)
+	uint8_t m_arb_rel = 0;    // release level from 0xFF8D/8E/8F (and 0xFF85/86/87)
 
 	// GO252 video/keyboard governo (KDC): I/O window at slot 1 (0x1000-0x1FFF,
 	// register = low byte); framebuffer is the seg-61 window (m_vram)
@@ -84,9 +91,12 @@ private:
 	// GO280 FDU floppy governo (slot 2): upd765 FDC + (TODO) AM9517 DMAC
 	bool    m_fdc_int = false;   // FDC INTRQ level (INTOO, reg 0xF7 bit 1)
 	bool    m_timer_int = false; // 8253 ch1 end-of-count (INTMO, reg 0xF7 bit 0)
+	bool    m_intoo_lat = false; // INTOO latched into RD1NT until E01NT-acknowledged
+	bool    m_intmo_lat = false; // INTMO latched into RD1NT until E01NT-acknowledged
 	bool    m_fdu_pending = false; // governo pending-interrupt latch INTP1 (edge-set, VIACK-cleared)
 	bool    m_fdu_ien = false;   // governo interrupt enable (EN100/ENSOO, reg 0xE7 bit 0)
 	uint8_t m_fdu_vector = 0;    // governo interrupt vector (VETTN, reg 0xEF)
+	uint8_t m_fdu_dma_hi = 0;    // ADRLN (0xF6): high byte (A16-23) of the 24-bit DMA address
 
 	// translated memory access over the whole segmented space
 	uint16_t mem_r(address_space &space, offs_t offset, uint16_t mem_mask);
@@ -118,14 +128,19 @@ private:
 	void     fdu_w(offs_t offset, uint8_t data);
 	void     fdc_intrq_w(int state);
 	void     fdc_drq_w(int state);
+	void     dma_hreq_w(int state);           // AM9517 bus request -> hold/grant
+	void     dma_eop_w(int state);            // AM9517 EOP/TC -> FDC TC
+	uint8_t  dma_memr(offs_t offset);         // DMA physical-memory read  (24-bit via 0xF6 latch)
+	void     dma_memw(offs_t offset, uint8_t data); // DMA physical-memory write
 	void     fdu_timer_out(int state);   // 8253 ch1 -> INTMO
 	void     update_fdu_irq();
 	uint16_t vi_ack_r();   // VI vector = interrupting governo's VETTN; clears INTP1
 	static void floppy_formats(format_registration &fr);
 
 	// MB15652 bus/DMA arbiter (0xFF80-8F)
-	uint8_t  arb_r(offs_t offset) { return 0; }   // grant register (stub)
+	uint8_t  arb_r(offs_t offset);
 	void     arb_w(offs_t offset, uint8_t data);
+	void     arb_update();
 	TIMER_CALLBACK_MEMBER(arb_done);
 	uint16_t nviack_r();
 
@@ -354,9 +369,18 @@ uint8_t m40_state::fdu_r(offs_t offset)
 	{
 	case 0x1d: data = m_fdc->msr_r(); break;         // uPD765 main status
 	case 0x1f: data = m_fdc->fifo_r(); break;        // uPD765 data
+	case 0x40: case 0x42: case 0x44: case 0x46:      // AM9517A DMAC internal regs
+	case 0x48: case 0x4a: case 0x4c: case 0x4e:      // (byte-spaced: reg = (addr>>1)&0x0f)
+	case 0x50: case 0x52: case 0x54: case 0x56:
+	case 0x58: case 0x5a: case 0x5c: case 0x5e:
+		data = m_dmac->read((reg >> 1) & 0x0f); break;
 	case 0x99: case 0x9b: case 0x9d:                 // 8253 timer (ch0/ch1/ch2 read)
 		data = m_fdu_timer->read((reg >> 1) & 3); break;
-	case 0xf7: data = (m_timer_int ? 0x01 : 0) | (m_fdc_int ? 0x02 : 0); break;  // RD1NT: INTMO|INTOO
+	case 0xf7:                                       // RD1NT: INTMO (bit0) | INTOO (bit1)
+		// The interrupt-status register latches whichever source raised INTP1 so
+		// the ISR can identify it; the raw lines pulse too briefly to catch live.
+		data = (m_intmo_lat || m_timer_int ? 0x01 : 0) | (m_intoo_lat || m_fdc_int ? 0x02 : 0);
+		break;
 	case 0xff: data = 0xe1;            break;        // RD1DN identifier: 0xE0 | NOM10(=1 FDU)
 	case 0xed: data = 0xff;            break;        // RDGNN diagnostic port
 	default:   data = 0xff;            break;
@@ -370,6 +394,16 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 	switch (reg)
 	{
 	case 0x1f: m_fdc->fifo_w(data); break;           // uPD765 command/parameter
+	case 0x40: case 0x42: case 0x44: case 0x46:      // AM9517A DMAC internal regs
+	case 0x48: case 0x4a: case 0x4c: case 0x4e:
+	case 0x50: case 0x52: case 0x54: case 0x56:
+	case 0x58: case 0x5a: case 0x5c: case 0x5e:
+		m_dmac->write((reg >> 1) & 0x0f, data); break;
+	case 0xf6: m_fdu_dma_hi = data; break;           // ADRLN — DMA address bits A16-23
+	case 0xff:                                        // E01NT — acknowledge/reset the pending interrupt
+		m_intoo_lat = false;
+		m_intmo_lat = false;
+		break;
 	case 0x99: case 0x9b: case 0x9d: case 0x9f:      // 8253 timer (mode 0x9f, ch2 0x9d, ch1 0x9b, ch0 0x99)
 		m_fdu_timer->write((reg >> 1) & 3, data); break;
 	case 0xef: m_fdu_vector = data; break;           // VETTN — governo interrupt vector
@@ -395,8 +429,11 @@ void m40_state::update_fdu_irq()
 
 void m40_state::fdc_intrq_w(int state)
 {
-	if (state && !m_fdc_int)     // rising edge latches INTP1
+	if (state && !m_fdc_int)     // rising edge latches INTP1 and the INTOO source
+	{
 		m_fdu_pending = true;
+		m_intoo_lat = true;
+	}
 	m_fdc_int = bool(state);
 	update_fdu_irq();
 }
@@ -405,8 +442,11 @@ void m40_state::fdc_intrq_w(int state)
 // motor-off (2 s), and the read/write time-out (800 ms). Same INTP1 latch path.
 void m40_state::fdu_timer_out(int state)
 {
-	if (state && !m_timer_int)
+	if (state && !m_timer_int)   // rising edge latches INTP1 and the INTMO source
+	{
 		m_fdu_pending = true;
+		m_intmo_lat = true;
+	}
 	m_timer_int = bool(state);
 	update_fdu_irq();
 }
@@ -420,7 +460,48 @@ uint16_t m40_state::vi_ack_r()
 
 void m40_state::fdc_drq_w(int state)
 {
-	// TODO: AM9517 ch2 DMA to physical (0xF6<<16 | ch2-addr) into segment 60.
+	// FDC DMARO -> DMAC channel-2 request (manual §3.3.2: the FDC data channel).
+	m_dmac->dreq2_w(state);
+}
+
+void m40_state::dma_hreq_w(int state)
+{
+	// The governo requests the bus (BAXXN); we grant immediately and hold the CPU.
+	m_maincpu->set_input_line(INPUT_LINE_HALT, state ? ASSERT_LINE : CLEAR_LINE);
+	m_dmac->hack_w(state);
+}
+
+void m40_state::dma_eop_w(int state)
+{
+	// AM9517 TC (end of block) -> µPD765 terminal count, ending its transfer.
+	m_fdc->tc_w(state);
+}
+
+// The AM9517A drives only the low 16 address bits; the high byte comes from the
+// ADRLN latch (0xF6), forming the 24-bit physical address (manual §3.3.4). DMA
+// bypasses the MMU and hits physical memory directly. RAM is stored big-endian
+// (byte X of a word at even A is the MS byte), so a physical byte address maps
+// straight onto the backing array.
+uint8_t m40_state::dma_memr(offs_t offset)
+{
+	uint32_t const addr = ((uint32_t(m_fdu_dma_hi) << 16) | offset) & 0xffffff;
+	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
+		return m_ramptr[addr - 0x010000];
+	if (addr >= 0xff0000)
+		return m_vram[addr & 0xffff];
+	if (addr < 0x4000)
+		return (addr & 1) ? (m_rom[addr >> 1] & 0xff) : (m_rom[addr >> 1] >> 8);
+	return 0xff;
+}
+
+void m40_state::dma_memw(offs_t offset, uint8_t data)
+{
+	uint32_t const addr = ((uint32_t(m_fdu_dma_hi) << 16) | offset) & 0xffffff;
+	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
+		m_ramptr[addr - 0x010000] = data;
+	else if (addr >= 0xff0000)
+		m_vram[addr & 0xffff] = data;
+	// ROM / unpopulated: ignore (no READY fault during DMA)
 }
 
 void m40_state::floppy_formats(format_registration &fr)
@@ -559,30 +640,68 @@ MC6845_UPDATE_ROW(m40_state::crtc_update_row)
 // loop writes 0xFF8C, and a spurious NVI there resumes via a stale rr12).
 // NOTE: the latency is a plausible approximation (no MB15652 datasheet); it must
 // outlast the ROM's request-write burst. To be refined against disk-A's arbiter test.
+// 0xFF81 exposes the grant bitmap in the high nibble (ch0=0x80 .. ch3=0x10) plus
+// an idle/active low nibble (0x0f idle, 0x08 when any channel is granted). The
+// ROM reads this in the NVI handler to learn which channel was granted.
+uint8_t m40_state::arb_r(offs_t offset)
+{
+	uint8_t const reg = offset & 0x0f;
+	if (reg == 1)
+	{
+		uint8_t const hi = (BIT(m_arb_grant, 0) ? 0x80 : 0) | (BIT(m_arb_grant, 1) ? 0x40 : 0)
+		                 | (BIT(m_arb_grant, 2) ? 0x20 : 0) | (BIT(m_arb_grant, 3) ? 0x10 : 0);
+		return hi | (m_arb_grant ? 0x08 : 0x0f);
+	}
+	return 0;
+}
+
+// Priority ch0 > ch1 > ch2 > ch3: chN is granted only once requested AND the
+// release level has reached N (ch0 at once; ch1 needs 0xFF8D, ch2 8D+8E, ch3
+// 8D+8E+8F). A pending grant raises NVI, but delayed by m_arb_timer so it lands in
+// the ROM's post-`ei nvi` spin-loop (matching the real board's arbitration latency)
+// rather than mid-setup.
+void m40_state::arb_update()
+{
+	uint8_t g = 0;
+	for (int ch = 0; ch < 4; ch++)
+		if (BIT(m_arb_req, ch) && m_arb_rel >= ch)
+			g |= (1 << ch);
+	m_arb_grant = g;
+	if (g)
+		m_arb_timer->adjust(attotime::from_usec(50));
+}
+
 void m40_state::arb_w(offs_t offset, uint8_t data)
 {
 	uint8_t const reg = offset & 0x0f;
-	// A DMA-request register (0xFF84-87) written with the request bit (bit 0) set
-	// starts one arbitration that completes via NVI. The FDU governo's system-bus
-	// requests write these with bit 0 clear (its `out 0xff84` low byte is an
-	// incidental 0x80) -> a plain bus hold, no NVI; the bus-arbiter self-test
-	// writes 0xFF (bit 0 set) -> NVI. So the distinction is the data, not the FDU.
-	if (reg >= 4 && reg <= 7 && BIT(data, 0) && !m_arb_busy)
+	switch (reg)
 	{
-		m_arb_busy = true;
-		m_arb_timer->adjust(attotime::from_usec(50));
+	case 0x0: case 0x1: case 0x2: case 0x3:          // ack/clear channel reg
+		m_arb_req &= ~(1 << reg);
+		if (m_arb_req == 0) m_arb_rel = 0;           // idle -> reset release level
+		break;
+	case 0x8: case 0x9: case 0xa: case 0xb:          // request channel reg-8
+		m_arb_req |= (1 << (reg - 8));
+		break;
+	case 0x5: case 0xd: if (m_arb_rel < 1) m_arb_rel = 1; break;   // release ch1
+	case 0x6: case 0xe: if (m_arb_rel < 2) m_arb_rel = 2; break;   // release ch2
+	case 0x7: case 0xf: if (m_arb_rel < 3) m_arb_rel = 3; break;   // release ch3
+	default: break;                                  // 0xFF84 / 0xFF8C: boot bus gate
 	}
+	arb_update();
 }
 
 TIMER_CALLBACK_MEMBER(m40_state::arb_done)
 {
-	m_arb_busy = false;
-	m_maincpu->set_input_line(z8001_device::NVI_LINE, ASSERT_LINE);   // arbitration done -> NVI
+	if (m_arb_grant)                                 // grant still pending -> raise NVI
+		m_maincpu->set_input_line(z8001_device::NVI_LINE, ASSERT_LINE);
 }
 
 uint16_t m40_state::nviack_r()
 {
-	m_maincpu->set_input_line(z8001_device::NVI_LINE, CLEAR_LINE);    // acknowledge
+	// Vector fetch clears only the NVI line; the grant persists so the handler can
+	// still read 0xFF81, and is cleared by the per-channel ack (0xFF80..0xFF83).
+	m_maincpu->set_input_line(z8001_device::NVI_LINE, CLEAR_LINE);
 	return 0;
 }
 
@@ -667,6 +786,18 @@ void m40_state::m40(machine_config &config)
 	m_fdc->intrq_wr_callback().set(FUNC(m40_state::fdc_intrq_w));
 	m_fdc->drq_wr_callback().set(FUNC(m40_state::fdc_drq_w));
 	FLOPPY_CONNECTOR(config, "fdc:0", m40_floppies, "8dsdd", m40_state::floppy_formats);
+
+	// AM9517A DMAC (manual §3.3): channel 2 is the FDC data channel. The FDC's
+	// DMARO drives DREQ2; the DMAC reads/writes the FDC data register on DACK and
+	// moves bytes to/from physical memory (24-bit address via the 0xF6 latch). TC
+	// terminates the µPD765 transfer.
+	AM9517A(config, m_dmac, 8_MHz_XTAL / 2);
+	m_dmac->out_hreq_callback().set(FUNC(m40_state::dma_hreq_w));
+	m_dmac->out_eop_callback().set(FUNC(m40_state::dma_eop_w));
+	m_dmac->in_memr_callback().set(FUNC(m40_state::dma_memr));
+	m_dmac->out_memw_callback().set(FUNC(m40_state::dma_memw));
+	m_dmac->in_ior_callback<2>().set(m_fdc, FUNC(upd765a_device::dma_r));
+	m_dmac->out_iow_callback<2>().set(m_fdc, FUNC(upd765a_device::dma_w));
 
 	// FDU on-board 8253 (manual §3.4): ch0 = ~10 ms time base from CLK10 (1 us),
 	// cascaded to ch1 which generates INTMO (motor spin-up 500 ms / rd-wr time-out
