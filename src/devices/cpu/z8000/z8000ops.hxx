@@ -2836,7 +2836,7 @@ void z8002_device::Z3A_ssss_1001_0000_aaaa_dddd_x000()
 	GET_DST(OP1,NIB2);
 	GET_CCC(OP1,NIB3);
 	WRIR_B(dst, RDPORT_B( 1, RW(src)));
-	RW(dst)--;
+	sub_from_addr_reg(dst, 1);
 	if (--RW(cnt)) { CLR_V; if (cc == 0) m_pc -= 4; } else SET_V;
 }
 
