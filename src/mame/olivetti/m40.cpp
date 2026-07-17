@@ -36,6 +36,35 @@
 #include <cstdio>
 #include <cstdlib>
 
+class m40_upd765a_device;
+
+DECLARE_DEVICE_TYPE(M40_UPD765A, m40_upd765a_device)
+
+class m40_upd765a_device : public upd765_family_device
+{
+public:
+	m40_upd765a_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock)
+		: upd765_family_device(mconfig, M40_UPD765A, tag, owner, clock)
+	{
+		has_dor = false;
+	}
+
+	void map(address_map &map) override ATTR_COLD
+	{
+		map(0x0, 0x0).r(FUNC(m40_upd765a_device::msr_r));
+		map(0x1, 0x1).rw(FUNC(m40_upd765a_device::fifo_r), FUNC(m40_upd765a_device::fifo_w));
+	}
+
+	void soft_reset() override
+	{
+		upd765_family_device::soft_reset();
+		for (floppy_info &fi : flopi)
+			fi.pcn = 0;
+	}
+};
+
+DEFINE_DEVICE_TYPE(M40_UPD765A, m40_upd765a_device, "m40_upd765a", "Olivetti M40 GO280 uPD765A FDC")
+
 namespace {
 
 #ifndef M40_DEBUG_TRACE
@@ -74,7 +103,7 @@ private:
 	required_device<ram_device> m_ram;
 	required_device<mc6845_device> m_crtc;
 	required_device<palette_device> m_palette;
-	required_device<upd765a_device> m_fdc;
+	required_device<m40_upd765a_device> m_fdc;
 	required_device<floppy_connector> m_floppy;
 	required_device<pit8253_device> m_fdu_timer;
 	required_device<am9517a_device> m_dmac;
@@ -155,8 +184,12 @@ private:
 	void     vid_w(offs_t offset, uint8_t data);
 #if M40_DEBUG_TRACE
 	std::FILE *m_vram_trace = nullptr;
+	std::FILE *m_fdu_trace = nullptr;
 	void     debug_vram_w(offs_t addr, uint8_t data, uint16_t mem_mask);
 	void     debug_crtc_w(uint8_t reg, uint8_t data);
+	void     debug_fdu(char const *event, uint8_t reg, uint8_t data);
+	void     debug_diag_w(offs_t logical, offs_t physical, uint16_t data, uint16_t mem_mask);
+	void     debug_pc_ctx(char const *event);
 #endif
 	void     kdc_queue(uint8_t data);
 	void     kdc_update_irq();
@@ -170,6 +203,7 @@ private:
 	void     fdc_drq_w(int state);
 	void     dma_hreq_w(int state);           // AM9517 bus request -> hold/grant
 	void     dma_eop_w(int state);            // AM9517 EOP/TC -> FDC TC
+	void     fdu_index_w(int state);          // FDC index pulse -> 8253 channel 2 clock
 	uint32_t dma_phys();                      // next DMA physical byte address
 	uint8_t  dma_memr(offs_t offset);         // DMA physical-memory read
 	void     dma_memw(offs_t offset, uint8_t data); // DMA physical-memory write
@@ -264,6 +298,19 @@ void m40_state::debug_vram_w(offs_t addr, uint8_t data, uint16_t mem_mask)
 	{
 		std::fprintf(m_vram_trace, "VRAM pc=%08X off=%04X data=%02X mask=%04X\n",
 			unsigned(m_maincpu->pc()), unsigned(addr & 0xffff), data, mem_mask);
+		if (m_maincpu->pc() == 0x00031156)
+		{
+			std::fprintf(m_vram_trace,
+				"VRAMCTX pc=00031156 r0=%04X r1=%04X r2=%04X r3=%04X r4=%04X r5=%04X r6=%04X r7=%04X r8=%04X r9=%04X r10=%04X r11=%04X r12=%04X r13=%04X r14=%04X r15=%04X\n",
+				unsigned(m_maincpu->state_int(Z8000_R0)), unsigned(m_maincpu->state_int(Z8000_R1)),
+				unsigned(m_maincpu->state_int(Z8000_R2)), unsigned(m_maincpu->state_int(Z8000_R3)),
+				unsigned(m_maincpu->state_int(Z8000_R4)), unsigned(m_maincpu->state_int(Z8000_R5)),
+				unsigned(m_maincpu->state_int(Z8000_R6)), unsigned(m_maincpu->state_int(Z8000_R7)),
+				unsigned(m_maincpu->state_int(Z8000_R8)), unsigned(m_maincpu->state_int(Z8000_R9)),
+				unsigned(m_maincpu->state_int(Z8000_R10)), unsigned(m_maincpu->state_int(Z8000_R11)),
+				unsigned(m_maincpu->state_int(Z8000_R12)), unsigned(m_maincpu->state_int(Z8000_R13)),
+				unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
+		}
 		std::fflush(m_vram_trace);
 	}
 }
@@ -276,6 +323,70 @@ void m40_state::debug_crtc_w(uint8_t reg, uint8_t data)
 			unsigned(m_maincpu->pc()), reg, data);
 		std::fflush(m_vram_trace);
 	}
+}
+
+void m40_state::debug_fdu(char const *event, uint8_t reg, uint8_t data)
+{
+	if (m_fdu_trace)
+	{
+		std::fprintf(m_fdu_trace,
+			"FDU %s pc=%08X reg=%02X data=%02X pending=%d ien=%d intmo_lat=%d timer=%d intoo_lat=%d fdc=%d vec=%02X dma_hi=%02X dma_ch1=%04X dma_byte=%06X\n",
+			event, unsigned(m_maincpu->pc()), reg, data,
+			m_fdu_pending ? 1 : 0, m_fdu_ien ? 1 : 0,
+			m_intmo_lat ? 1 : 0, m_timer_int ? 1 : 0,
+			m_intoo_lat ? 1 : 0, m_fdc_int ? 1 : 0,
+			m_fdu_vector, m_fdu_dma_hi, m_dma_ch1, unsigned(m_dma_byte));
+		std::fflush(m_fdu_trace);
+	}
+}
+
+void m40_state::debug_diag_w(offs_t logical, offs_t physical, uint16_t data, uint16_t mem_mask)
+{
+	if (m_fdu_trace && logical >= 0x04a480 && logical <= 0x04a4bf)
+	{
+		std::fprintf(m_fdu_trace,
+			"DIAGW pc=%08X log=%06X phys=%06X data=%04X mask=%04X\n",
+			unsigned(m_maincpu->pc()), unsigned(logical), unsigned(physical),
+			unsigned(data), unsigned(mem_mask));
+		std::fflush(m_fdu_trace);
+	}
+	if (m_fdu_trace && logical >= 0x048f40 && logical <= 0x048f80)
+	{
+		std::fprintf(m_fdu_trace,
+			"ERRBUF pc=%08X log=%06X phys=%06X data=%04X mask=%04X "
+			"r0=%04X r1=%04X r2=%04X r3=%04X r4=%04X r5=%04X r6=%04X r7=%04X "
+			"r8=%04X r9=%04X r10=%04X r11=%04X r12=%04X r13=%04X r14=%04X r15=%04X\n",
+			unsigned(m_maincpu->pc()), unsigned(logical), unsigned(physical),
+			unsigned(data), unsigned(mem_mask),
+			unsigned(m_maincpu->state_int(Z8000_R0)), unsigned(m_maincpu->state_int(Z8000_R1)),
+			unsigned(m_maincpu->state_int(Z8000_R2)), unsigned(m_maincpu->state_int(Z8000_R3)),
+			unsigned(m_maincpu->state_int(Z8000_R4)), unsigned(m_maincpu->state_int(Z8000_R5)),
+			unsigned(m_maincpu->state_int(Z8000_R6)), unsigned(m_maincpu->state_int(Z8000_R7)),
+			unsigned(m_maincpu->state_int(Z8000_R8)), unsigned(m_maincpu->state_int(Z8000_R9)),
+			unsigned(m_maincpu->state_int(Z8000_R10)), unsigned(m_maincpu->state_int(Z8000_R11)),
+			unsigned(m_maincpu->state_int(Z8000_R12)), unsigned(m_maincpu->state_int(Z8000_R13)),
+			unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
+		std::fflush(m_fdu_trace);
+	}
+}
+
+void m40_state::debug_pc_ctx(char const *event)
+{
+	if (!m_fdu_trace)
+		return;
+	std::fprintf(m_fdu_trace,
+		"PCCTX %s pc=%08X r0=%04X r1=%04X r2=%04X r3=%04X r4=%04X r5=%04X r6=%04X r7=%04X "
+		"r8=%04X r9=%04X r10=%04X r11=%04X r12=%04X r13=%04X r14=%04X r15=%04X\n",
+		event, unsigned(m_maincpu->pc()),
+		unsigned(m_maincpu->state_int(Z8000_R0)), unsigned(m_maincpu->state_int(Z8000_R1)),
+		unsigned(m_maincpu->state_int(Z8000_R2)), unsigned(m_maincpu->state_int(Z8000_R3)),
+		unsigned(m_maincpu->state_int(Z8000_R4)), unsigned(m_maincpu->state_int(Z8000_R5)),
+		unsigned(m_maincpu->state_int(Z8000_R6)), unsigned(m_maincpu->state_int(Z8000_R7)),
+		unsigned(m_maincpu->state_int(Z8000_R8)), unsigned(m_maincpu->state_int(Z8000_R9)),
+		unsigned(m_maincpu->state_int(Z8000_R10)), unsigned(m_maincpu->state_int(Z8000_R11)),
+		unsigned(m_maincpu->state_int(Z8000_R12)), unsigned(m_maincpu->state_int(Z8000_R13)),
+		unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
+	std::fflush(m_fdu_trace);
 }
 #endif
 
@@ -300,14 +411,41 @@ uint16_t m40_state::mem_r(address_space &space, offs_t offset, uint16_t mem_mask
 	offs_t addr = offset << 1;
 	if (!xlate(space.spacenum(), false, addr))
 		return (space.spacenum() == AS_PROGRAM) ? 0x8d07 : 0xffff;  // seg violation -> NOP
+#if M40_DEBUG_TRACE
+	if (space.spacenum() == AS_PROGRAM)
+	{
+		static uint32_t last_pc = 0xffffffff;
+		uint32_t const pc = m_maincpu->pc();
+		if (pc != last_pc)
+		{
+			last_pc = pc;
+			switch (pc)
+			{
+			case 0x00027fde: debug_pc_ctx("7fde-entry"); break;
+			case 0x00027fe8: debug_pc_ctx("7fe8-fatal"); break;
+			case 0x00028002: debug_pc_ctx("8002-return"); break;
+			case 0x0002a800: debug_pc_ctx("a800-call"); break;
+			case 0x0002a92a: debug_pc_ctx("a92a-call"); break;
+			case 0x0002b668: debug_pc_ctx("b668-call"); break;
+			case 0x00044586: debug_pc_ctx("4-4586-call"); break;
+			}
+		}
+	}
+#endif
 	return phys_r(addr, mem_mask);
 }
 
 void m40_state::mem_w(address_space &space, offs_t offset, uint16_t data, uint16_t mem_mask)
 {
 	offs_t addr = offset << 1;
+	offs_t const logical = addr;
 	if (xlate(space.spacenum(), true, addr))
+	{
+#if M40_DEBUG_TRACE
+		debug_diag_w(logical, addr, data, mem_mask);
+#endif
 		phys_w(addr, data, mem_mask);
+	}
 }
 
 //**************************************************************************
@@ -317,7 +455,19 @@ void m40_state::mem_w(address_space &space, offs_t offset, uint16_t data, uint16
 uint8_t m40_state::mmu_r(offs_t offset)
 {
 	if (!BIT(offset, 0))
-		return m_mmu->read((uint8_t)(offset >> 8));
+	{
+		uint8_t const reg = (uint8_t)(offset >> 8);
+		uint8_t const data = m_mmu->read(reg);
+#if M40_DEBUG_TRACE
+		if (m_fdu_trace && (reg == 0x0b || reg == 0x01 || reg == 0x20 || reg == 0x0f || reg == 0x05))
+		{
+			std::fprintf(m_fdu_trace, "MMU R pc=%08X off=%04X reg=%02X data=%02X\n",
+				unsigned(m_maincpu->pc()), unsigned(offset), reg, data);
+			std::fflush(m_fdu_trace);
+		}
+#endif
+		return data;
+	}
 	return 0xff;
 }
 
@@ -326,11 +476,22 @@ void m40_state::mmu_w(offs_t offset, uint8_t data)
 	if (!BIT(offset, 0))
 	{
 		uint8_t reg = (uint8_t)(offset >> 8);
-		if (reg == 0x00) m_mmu_mode = data;   // shadow master-enable / translate bits
+#if M40_DEBUG_TRACE
+		if (m_fdu_trace && (reg == 0x0b || reg == 0x01 || reg == 0x20 || reg == 0x0f || reg == 0x05))
+		{
+			std::fprintf(m_fdu_trace, "MMU W pc=%08X off=%04X reg=%02X data=%02X\n",
+				unsigned(m_maincpu->pc()), unsigned(offset), reg, data);
+			std::fflush(m_fdu_trace);
+		}
+#endif
 		m_mmu->write(reg, data);
-		m_maincpu->space(AS_PROGRAM).invalidate_caches(read_or_write::READWRITE);
-		m_maincpu->space(AS_DATA).invalidate_caches(read_or_write::READWRITE);
-		m_maincpu->space(z8001_device::AS_STACK).invalidate_caches(read_or_write::READWRITE);
+		if (reg == 0x00)   // mode change -> re-map; do NOT invalidate on every
+		{                  // descriptor byte (that disrupts the SOTIRB block load)
+			m_mmu_mode = data;
+			m_maincpu->space(AS_PROGRAM).invalidate_caches(read_or_write::READWRITE);
+			m_maincpu->space(AS_DATA).invalidate_caches(read_or_write::READWRITE);
+			m_maincpu->space(z8001_device::AS_STACK).invalidate_caches(read_or_write::READWRITE);
+		}
 	}
 }
 
@@ -592,14 +753,16 @@ uint8_t m40_state::fdu_r(offs_t offset)
 	case 0x99: case 0x9b: case 0x9d:                 // 8253 timer (ch0/ch1/ch2 read)
 		data = m_fdu_timer->read((reg >> 1) & 3); break;
 	case 0xf7:                                       // RD1NT: INTMO (bit0) | INTOO (bit1)
-		// The interrupt-status register latches whichever source raised INTP1 so
-		// the ISR can identify it; the raw lines pulse too briefly to catch live.
-		data = (m_intmo_lat || m_timer_int ? 0x01 : 0) | (m_intoo_lat || m_fdc_int ? 0x02 : 0);
+		data = ((m_intmo_lat || m_timer_int) ? 0x01 : 0)
+			| ((m_intoo_lat || m_fdc_int) ? 0x02 : 0);
 		break;
 	case 0xff: data = 0xe1;            break;        // RD1DN identifier: 0xE0 | NOM10(=1 FDU)
 	case 0xed: data = 0xff;            break;        // RDGNN diagnostic port
 	default:   data = 0xff;            break;
 	}
+#if M40_DEBUG_TRACE
+	debug_fdu("R", reg, data);
+#endif
 	return data;
 }
 
@@ -629,6 +792,8 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 	case 0xff:                                        // E01NT — acknowledge/reset the pending interrupt
 		m_intoo_lat = false;
 		m_intmo_lat = false;
+		m_fdu_pending = false;
+		update_fdu_irq();
 		break;
 	case 0x99: case 0x9b: case 0x9d: case 0x9f:      // 8253 timer (mode 0x9f, ch2 0x9d, ch1 0x9b, ch0 0x99)
 		m_fdu_timer->write((reg >> 1) & 3, data); break;
@@ -641,6 +806,9 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 		break;                                        // bit6 SCRVO dir, bit3/7 MOTO1/2 (MFDU)
 	default: break;                                   // TODO: AM9517 DMAC 0x40-5E, 0xF6
 	}
+#if M40_DEBUG_TRACE
+	debug_fdu("W", reg, data);
+#endif
 }
 
 // Governo interrupt logic (manual 3963590 §3.5): the FDC INTRQ (INTOO) is latched
@@ -661,6 +829,9 @@ void m40_state::fdc_intrq_w(int state)
 		m_intoo_lat = true;
 	}
 	m_fdc_int = bool(state);
+#if M40_DEBUG_TRACE
+	debug_fdu("FDCINT", 0x00, state ? 1 : 0);
+#endif
 	update_fdu_irq();
 }
 
@@ -674,6 +845,9 @@ void m40_state::fdu_timer_out(int state)
 		m_intmo_lat = true;
 	}
 	m_timer_int = bool(state);
+#if M40_DEBUG_TRACE
+	debug_fdu("TIMER", 0x00, state ? 1 : 0);
+#endif
 	update_fdu_irq();
 }
 
@@ -687,6 +861,9 @@ uint16_t m40_state::vi_ack_r()
 	}
 
 	m_fdu_pending = false;       // vector-enable strobe also resets INTP1
+#if M40_DEBUG_TRACE
+	debug_fdu("VIACK", 0x00, m_fdu_vector);
+#endif
 	update_fdu_irq();
 	return m_fdu_vector;
 }
@@ -708,6 +885,14 @@ void m40_state::dma_eop_w(int state)
 {
 	// AM9517 TC (end of block) -> µPD765 terminal count, ending its transfer.
 	m_fdc->tc_w(state);
+}
+
+void m40_state::fdu_index_w(int state)
+{
+	m_fdu_timer->write_clk2(state);
+#if M40_DEBUG_TRACE
+	debug_fdu("INDEX", 0x00, state ? 1 : 0);
+#endif
 }
 
 // GO280's DMA uses an "anomalous" 2-channel scheme (manual §3.3.2): ch2 streams
@@ -742,6 +927,20 @@ void m40_state::dma_memw(offs_t /*offset*/, uint8_t data)
 		m_ramptr[addr - 0x010000] = data;
 	else if (addr >= 0xff0000)
 		m_vram[addr & 0xffff] = data;
+#if M40_DEBUG_TRACE
+	if (m_fdu_trace)
+	{
+		uint32_t const pos = (m_dma_byte - 1) & 0xffffff;
+		if (pos < 0x20 || (pos & 0xff) == 0)
+		{
+			std::fprintf(m_fdu_trace,
+				"DMAW pc=%08X pos=%06X phys=%06X data=%02X dma_hi=%02X dma_ch1=%04X\n",
+				unsigned(m_maincpu->pc()), unsigned(pos), unsigned(addr), data,
+				m_fdu_dma_hi, m_dma_ch1);
+			std::fflush(m_fdu_trace);
+		}
+	}
+#endif
 	// ROM / unpopulated: ignore (no READY fault during DMA)
 }
 
@@ -959,11 +1158,16 @@ void m40_state::machine_start()
 	m_kdc_timer = timer_alloc(FUNC(m40_state::kdc_poll), this);
 #if M40_DEBUG_TRACE
 	if (char const *const path = std::getenv("M40_VRAM_TRACE"))
-	{
-		if (path[0] != '\0')
-			m_vram_trace = std::fopen(path, "w");
-	}
-#endif
+		{
+			if (path[0] != '\0')
+				m_vram_trace = std::fopen(path, "w");
+		}
+		if (char const *const path = std::getenv("M40_FDU_TRACE"))
+		{
+			if (path[0] != '\0')
+				m_fdu_trace = std::fopen(path, "w");
+		}
+	#endif
 
 	// translating handlers over the whole 24-bit segmented byte space
 	// (installed on program / data / stack)
@@ -1064,9 +1268,12 @@ void m40_state::m40(machine_config &config)
 	m_crtc->set_update_row_callback(FUNC(m40_state::crtc_update_row));
 
 	// GO280 FDU floppy governo — uPD765 FDC (P8272) + 8" drive
-	UPD765A(config, m_fdc, 8_MHz_XTAL, true, true);
+	M40_UPD765A(config, m_fdc, 8_MHz_XTAL);
+	m_fdc->set_ready_line_connected(true);
+	m_fdc->set_select_lines_connected(true);
 	m_fdc->intrq_wr_callback().set(FUNC(m40_state::fdc_intrq_w));
 	m_fdc->drq_wr_callback().set(FUNC(m40_state::fdc_drq_w));
+	m_fdc->idx_wr_callback().set(FUNC(m40_state::fdu_index_w));
 	FLOPPY_CONNECTOR(config, "fdc:0", m40_floppies, "8dsdd", m40_state::floppy_formats);
 
 	// AM9517A DMAC (manual §3.3): channel 2 is the FDC data channel. The FDC's
@@ -1078,8 +1285,8 @@ void m40_state::m40(machine_config &config)
 	m_dmac->out_eop_callback().set(FUNC(m40_state::dma_eop_w));
 	m_dmac->in_memr_callback().set(FUNC(m40_state::dma_memr));
 	m_dmac->out_memw_callback().set(FUNC(m40_state::dma_memw));
-	m_dmac->in_ior_callback<2>().set(m_fdc, FUNC(upd765a_device::dma_r));
-	m_dmac->out_iow_callback<2>().set(m_fdc, FUNC(upd765a_device::dma_w));
+	m_dmac->in_ior_callback<2>().set(m_fdc, FUNC(m40_upd765a_device::dma_r));
+	m_dmac->out_iow_callback<2>().set(m_fdc, FUNC(m40_upd765a_device::dma_w));
 
 	// FDU on-board 8253 (manual §3.4): ch0 = ~10 ms time base from CLK10 (1 us),
 	// cascaded to ch1 which generates INTMO (motor spin-up 500 ms / rd-wr time-out
