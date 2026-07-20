@@ -126,12 +126,11 @@ private:
 	// register = low byte); framebuffer is the seg-61 window (m_vram)
 	bool    m_vid_live = false;  // CRTC live-signal state exposed in status bit 3
 	uint8_t m_crtc_index = 0;
-	uint8_t m_kdc_ctrl = 0;      // FE reg 0x01 shadow/readback (keyboard/video handshake)
+	uint8_t m_kdc_ctrl = 0;      // FE reg 0x01 control (bit7 = KDC interrupt enable, the FDU-EN100 analogue)
 	uint8_t m_kdc_data = 0;      // UC 0xFF22 byte-data latch
 	uint8_t m_kdc_status = 0;    // UC 0xFF20 status/control latch
 	uint8_t m_kdc_vector = 0;    // keyboard VI vector, installed by the disk monitor's PSA
 	bool    m_kdc_pending = false;
-	bool    m_kdc_armed = false;  // KDC VI enabled only once the disk monitor installs its vector (reg 0x20/0x21)
 	bool    m_kdc_fe_data_armed = false;
 	emu_timer *m_kdc_timer = nullptr;
 	uint16_t m_kbd_prev[4] = {};
@@ -610,7 +609,7 @@ TIMER_CALLBACK_MEMBER(m40_state::kdc_poll)
 		{ 0x5f,0x60,0x5d,0x57,0x58,0x55,0x4f,0x50,0x4d,0x67,0x52,0x1b,0x20,0x08,0x09,0x7f },
 		{ 0x71,0x77,0x65,0x72,0x74,0x79,0x75,0x69,0x6f,0x70,0x61,0x73,0x64,0x66,0x67,0x68 },
 		{ 0x6a,0x6b,0x6c,0x7a,0x78,0x63,0x76,0x62,0x6e,0x6d,0x2c,0x2e,0x2f,0x2d,0x3d,0x27 },
-		{ 0x6f,0x77,0x6e,0x76,0x70,0x78,0xfe,0xfd,0xfc,0xfb,0xfa,0xf9,0xf8,0xf7,0xf6,0xf5 }
+		{ 0x6f,0x77,0x6e,0x76,0x70,0x78,0xfe,0xfd,0xfc,0xfb,0xfa,0xf9,0xf8,0x0a,0x06,0x02 }
 	};
 
 	for (int row = 0; row < 4; row++)
@@ -720,7 +719,7 @@ void m40_state::vid_w(offs_t offset, uint8_t data)
 		m_kdc_fe_data_armed = false;
 		break;
 	case 0x20:
-	case 0x21: m_kdc_vector = data; m_kdc_armed = true; break;  // keyboard/FE interrupt vector latch (arms the KDC VI)
+	case 0x21: m_kdc_vector = data; break;       // keyboard/FE interrupt vector latch
 	case 0x6a: break;                       // "enable normal video"
 	default:   break;
 	}
@@ -818,7 +817,7 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 void m40_state::update_fdu_irq()
 {
 	m_maincpu->set_input_line(z8001_device::VI_LINE,
-		((m_fdu_pending && m_fdu_ien) || (m_kdc_pending && m_kdc_armed)) ? ASSERT_LINE : CLEAR_LINE);
+		((m_fdu_pending && m_fdu_ien) || (m_kdc_pending && BIT(m_kdc_ctrl, 7))) ? ASSERT_LINE : CLEAR_LINE);
 }
 
 void m40_state::fdc_intrq_w(int state)
@@ -853,7 +852,7 @@ void m40_state::fdu_timer_out(int state)
 
 uint16_t m40_state::vi_ack_r()
 {
-	if (m_kdc_pending && m_kdc_armed)
+	if (m_kdc_pending && BIT(m_kdc_ctrl, 7))
 	{
 		m_kdc_pending = false;
 		update_fdu_irq();
@@ -1187,7 +1186,6 @@ void m40_state::machine_start()
 	save_item(NAME(m_kdc_status));
 	save_item(NAME(m_kdc_vector));
 	save_item(NAME(m_kdc_pending));
-	save_item(NAME(m_kdc_armed));
 	save_item(NAME(m_kdc_fe_data_armed));
 	save_item(NAME(m_kbd_prev));
 	save_item(NAME(m_kbd_fifo));
@@ -1209,7 +1207,6 @@ void m40_state::machine_reset()
 	m_kdc_status = 0;
 	m_kdc_vector = 0x28;
 	m_kdc_pending = false;
-	m_kdc_armed = false;   // KDC VI stays masked until the disk monitor installs its vector
 	m_kdc_fe_data_armed = false;
 	for (auto &v : m_kbd_prev)
 		v = 0;
@@ -1366,9 +1363,9 @@ static INPUT_PORTS_START( m40 )
 	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F7) PORT_NAME("Raw FA") PORT_CHAR(UCHAR_MAMEKEY(F7))
 	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F8) PORT_NAME("Raw F9") PORT_CHAR(UCHAR_MAMEKEY(F8))
 	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F9) PORT_NAME("Raw F8") PORT_CHAR(UCHAR_MAMEKEY(F9))
-	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F10) PORT_NAME("Raw F7") PORT_CHAR(UCHAR_MAMEKEY(F10))
-	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F11) PORT_NAME("Raw F6") PORT_CHAR(UCHAR_MAMEKEY(F11))
-	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F12) PORT_NAME("Raw F5") PORT_CHAR(UCHAR_MAMEKEY(F12))
+	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_UP) PORT_NAME("Raw 0A") PORT_CHAR(UCHAR_MAMEKEY(UP))
+	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_DOWN) PORT_NAME("Raw 06") PORT_CHAR(UCHAR_MAMEKEY(DOWN))
+	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_RIGHT) PORT_NAME("Raw 02") PORT_CHAR(UCHAR_MAMEKEY(RIGHT))
 INPUT_PORTS_END
 
 //**************************************************************************
