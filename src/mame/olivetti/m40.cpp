@@ -740,7 +740,7 @@ void m40_state::vid_w(offs_t offset, uint8_t data)
 		if (data == 0x02)
 		{
 			kdc_queue(0xfb);
-			kdc_queue(0x0a);   // ITALY, jumpers 0
+			kdc_queue(0x11);   // USA ASCII, jumpers 0
 		}
 		kdc_update_irq();
 		break;
