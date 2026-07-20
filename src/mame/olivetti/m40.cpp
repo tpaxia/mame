@@ -740,7 +740,7 @@ void m40_state::vid_w(offs_t offset, uint8_t data)
 		if (data == 0x02)
 		{
 			kdc_queue(0xfb);
-			kdc_queue(0x11);   // USA ASCII, jumpers 0
+			kdc_queue(0xf1);   // USA ASCII (layout 17), jumpers 7 = D.P.
 		}
 		kdc_update_irq();
 		break;
