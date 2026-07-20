@@ -657,13 +657,16 @@ uint8_t m40_state::vid_r(offs_t offset)
 	switch (offset & 0xff)
 	{
 	case 0x00:
-	case 0x01:                     // FE/KDC control-status latch readback
+	case 0x01:                     // KDC status (read side of the control reg)
+		// bit 1 = TX ready (transmitter always empty in this model), tested by
+		// the direct-send helper (1d:043c) before writing reg 3; bit 2 = RX byte
+		// available — the vector-0x2c handler branches on it: set -> read reg 3
+		// (data path), clear -> TX/command-completion path. Both bits are status,
+		// so they combine (returning them exclusively made a pending key byte
+		// fail the TX-ready test with error 0x8006).
 		if (m_kbd_count)
-		{
 			m_kdc_fe_data_armed = true;
-			return 0x04;           // bit 2 = byte ready
-		}
-		return 0x02;               // bit 1 = ready/accepted for resident helper command 9
+		return 0x02 | (m_kbd_count ? 0x04 : 0x00);
 	case 0x02:
 	case 0x03:                     // FE/KDC data register selected by resident vector 0x2c
 		if (m_kdc_fe_data_armed && m_kbd_count)
@@ -710,13 +713,36 @@ void m40_state::vid_w(offs_t offset, uint8_t data)
 		break;
 	case 0x00:
 	case 0x01:
-		m_kdc_ctrl = data;                       // control latch / KDC handshake shadow
+		// KDC control (decoded from the resident driver's mask/set table at
+		// 1d:042c and the vector-0x2c handler 1d:068e):
+		//   bit 5 = TX interrupt enable — transmitter is always empty here, so
+		//           setting it raises the "command/completion" VI at once; the
+		//           handler's TX branch fetches the byte to send via the test's
+		//           callback (which clears its busy flag) and writes it to reg 3.
+		//   bit 6 = TX handshake for the direct-send path (helper cmd 9)
+		//   bit 7 = RX interrupt enable (keyboard data)
+		m_kdc_ctrl = data;
 		m_kdc_fe_data_armed = false;
+		kdc_update_irq();
 		break;
 	case 0x02:
 	case 0x03:
+		// Data register write = byte transmitted to the KDC (keyboard MCU) —
+		// KEYTE1's init commands 0x06/0x08/0x0a/0x0c/0x10/0x02 arrive here.
+		// The transfer completes immediately; if TX VI (bit 5) is still armed
+		// (multi-byte command), the level VI re-asserts for the next byte.
 		m_kdc_data = data;
 		m_kdc_fe_data_armed = false;
+		// Command 0x02 = read keyboard ID/jumpers: the MCU answers 0xFB then a
+		// config byte, low 5 bits = layout (KEYTE1 table at 21:22d0: 0=INTER-
+		// NATIONAL .. 10=ITALY, 11=JAPAN/Kana, 17=USA ASCII), high 3 = jumpers.
+		// KEYTE1 blocks dequeuing its FIFO until the 0xFB arrives (21:062c).
+		if (data == 0x02)
+		{
+			kdc_queue(0xfb);
+			kdc_queue(0x0a);   // ITALY, jumpers 0
+		}
+		kdc_update_irq();
 		break;
 	case 0x20:
 	case 0x21: m_kdc_vector = data; break;       // keyboard/FE interrupt vector latch
@@ -816,8 +842,12 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 // the VI-acknowledge (the same strobe that gates the vector onto the bus).
 void m40_state::update_fdu_irq()
 {
+	// KDC VI causes: RX (queued keyboard byte, edge-latched in m_kdc_pending,
+	// enabled by ctrl bit 7) and TX (level: transmitter empty — always — while
+	// ctrl bit 5 is set; the resident driver clears bit 5 after the last byte).
+	bool const kdc_vi = (m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5);
 	m_maincpu->set_input_line(z8001_device::VI_LINE,
-		((m_fdu_pending && m_fdu_ien) || (m_kdc_pending && BIT(m_kdc_ctrl, 7))) ? ASSERT_LINE : CLEAR_LINE);
+		((m_fdu_pending && m_fdu_ien) || kdc_vi) ? ASSERT_LINE : CLEAR_LINE);
 }
 
 void m40_state::fdc_intrq_w(int state)
@@ -852,9 +882,14 @@ void m40_state::fdu_timer_out(int state)
 
 uint16_t m40_state::vi_ack_r()
 {
-	if (m_kdc_pending && BIT(m_kdc_ctrl, 7))
+	if ((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
 	{
-		m_kdc_pending = false;
+		// One vector for both KDC causes: the handler reads the status register
+		// and dispatches (bit 2 set -> RX, clear -> TX/completion). RX pending is
+		// edge-latched, ack'd here; the TX cause is level and only drops when the
+		// driver clears ctrl bit 5.
+		if (m_kdc_pending && BIT(m_kdc_ctrl, 7))
+			m_kdc_pending = false;
 		update_fdu_irq();
 		return m_kdc_vector;
 	}
