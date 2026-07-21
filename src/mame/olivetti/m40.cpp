@@ -123,6 +123,7 @@ private:
 	uint8_t m_arb_req = 0;    // pending channel requests   (bit0=ch0 .. bit3=ch3)
 	uint8_t m_arb_grant = 0;  // channels currently granted (bit0=ch0 .. bit3=ch3)
 	uint8_t m_arb_rel = 0;    // release level from 0xFF8D/8E/8F (and 0xFF85/86/87)
+	bool m_arb_vieno = false; // VIENO flip-flop: 0xFF81 bit 3 (set by 0xFF8C-8F, cleared by 0xFF84-87)
 
 	// GO252 video/keyboard governo (KDC): I/O window at slot 1 (0x1000-0x1FFF,
 	// register = low byte); framebuffer is the seg-61 window (m_vram)
@@ -171,6 +172,12 @@ private:
 	uint8_t  ff41_r();
 	void     ff41_w(uint8_t data);
 	uint8_t  ffa0_r();
+	uint8_t  ff00_r();
+	bool m_suppress_enabled = true;   // MMU-violation write suppression gate (0xFF00/0xFFA0)
+	uint8_t m_timer_vector = 0;       // UC timer VI vector (written to 0xFF01)
+	bool m_timer_out1 = false;        // 8253 ch1 OUT level (timer VI source, gated by VIENO)
+	void ff01_w(uint8_t data) { m_timer_vector = data; }
+	void pit_out1_w(int state) { m_timer_out1 = (state != 0); update_fdu_irq(); }
 	uint8_t  kdc_uc_status_r();
 	void     kdc_uc_status_w(uint8_t data);
 	uint8_t  kdc_uc_data_r();
@@ -405,7 +412,10 @@ bool m40_state::xlate(int spacenum, bool write, offs_t &addr)
 	if (!(m_mmu_mode & 0x80))
 		return true;    // MMU not master-enabled -> transparent (physical == segmented addr)
 	addr &= 0x3fffff;   // mask URS bit (single-range like the L1)
-	return m_mmu->translate(addr, write, /*sys=*/true, /*dma=*/false, st);
+	// N/S~ pin = the CPU's actual mode (FCW bit 14), latched into the MMU's bus
+	// cycle status and checked by the system-violation attribute.
+	bool const sys = BIT(m_maincpu->state_int(Z8000_FCW), 14);
+	return m_mmu->translate(addr, write, sys, /*dma=*/false, st, m_maincpu->pc());
 }
 
 uint16_t m40_state::mem_r(address_space &space, offs_t offset, uint16_t mem_mask)
@@ -430,6 +440,16 @@ uint16_t m40_state::mem_r(address_space &space, offs_t offset, uint16_t mem_mask
 			case 0x0002a92a: debug_pc_ctx("a92a-call"); break;
 			case 0x0002b668: debug_pc_ctx("b668-call"); break;
 			case 0x00044586: debug_pc_ctx("4-4586-call"); break;
+			// UC3003 (loaded in seg 0x21) control-flow probes
+			case 0x00210304: debug_pc_ctx("uc-0304-gate"); break;
+			case 0x00210330: debug_pc_ctx("uc-dispatch"); break;      // r1 = test index
+			case 0x00210358: debug_pc_ctx("uc-t1-entry"); break;
+			case 0x002106dc: debug_pc_ctx("uc-invalid-test"); break;
+			case 0x00210720: debug_pc_ctx("uc-next-test"); break;
+			case 0x00213576: debug_pc_ctx("uc-trap-body"); break;
+			case 0x002134f6: debug_pc_ctx("uc-trap-handler"); break;
+			case 0x00210ea2: debug_pc_ctx("uc-error"); break;
+			case 0x00210180: debug_pc_ctx("uc-0180-back"); break;
 			}
 		}
 	}
@@ -441,7 +461,14 @@ void m40_state::mem_w(address_space &space, offs_t offset, uint16_t data, uint16
 {
 	offs_t addr = offset << 1;
 	offs_t const logical = addr;
-	if (xlate(space.spacenum(), true, addr))
+	bool ok = xlate(space.spacenum(), true, addr);
+	if (!ok && !m_suppress_enabled)
+	{
+		// Suppression gate disabled (0xFF00): the violating write reaches memory.
+		phys_w(addr, data, mem_mask);
+		return;
+	}
+	if (ok)
 	{
 #if M40_DEBUG_TRACE
 		debug_diag_w(logical, addr, data, mem_mask);
@@ -522,7 +549,20 @@ void m40_state::ff41_w(uint8_t data)
 
 uint8_t m40_state::ffa0_r()
 {
+	// Reading 0xFFA0 also re-enables the MMU suppression gate (see ff00_r).
+	if (!machine().side_effects_disabled())
+		m_suppress_enabled = true;
 	return 0xff;   // config/jumpers — all-ones for now
+}
+
+// UC3003 TST01 "DISABLE INHIBITION MEMORY" sub-case: reading UC reg 0xFF00
+// disables the gate that suppresses memory writes on an MMU violation (the
+// violating write then reaches memory); reading 0xFFA0 restores it.
+uint8_t m40_state::ff00_r()
+{
+	if (!machine().side_effects_disabled())
+		m_suppress_enabled = false;
+	return 0xff;
 }
 
 uint8_t m40_state::kdc_uc_status_r()
@@ -570,6 +610,8 @@ void m40_state::io_map(address_map &map)
 	map(0xff22, 0xff23).rw(FUNC(m40_state::kdc_uc_data_r), FUNC(m40_state::kdc_uc_data_w)).umask16(0xff00);
 	map(0xff41, 0xff41).rw(FUNC(m40_state::ff41_r), FUNC(m40_state::ff41_w));
 	map(0xff80, 0xff8f).rw(FUNC(m40_state::arb_r), FUNC(m40_state::arb_w)); // MB15652 arbiter
+	map(0xff00, 0xff00).r(FUNC(m40_state::ff00_r));
+	map(0xff01, 0xff01).w(FUNC(m40_state::ff01_w));
 	map(0xffa0, 0xffa0).r(FUNC(m40_state::ffa0_r));
 	map(0xffc0, 0xffc7).rw(FUNC(m40_state::pit_r), FUNC(m40_state::pit_w)); // 8253: 0xC1/C3/C5=ch0-2, C7=ctl
 	map(0xffe0, 0xffe0).w(FUNC(m40_state::console_w));
@@ -618,13 +660,18 @@ TIMER_CALLBACK_MEMBER(m40_state::kdc_poll)
 		// 4f 50 4d 67).  The diagnostic monitor menu ("HIT 1..4 + ENTER") and the boot
 		// prompt read the KEYPAD, not the main number row, so the PC top row must send
 		// keypad codes or menu selection stops working.  Then  '  \  <-  DEL  TAB
-		// RETURN(0x52 = keypad Return = the CR the monitor accepts).
-		{ 0x5f,0x60,0x5d,0x57,0x58,0x55,0x4f,0x50,0x4d,0x67,0x2c,0x2b,0x31,0x06,0x05,0x52 },
+		// ENTER(0x61).  NOTE 0x61 vs 0x52: both terminate line input, but they are two
+		// distinct keys — DCOS's go/skip prompt (disk-A monitor seg03:0x1bf2) decodes
+		// scancode 0x61 as ENTER (flag 1) and 0x52 as SKIP (flag 2).  Sending 0x52 for
+		// PC-Enter made UC3003's "HIT ENTER TO GO ON / SKIP TO GO BACK" prompt silently
+		// skip back to the menu.
+		{ 0x5f,0x60,0x5d,0x57,0x58,0x55,0x4f,0x50,0x4d,0x67,0x2c,0x2b,0x31,0x06,0x05,0x61 },
 		// K1: Q..P  [  ]  A S D F
 		{ 0x03,0x0c,0x08,0x1f,0x11,0x14,0x19,0x25,0x26,0x30,0x2a,0x36,0x02,0x09,0x0f,0x0d },
 		// K2: G H J K L  ;  Z X C V B N M  ,  .  /
 		{ 0x18,0x15,0x1b,0x1a,0x28,0x22,0x0b,0x0e,0x10,0x20,0x1c,0x16,0x27,0x23,0x2d,0x0a },
-		// K3: keypad 7 8 9 4 5 6 1 2 3 0 . - Enter  SPACE  EXIT(ESC)  SH
+		// K3: keypad 7 8 9 4 5 6 1 2 3 0 . - SKIP(0x52, on PC numpad-Enter)  SPACE
+		// EXIT(ESC)  SH
 		{ 0x4f,0x50,0x4d,0x57,0x58,0x55,0x5f,0x60,0x5d,0x67,0x62,0x59,0x52,0x12,0x3d,0x6e }
 	};
 
@@ -862,8 +909,11 @@ void m40_state::update_fdu_irq()
 	// enabled by ctrl bit 7) and TX (level: transmitter empty — always — while
 	// ctrl bit 5 is set; the resident driver clears bit 5 after the last byte).
 	bool const kdc_vi = (m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5);
+	// UC timer VI: 8253 ch1 OUT (level), enabled by the VIENO flip-flop; vector
+	// from 0xFF01 (UC3003 TST03 counter-1).
+	bool const timer_vi = m_timer_out1 && m_arb_vieno;
 	m_maincpu->set_input_line(z8001_device::VI_LINE,
-		((m_fdu_pending && m_fdu_ien) || kdc_vi) ? ASSERT_LINE : CLEAR_LINE);
+		((m_fdu_pending && m_fdu_ien) || kdc_vi || timer_vi) ? ASSERT_LINE : CLEAR_LINE);
 }
 
 void m40_state::fdc_intrq_w(int state)
@@ -898,6 +948,12 @@ void m40_state::fdu_timer_out(int state)
 
 uint16_t m40_state::vi_ack_r()
 {
+	// UC timer VI (ch1 OUT & VIENO): supply the 0xFF01 vector unless a governo/KDC
+	// source is pending (they take priority on the shared line).
+	if (m_timer_out1 && m_arb_vieno
+		&& !((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
+		&& !(m_fdu_pending && m_fdu_ien))
+		return m_timer_vector;
 	if ((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
 	{
 		// One vector for both KDC causes: the handler reads the status register
@@ -1191,7 +1247,11 @@ uint8_t m40_state::arb_r(offs_t offset)
 	{
 		uint8_t const hi = (BIT(m_arb_grant, 0) ? 0x80 : 0) | (BIT(m_arb_grant, 1) ? 0x40 : 0)
 		                 | (BIT(m_arb_grant, 2) ? 0x20 : 0) | (BIT(m_arb_grant, 3) ? 0x10 : 0);
-		return hi | (m_arb_grant ? 0x08 : 0x0f);
+		// Low nibble: bits 0-2 = idle marker (clear while any grant is active);
+		// bit 3 = VIENO FF or any-grant.  Satisfies both UCY805 (0x0F after ack-all
+		// following 0xFF8D-8F writes; 0xF8 with all granted) and UC3003 test 2
+		// (bit 3: 0 at entry, 1 after 0xFF8C, 0 after 0xFF84).
+		return hi | (m_arb_grant ? 0 : 0x07) | ((m_arb_vieno || m_arb_grant) ? 0x08 : 0);
 	}
 	return 0;
 }
@@ -1229,6 +1289,10 @@ void m40_state::arb_w(offs_t offset, uint8_t data)
 	case 0x7: case 0xf: if (m_arb_rel < 3) m_arb_rel = 3; break;   // release ch3
 	default: break;                                  // 0xFF84 / 0xFF8C: boot bus gate
 	}
+	// VIENO flip-flop (UC3003 test 2 defines it): SET by any 0xFF8C-8F write,
+	// CLEARED by any 0xFF84-87 write.  Read back as 0xFF81 bit 3 (below).
+	if (reg >= 0xc)              m_arb_vieno = true;
+	else if (reg >= 0x4 && reg <= 0x7) m_arb_vieno = false;
 	arb_update();
 }
 
@@ -1336,13 +1400,21 @@ void m40_state::m40(machine_config &config)
 	m_maincpu->set_addrmap(z8001_device::AS_SIO, &m40_state::sio_map);
 	m_maincpu->viack().set(FUNC(m40_state::vi_ack_r));   // governo VI vector (VETTN)
 	m_maincpu->nviack().set(FUNC(m40_state::nviack_r));
+	// Segment-trap acknowledge: the CPU's SEGT-ack cycle reads the identifier word
+	// from the MMU (which also drops the SEGT line).
+	m_maincpu->segtack().set(FUNC(m40_state::segtack_r));
 
 	Z8010(config, m_mmu, 32_MHz_XTAL / 8);
+	// MMU violation -> Z8001 segment trap (exercised by UC3003's TRAP REQUEST TEST:
+	// it write-protects a segment via the descriptor attributes, performs a violating
+	// write, and expects the trap handler it installed at PSA+0x20 to run).
+	m_mmu->out_segt_cb().set_inputline(m_maincpu, z8001_device::SEGT_LINE);
 
 	PIT8253(config, m_pit);
 	// ch0 (mode 2 rate gen) prescales ch1 (mode 0) — ch0 OUT -> ch1 CLK cascade
 	m_pit->set_clk<0>(32_MHz_XTAL / 16);
 	m_pit->out_handler<0>().set(m_pit, FUNC(pit8253_device::write_clk1));
+	m_pit->out_handler<1>().set(FUNC(m40_state::pit_out1_w));   // ch1 OUT -> UC timer VI (gated by VIENO)
 	m_pit->set_clk<2>(32_MHz_XTAL / 16);
 
 	RAM(config, m_ram).set_default_size("512K").set_default_value(0)
@@ -1469,7 +1541,7 @@ static INPUT_PORTS_START( m40 )
 	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_0_PAD) PORT_CHAR(UCHAR_MAMEKEY(0_PAD))
 	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_DEL_PAD) PORT_CHAR(UCHAR_MAMEKEY(DEL_PAD))
 	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_MINUS_PAD) PORT_CHAR(UCHAR_MAMEKEY(MINUS_PAD))
-	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER_PAD) PORT_NAME("Keypad RETURN") PORT_CHAR(UCHAR_MAMEKEY(ENTER_PAD))
+	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER_PAD) PORT_NAME("SKIP") PORT_CHAR(UCHAR_MAMEKEY(ENTER_PAD))
 	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_SPACE) PORT_CHAR(' ')
 	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ESC) PORT_NAME("EXIT") PORT_CHAR(UCHAR_MAMEKEY(ESC))
 	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_LSHIFT) PORT_NAME("SHIFT") PORT_CHAR(UCHAR_SHIFT_1)
