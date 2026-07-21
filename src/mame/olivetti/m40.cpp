@@ -59,7 +59,13 @@ public:
 	{
 		upd765_family_device::soft_reset();
 		for (floppy_info &fi : flopi)
+		{
 			fi.pcn = 0;
+			fi.st0 = ST0_ABRT | fi.id;
+			fi.st0_filled = true;
+		}
+		irq = true;
+		check_irq();
 	}
 };
 
@@ -84,7 +90,7 @@ public:
 		, m_palette(*this, "palette")
 		, m_screen(*this, "screen")
 		, m_fdc(*this, "fdc")
-		, m_floppy(*this, "fdc:0")
+		, m_floppy(*this, "fdc:%u", 0U)
 		, m_fdu_timer(*this, "fdu_timer")
 		, m_dmac(*this, "dmac")
 		, m_kbd(*this, "K%u", 0U)
@@ -106,7 +112,7 @@ private:
 	required_device<palette_device> m_palette;
 	required_device<screen_device> m_screen;
 	required_device<m40_upd765a_device> m_fdc;
-	required_device<floppy_connector> m_floppy;
+	required_device_array<floppy_connector, 4> m_floppy;
 	required_device<pit8253_device> m_fdu_timer;
 	required_device<am9517a_device> m_dmac;
 	required_ioport_array<4> m_kbd;
@@ -589,9 +595,6 @@ uint8_t m40_state::ff00_r()
 
 uint8_t m40_state::kdc_uc_status_r()
 {
-	// Disk-B's resident FE/KDC handler reads 0xFF20 before dispatching keyboard
-	// callbacks. Bit 2 is the only status bit currently backed by trace evidence:
-	// when set, the handler reads the data byte from 0xFF22 into rl0.
 	return m_kbd_count ? 0x04 : 0x00;
 }
 
@@ -912,7 +915,9 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 		m_fdu_ien = BIT(data, 0);                     // EN100 — interrupt-request enable
 		m_fdc->reset_w(BIT(data, 1) ? 0 : 1);         // RESFD — reset FDC (active low)
 		update_fdu_irq();
-		if (floppy_image_device *f = m_floppy->get_device()) f->mon_w(0);  // FDU motor runs
+		for (auto &drive : m_floppy)
+			if (floppy_image_device *f = drive->get_device())
+				f->mon_w(0);                          // FDU motor runs
 		break;                                        // bit6 SCRVO dir, bit3/7 MOTO1/2 (MFDU)
 	default: break;                                   // TODO: AM9517 DMAC 0x40-5E, 0xF6
 	}
@@ -1408,7 +1413,6 @@ void m40_state::machine_reset()
 	for (auto &v : m_kbd_fifo)
 		v = 0;
 	m_kdc_timer->adjust(attotime::from_hz(120), 0, attotime::from_hz(120));
-	m_fdc->set_floppy(m_floppy->get_device());
 	// 8" governo runs at a fixed 500 kbps data rate (there is no rate register; the
 	// FDC's MF bit picks FM vs MFM per command). MAME's µPD765 defaults to 250 kbps,
 	// which halves the cell clock and makes every read miss the address mark.
@@ -1471,7 +1475,10 @@ void m40_state::m40(machine_config &config)
 	m_fdc->intrq_wr_callback().set(FUNC(m40_state::fdc_intrq_w));
 	m_fdc->drq_wr_callback().set(FUNC(m40_state::fdc_drq_w));
 	m_fdc->idx_wr_callback().set(FUNC(m40_state::fdu_index_w));
-	FLOPPY_CONNECTOR(config, "fdc:0", m40_floppies, "8dsdd", m40_state::floppy_formats);
+	FLOPPY_CONNECTOR(config, "fdc:0", m40_floppies, nullptr, m40_state::floppy_formats);
+	FLOPPY_CONNECTOR(config, "fdc:1", m40_floppies, "8dsdd", m40_state::floppy_formats);
+	FLOPPY_CONNECTOR(config, "fdc:2", m40_floppies, nullptr, m40_state::floppy_formats);
+	FLOPPY_CONNECTOR(config, "fdc:3", m40_floppies, nullptr, m40_state::floppy_formats);
 
 	// AM9517A DMAC (manual §3.3): channel 2 is the FDC data channel. The FDC's
 	// DMARO drives DREQ2; the DMAC reads/writes the FDC data register on DACK and
