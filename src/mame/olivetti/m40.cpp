@@ -175,6 +175,7 @@ private:
 	uint8_t  ff00_r();
 	bool m_suppress_enabled = true;   // MMU-violation write suppression gate (0xFF00/0xFFA0)
 	uint8_t m_timer_vector = 0;       // UC timer VI vector (written to 0xFF01)
+	uint32_t m_viol_pc = 0xffffffff;  // PC of a suppressed (violating) instruction: SUP holds to its end
 	bool m_timer_out1 = false;        // 8253 ch1 OUT level (timer VI source, gated by VIENO)
 	void ff01_w(uint8_t data) { m_timer_vector = data; }
 	void pit_out1_w(int state) { m_timer_out1 = (state != 0); update_fdu_irq(); }
@@ -403,7 +404,11 @@ bool m40_state::xlate(int spacenum, bool write, offs_t &addr)
 {
 	int st;
 	if (spacenum == AS_PROGRAM)
+	{
 		st = m_maincpu->is_ifetch1() ? z8002_device::ST_IFETCH_1 : z8002_device::ST_IFETCH_N;
+		if (st == z8002_device::ST_IFETCH_1)
+			m_viol_pc = 0xffffffff;   // new instruction begins -> SUP released
+	}
 	else if (spacenum == z8001_device::AS_STACK)
 		st = z8002_device::ST_REQ_STACK;
 	else
@@ -421,8 +426,17 @@ bool m40_state::xlate(int spacenum, bool write, offs_t &addr)
 uint16_t m40_state::mem_r(address_space &space, offs_t offset, uint16_t mem_mask)
 {
 	offs_t addr = offset << 1;
+	// SUP suppresses the violating transfer AND all subsequent CPU accesses to the
+	// end of the current instruction (datasheet); track the violating PC and hold
+	// suppression until the next first-word instruction fetch clears it (in xlate).
 	if (!xlate(space.spacenum(), false, addr))
+	{
+		if (m_suppress_enabled)
+			m_viol_pc = m_maincpu->pc();
 		return (space.spacenum() == AS_PROGRAM) ? 0x8d07 : 0xffff;  // seg violation -> NOP
+	}
+	if (m_viol_pc == m_maincpu->pc() && space.spacenum() != AS_PROGRAM)
+		return 0xffff;   // rest-of-instruction data access under SUP
 #if M40_DEBUG_TRACE
 	if (space.spacenum() == AS_PROGRAM)
 	{
@@ -468,6 +482,10 @@ void m40_state::mem_w(address_space &space, offs_t offset, uint16_t data, uint16
 		phys_w(addr, data, mem_mask);
 		return;
 	}
+	if (!ok)
+		m_viol_pc = m_maincpu->pc();       // SUP holds to the end of this instruction
+	else if (m_viol_pc == m_maincpu->pc())
+		ok = false;                        // rest-of-instruction write under SUP
 	if (ok)
 	{
 #if M40_DEBUG_TRACE
