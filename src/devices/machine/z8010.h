@@ -80,11 +80,14 @@ protected:
 
 	enum : uint8_t
 	{
+		// Bit order verified against the UC3003 TRAP REQUEST TEST, which provokes
+		// each violation type in turn and validates the VTR value: read-only=0x01,
+		// system=0x02, LENGTH=0x04, cpu-inhibit=0x08, execute-only=0x10.
 		VTYPE_RDV		= 0x01,	/* read-only violation */
 		VTYPE_SYSV		= 0x02,	/* system violation */
-		VTYPE_CPUIV		= 0x04,	/* cpu-inhibit violation */
-		VTYPE_EXCV		= 0x08,	/* execute-only violation */
-		VTYPE_SLV		= 0x10,	/* segment length violation */
+		VTYPE_SLV		= 0x04,	/* segment length violation */
+		VTYPE_CPUIV		= 0x08,	/* cpu-inhibit violation */
+		VTYPE_EXCV		= 0x10,	/* execute-only violation */
 		VTYPE_PWW		= 0x20,	/* primary write warning */
 		VTYPE_SWW		= 0x40,	/* secondary write warning */
 		VTYPE_FATL		= 0x80,	/* fatal condition */
@@ -106,7 +109,9 @@ public:
 	uint8_t read(offs_t offset);
 	void write(offs_t offset, uint8_t data);
 
-	bool translate(offs_t &offset, bool write, bool sys, bool dma, int st);
+	// iaddr = segmented address of the instruction performing the access (CPU PC);
+	// latched into the instruction seg/offset status registers on a violation.
+	bool translate(offs_t &offset, bool write, bool sys, bool dma, int st, offs_t iaddr = 0);
 
 protected:
 	virtual void device_start() override ATTR_COLD;

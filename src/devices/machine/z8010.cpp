@@ -316,7 +316,7 @@ void z8010_device::write(offs_t offset, uint8_t data)
 //  translate - translate memory address
 //-------------------------------------------------
 
-bool z8010_device::translate(offs_t &offset, bool write, bool sys, bool dma, int st)
+bool z8010_device::translate(offs_t &offset, bool write, bool sys, bool dma, int st, offs_t iaddr)
 {
 	bool nsup = true;
 	bool exec;
@@ -324,7 +324,15 @@ bool z8010_device::translate(offs_t &offset, bool write, bool sys, bool dma, int
 	st &= BCS_CPU_MASK;
 	exec = (st == z8002_device::ST_IFETCH_N) || (st == z8002_device::ST_IFETCH_1);
 
-	m_bcs = (sys * BCS_N_S) | (write * BCS_R_W) | (st);
+	// The BCS register latches the Z-Bus pin levels: N/S~ is LOW in system mode and
+	// R/W~ is LOW for a write, so both bits read back 0 for a system-mode write.
+	// The violation status registers (VTR/seg/offset/BCS/instr) FREEZE once a
+	// violation is latched (until VTR is cleared via reg 0x11) — that is their
+	// diagnostic purpose.  So BCS tracks the bus live only while no violation is
+	// pending; the violating cycle's own status is the last one stored.  (UC3003
+	// TST01 validates BCS == 0x08 = ST_REQ_DATA after a provoked write violation.)
+	if (!m_vtype)
+		m_bcs = ((!sys) * BCS_N_S) | ((!write) * BCS_R_W) | (st);
 
 	if (!(m_mode & MODE_MSEN) ||										// Master enable?
 		(((m_mode & MODE_URS) != 0) != BIT(offset, 22)) ||				// Upper range select?
@@ -342,13 +350,14 @@ bool z8010_device::translate(offs_t &offset, bool write, bool sys, bool dma, int
 		sdr_entry &s = SDR_ENTRY(sn);
 		bool is_stack = s.attr & SDR_ATTR_DIRW;
 
-		// Check access violations
-		uint8_t viol = (write * VTYPE_RDV) |	// Read-only violation?
-					   ((!sys) * VTYPE_SYSV) |	// System violation?
-					   ((!dma) * VTYPE_CPUIV) |	// CPU-inhibit violation?
-					   ((!exec) * VTYPE_EXCV);	// Execute-only violation?
-
-		viol &= s.attr;
+		// Check access violations.  The attribute bits and the VTR bits are NOT
+		// 1:1 (VTR bit 2 is the length violation, which has no attribute), so map
+		// each attribute to its violation-type bit explicitly.
+		uint8_t viol = 0;
+		if (write && (s.attr & SDR_ATTR_RD))   viol |= VTYPE_RDV;	// Read-only violation?
+		if (!sys  && (s.attr & SDR_ATTR_SYS))  viol |= VTYPE_SYSV;	// System violation?
+		if (!dma  && (s.attr & SDR_ATTR_CPUI)) viol |= VTYPE_CPUIV;	// CPU-inhibit violation?
+		if (!exec && (s.attr & SDR_ATTR_EXC))  viol |= VTYPE_EXCV;	// Execute-only violation?
 
 		// Length violation?
 		if (is_stack)
@@ -387,11 +396,19 @@ bool z8010_device::translate(offs_t &offset, bool write, bool sys, bool dma, int
 		{
 			if (m_vtype && !(viol & VTYPE_SWW))	// Fatal?
 			{
-				viol |= VTYPE_FATL;
+				// A violation while one is already latched records ONLY the fatal
+				// condition — the new violation's type bits are not accumulated
+				// (UC3003 TST01: RDV latched, then SYSV provoked -> VTR must show
+				// RDV|FATL with the SYSV bit clear).
+				viol = VTYPE_FATL;
 			}
 
 			m_vseg = sn;
 			m_vhoffs = so;
+			// Latch the address of the violating instruction (UC3003 TST01
+			// validates these against the PC of its deliberate violating write).
+			m_iseg = (uint8_t)(iaddr >> 16) & 0x7f;
+			m_ihoffs = (uint8_t)(iaddr >> 8);
 
 			// No trap if in DMA mode or repeated SWW and FATL violations
 			if ((!dma) && ((m_vtype & viol) & (VTYPE_SWW | VTYPE_FATL)) == 0)
