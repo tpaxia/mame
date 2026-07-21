@@ -178,7 +178,11 @@ private:
 	uint32_t m_viol_pc = 0xffffffff;  // PC of a suppressed (violating) instruction: SUP holds to its end
 	bool m_timer_out1 = false;        // 8253 ch1 OUT level (timer VI source, gated by VIENO)
 	void ff01_w(uint8_t data) { m_timer_vector = data; }
-	void pit_out1_w(int state) { m_timer_out1 = (state != 0); update_fdu_irq(); }
+	void pit_out1_w(int state) {
+		if (state && !m_timer_out1) m_timer_pending = true;   // edge-latch
+		m_timer_out1 = (state != 0); update_fdu_irq();
+	}
+	bool m_timer_pending = false;
 	uint8_t  kdc_uc_status_r();
 	void     kdc_uc_status_w(uint8_t data);
 	uint8_t  kdc_uc_data_r();
@@ -929,7 +933,7 @@ void m40_state::update_fdu_irq()
 	bool const kdc_vi = (m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5);
 	// UC timer VI: 8253 ch1 OUT (level), enabled by the VIENO flip-flop; vector
 	// from 0xFF01 (UC3003 TST03 counter-1).
-	bool const timer_vi = m_timer_out1 && m_arb_vieno;
+	bool const timer_vi = m_timer_pending && m_arb_vieno;
 	m_maincpu->set_input_line(z8001_device::VI_LINE,
 		((m_fdu_pending && m_fdu_ien) || kdc_vi || timer_vi) ? ASSERT_LINE : CLEAR_LINE);
 }
@@ -968,10 +972,14 @@ uint16_t m40_state::vi_ack_r()
 {
 	// UC timer VI (ch1 OUT & VIENO): supply the 0xFF01 vector unless a governo/KDC
 	// source is pending (they take priority on the shared line).
-	if (m_timer_out1 && m_arb_vieno
+	if (m_timer_pending && m_arb_vieno
 		&& !((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
 		&& !(m_fdu_pending && m_fdu_ien))
+	{
+		m_timer_pending = false;   // edge-latched: served by this ack
+		update_fdu_irq();
 		return m_timer_vector;
+	}
 	if ((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
 	{
 		// One vector for both KDC causes: the handler reads the status register
