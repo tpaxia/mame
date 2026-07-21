@@ -30,6 +30,7 @@
 #include "imagedev/floppy.h"
 #include "formats/imd_dsk.h"
 #include "video/mc6845.h"
+#include "machine/6850acia.h"
 #include "emupal.h"
 #include "screen.h"
 
@@ -85,6 +86,7 @@ public:
 		, m_maincpu(*this, "maincpu")
 		, m_mmu(*this, "mmu")
 		, m_pit(*this, "pit")
+		, m_acia(*this, "acia")
 		, m_ram(*this, RAM_TAG)
 		, m_crtc(*this, "crtc")
 		, m_palette(*this, "palette")
@@ -107,6 +109,17 @@ private:
 	required_device<z8001_device> m_maincpu;
 	required_device<z8010_device> m_mmu;
 	required_device<pit8253_device> m_pit;
+	required_device<acia6850_device> m_acia;
+	bool m_acia_irq = false;
+	uint8_t m_lamp = 0;               // UC 3-bit diagnostic lamp latch (0xFF60-6F)
+	void acia_irq_w(int state) { m_acia_irq = (state != 0); update_fdu_irq(); }
+	void pit_out2_w(int state) { m_acia->write_txc(state); m_acia->write_rxc(state); }
+	uint8_t ff6x_r(offs_t o) { return 0xc0 | m_lamp | (m_lamp << 3); }
+	void ff6x_w(offs_t o, uint8_t d) {
+		uint8_t const n = o & 0x0f;
+		if (n >= 8 && n <= 10)      m_lamp |=  (1 << (n - 8));
+		else if (n <= 2)            m_lamp &= ~(1 << n);
+	}
 	required_device<ram_device> m_ram;
 	required_device<mc6845_device> m_crtc;
 	required_device<palette_device> m_palette;
@@ -595,32 +608,43 @@ uint8_t m40_state::ff00_r()
 
 uint8_t m40_state::kdc_uc_status_r()
 {
-	return m_kbd_count ? 0x04 : 0x00;
+	// Real 6850 status with the keyboard byte stream overlaid: a pending keyboard
+	// byte raises RDRF (bit 0) and the byte-ready trigger the resident ISR checks
+	// first (bit 2).
+	return m_acia->status_r() | (m_kbd_count ? 0x05 : 0x00);
 }
 
 void m40_state::kdc_uc_status_w(uint8_t data)
 {
 	m_kdc_status = data;
+	m_acia->control_w(data);
 }
 
 uint8_t m40_state::kdc_uc_data_r()
 {
+	// Keyboard bytes take precedence; otherwise read the real 6850 (loopback data
+	// during the UC3003 ACIA test).
 	if (m_kbd_count)
 	{
 		m_kdc_data = m_kbd_fifo[m_kbd_tail];
 		m_kbd_tail = (m_kbd_tail + 1) & 0x0f;
 		m_kbd_count--;
+		m_kdc_pending = (m_kbd_count != 0);
+		kdc_update_irq();
+		return m_kdc_data;
 	}
-	m_kdc_pending = (m_kbd_count != 0);
+	m_kdc_pending = false;
 	kdc_update_irq();
-	return m_kdc_data;
+	return m_acia->data_r();
 }
 
 void m40_state::kdc_uc_data_w(uint8_t data)
 {
 	// Several resident handlers write the byte latch as an acknowledge/echo path.
-	// Keep the value visible without feeding it back into the host-key queue.
+	// Keep the value visible without feeding it back into the host-key queue, and
+	// hand it to the real 6850 (TX; loops back to RX for the UC3003 ACIA test).
 	m_kdc_data = data;
+	m_acia->data_w(data);
 }
 
 void m40_state::io_map(address_map &map)
@@ -634,6 +658,8 @@ void m40_state::io_map(address_map &map)
 	map(0xff20, 0xff21).rw(FUNC(m40_state::kdc_uc_status_r), FUNC(m40_state::kdc_uc_status_w)).umask16(0xff00);
 	map(0xff22, 0xff23).rw(FUNC(m40_state::kdc_uc_data_r), FUNC(m40_state::kdc_uc_data_w)).umask16(0xff00);
 	map(0xff41, 0xff41).rw(FUNC(m40_state::ff41_r), FUNC(m40_state::ff41_w));
+	// UC diagnostic lamp latch: set 0xFF68-6A / clear 0xFF60-62; read = 0xC0|L|L<<3.
+	map(0xff60, 0xff6f).rw(FUNC(m40_state::ff6x_r), FUNC(m40_state::ff6x_w));
 	map(0xff80, 0xff8f).rw(FUNC(m40_state::arb_r), FUNC(m40_state::arb_w)); // MB15652 arbiter
 	map(0xff00, 0xff00).r(FUNC(m40_state::ff00_r));
 	map(0xff01, 0xff01).w(FUNC(m40_state::ff01_w));
@@ -939,6 +965,9 @@ void m40_state::update_fdu_irq()
 	// UC timer VI: 8253 ch1 OUT (level), enabled by the VIENO flip-flop; vector
 	// from 0xFF01 (UC3003 TST03 counter-1).
 	bool const timer_vi = m_timer_pending && m_arb_vieno;
+	// NOTE: m_acia_irq deliberately NOT on the VI line yet — the resident driver
+	// enables the 6850 TX interrupt as part of its normal TX path, and the ACIA's
+	// VI vector source is not yet decoded (see re/UC3003_cpu_test.md).
 	m_maincpu->set_input_line(z8001_device::VI_LINE,
 		((m_fdu_pending && m_fdu_ien) || kdc_vi || timer_vi) ? ASSERT_LINE : CLEAR_LINE);
 }
@@ -1397,6 +1426,10 @@ void m40_state::machine_start()
 
 void m40_state::machine_reset()
 {
+	m_acia->write_dcd(0);
+	m_acia->write_cts(0);
+	m_acia_irq = false;
+	m_lamp = 0;
 	m_ff41 = 0x01;   // BBU-valid clear? start with a defined value
 	m_crtc_index = 0;
 	m_kdc_ctrl = 0;
@@ -1444,6 +1477,12 @@ void m40_state::m40(machine_config &config)
 	m_pit->set_clk<0>(32_MHz_XTAL / 16);
 	m_pit->out_handler<0>().set(m_pit, FUNC(pit8253_device::write_clk1));
 	m_pit->out_handler<1>().set(FUNC(m40_state::pit_out1_w));   // ch1 OUT -> UC timer VI (gated by VIENO)
+	m_pit->out_handler<2>().set(FUNC(m40_state::pit_out2_w));   // ch2 OUT -> ACIA TXC/RXC (baud generator)
+
+	// UC EF68B50P ACIA; TXD looped back to RXD (internal diagnostic loop).
+	ACIA6850(config, m_acia, 0);
+	m_acia->txd_handler().set(m_acia, FUNC(acia6850_device::write_rxd));
+	m_acia->irq_handler().set(FUNC(m40_state::acia_irq_w));
 	m_pit->set_clk<2>(32_MHz_XTAL / 16);
 
 	RAM(config, m_ram).set_default_size("512K").set_default_value(0)
