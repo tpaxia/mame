@@ -143,6 +143,10 @@ private:
 	uint8_t m_arb_grant = 0;  // channels currently granted (bit0=ch0 .. bit3=ch3)
 	uint8_t m_arb_rel = 0;    // release level from 0xFF8D/8E/8F (and 0xFF85/86/87)
 	bool m_arb_vieno = false; // VIENO flip-flop: 0xFF81 bit 3 (set by 0xFF8C-8F, cleared by 0xFF84-87)
+	bool m_masto = true;      // MASTO flip-flop: 0xFFB1 bit 6 (set by 0xFF19 write, cleared by 0xFF11; master at reset)
+	void ff11_w(uint8_t d) { m_masto = false; }
+	void ff19_w(uint8_t d) { m_masto = true; }
+	uint8_t ffb1_r() { return m_masto ? 0x40 : 0x00; }
 
 	// GO252 video/keyboard governo (KDC): I/O window at slot 1 (0x1000-0x1FFF,
 	// register = low byte); framebuffer is the seg-61 window (m_vram)
@@ -479,6 +483,12 @@ uint16_t m40_state::mem_r(address_space &space, offs_t offset, uint16_t mem_mask
 			case 0x0002a92a: debug_pc_ctx("a92a-call"); break;
 			case 0x0002b668: debug_pc_ctx("b668-call"); break;
 			case 0x00044586: debug_pc_ctx("4-4586-call"); break;
+			// RAMVID (seg 0x21) march-phase probes
+			case 0x0021018c: debug_pc_ctx("rv-setup"); break;
+			case 0x002102b4: debug_pc_ctx("rv-fill"); break;
+			case 0x002102ce: debug_pc_ctx("rv-march1"); break;
+			case 0x00210366: debug_pc_ctx("rv-mismatch-a"); break;
+			case 0x0021038a: debug_pc_ctx("rv-errprint"); break;
 			// UC3003 (loaded in seg 0x21) control-flow probes
 			case 0x00210304: debug_pc_ctx("uc-0304-gate"); break;
 			case 0x00210330: debug_pc_ctx("uc-dispatch"); break;      // r1 = test index
@@ -579,8 +589,10 @@ void m40_state::console_w(uint8_t data)
 
 uint8_t m40_state::ff41_r()
 {
-	// bit0 BBU-valid, bit1 ISL (0=FDU-first), bit6 READY fault, bit7 NMI-cause
-	return m_ff41;
+	// bit0 BBU-valid, bit1 ISL (0=FDU-first), bit4 = latched 8253 ch1 OUT level
+	// (UCV305 timer test reads it inside the timer ISR), bit6 READY fault,
+	// bit7 NMI-cause
+	return m_ff41 | (m_timer_out1 ? 0x10 : 0x00);
 }
 
 void m40_state::ff41_w(uint8_t data)
@@ -660,6 +672,10 @@ void m40_state::io_map(address_map &map)
 	map(0xff20, 0xff21).rw(FUNC(m40_state::kdc_uc_status_r), FUNC(m40_state::kdc_uc_status_w)).umask16(0xff00);
 	map(0xff22, 0xff23).rw(FUNC(m40_state::kdc_uc_data_r), FUNC(m40_state::kdc_uc_data_w)).umask16(0xff00);
 	map(0xff41, 0xff41).rw(FUNC(m40_state::ff41_r), FUNC(m40_state::ff41_w));
+	// MASTO flip-flop (UCV305 test 2): set 0xFF19, clear 0xFF11, read 0xFFB1 bit 6
+	map(0xff11, 0xff11).w(FUNC(m40_state::ff11_w));
+	map(0xff19, 0xff19).w(FUNC(m40_state::ff19_w));
+	map(0xffb1, 0xffb1).r(FUNC(m40_state::ffb1_r));
 	// UC diagnostic lamp latch: set 0xFF68-6A / clear 0xFF60-62; read = 0xC0|L|L<<3.
 	map(0xff60, 0xff6f).rw(FUNC(m40_state::ff6x_r), FUNC(m40_state::ff6x_w));
 	map(0xff80, 0xff8f).rw(FUNC(m40_state::arb_r), FUNC(m40_state::arb_w)); // MB15652 arbiter
