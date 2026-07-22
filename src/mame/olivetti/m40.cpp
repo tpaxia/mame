@@ -194,6 +194,8 @@ private:
 	uint8_t  ff00_r();
 	bool m_suppress_enabled = true;   // MMU-violation write suppression gate (0xFF00/0xFFA0)
 	uint8_t m_timer_vector = 0;       // UC timer VI vector (written to 0xFF01)
+	uint8_t m_acia_vector = 0;        // UC ACIA VI vector (written to 0xFFA0)
+	void ffa0_w(uint8_t data) { m_acia_vector = data; }
 	uint32_t m_viol_pc = 0xffffffff;  // PC of a suppressed (violating) instruction: SUP holds to its end
 	bool m_timer_out1 = false;        // 8253 ch1 OUT level (timer VI source, gated by VIENO)
 	void ff01_w(uint8_t data) { m_timer_vector = data; }
@@ -663,7 +665,7 @@ void m40_state::io_map(address_map &map)
 	map(0xff80, 0xff8f).rw(FUNC(m40_state::arb_r), FUNC(m40_state::arb_w)); // MB15652 arbiter
 	map(0xff00, 0xff00).r(FUNC(m40_state::ff00_r));
 	map(0xff01, 0xff01).w(FUNC(m40_state::ff01_w));
-	map(0xffa0, 0xffa0).r(FUNC(m40_state::ffa0_r));
+	map(0xffa0, 0xffa0).rw(FUNC(m40_state::ffa0_r), FUNC(m40_state::ffa0_w));
 	map(0xffc0, 0xffc7).rw(FUNC(m40_state::pit_r), FUNC(m40_state::pit_w)); // 8253: 0xC1/C3/C5=ch0-2, C7=ctl
 	map(0xffe0, 0xffe0).w(FUNC(m40_state::console_w));
 }
@@ -678,8 +680,22 @@ void m40_state::sio_map(address_map &map)
 //  CPU acknowledge callbacks
 //**************************************************************************
 
-uint16_t m40_state::segtack_r() { return m_mmu->segtack_r(); }
-uint16_t m40_state::nmiack_r()  { return 0; }
+uint16_t m40_state::segtack_r()
+{
+	// The segment-trap acknowledge ends the violating instruction: SUP must stop
+	// suppressing here, or the trap dispatch's own PSA reads and trap-frame stack
+	// pushes (which still run with pc == the violating instruction) get eaten and
+	// the CPU vectors into garbage.  This is what broke every SEGT after the
+	// SUP-scope change (trap test died in the monitor's fatal-NMI catcher).
+	m_viol_pc = 0xffffffff;
+	return m_mmu->segtack_r();
+}
+uint16_t m40_state::nmiack_r()
+{
+	// Same reasoning for an NMI arriving while a violating instruction is live.
+	m_viol_pc = 0xffffffff;
+	return 0;
+}
 
 void m40_state::kdc_queue(uint8_t data)
 {
@@ -965,11 +981,13 @@ void m40_state::update_fdu_irq()
 	// UC timer VI: 8253 ch1 OUT (level), enabled by the VIENO flip-flop; vector
 	// from 0xFF01 (UC3003 TST03 counter-1).
 	bool const timer_vi = m_timer_pending && m_arb_vieno;
-	// NOTE: m_acia_irq deliberately NOT on the VI line yet — the resident driver
-	// enables the 6850 TX interrupt as part of its normal TX path, and the ACIA's
-	// VI vector source is not yet decoded (see re/UC3003_cpu_test.md).
+	// ACIA VI: the 6850 IRQ (self-clearing via its ISR's status/data reads)
+	// vectors through the same UC 0xFF01 latch as the timer — UC3003 test 6
+	// phase 2 loops vectors through 0xFF01 and expects the ACIA interrupt to
+	// deliver each one.  The UC ACIA's int enables stay off in normal monitor
+	// use (only the 0x03 master reset is written at boot).
 	m_maincpu->set_input_line(z8001_device::VI_LINE,
-		((m_fdu_pending && m_fdu_ien) || kdc_vi || timer_vi) ? ASSERT_LINE : CLEAR_LINE);
+		((m_fdu_pending && m_fdu_ien) || kdc_vi || timer_vi || m_acia_irq) ? ASSERT_LINE : CLEAR_LINE);
 }
 
 void m40_state::fdc_intrq_w(int state)
@@ -1006,14 +1024,17 @@ uint16_t m40_state::vi_ack_r()
 {
 	// UC timer VI (ch1 OUT & VIENO): supply the 0xFF01 vector unless a governo/KDC
 	// source is pending (they take priority on the shared line).
-	if (m_timer_pending && m_arb_vieno
-		&& !((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
-		&& !(m_fdu_pending && m_fdu_ien))
+	bool const kdc_or_fdu = ((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
+	                     || (m_fdu_pending && m_fdu_ien);
+	if (m_timer_pending && m_arb_vieno && !kdc_or_fdu)
 	{
 		m_timer_pending = false;   // edge-latched: served by this ack
 		update_fdu_irq();
-		return m_timer_vector;
+		return m_timer_vector;     // UC timer vector latch (0xFF01)
 	}
+	if (m_acia_irq && !kdc_or_fdu)
+		return m_acia_vector;      // UC ACIA vector latch (0xFFA0); the 6850 IRQ
+		                           // clears when its ISR services the cause
 	if ((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
 	{
 		// One vector for both KDC causes: the handler reads the status register
