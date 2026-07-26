@@ -112,6 +112,7 @@ public:
 	auto ns() { return m_ns_out.bind(); }
 
 	bool is_ifetch1() const noexcept { return (m_op_valid == 0); }
+	uint32_t instruction_pc() const noexcept { return m_ppc; }
 	void set_m20_hack(bool is_hack) { m_m20_hack = is_hack; }
 
 protected:
@@ -494,6 +495,7 @@ protected:
 	void Z4D_ddN0_0110_addr();
 	void Z4D_ddN0_1000_addr();
 	void Z4E_ddN0_ssN0_addr();
+	void Z4F_ext();
 	void Z50_0000_dddd_addr();
 	void Z50_ssN0_dddd_addr();
 	void Z51_ddN0_0000_addr();
