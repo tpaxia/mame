@@ -11,7 +11,7 @@
       * Z8001 + a single Z8010 MMU (from the System 8000 wiring pattern).
       * ROM at physical 0; contiguous RAM from bank 1 (0x010000); a 64 KB
         video window at 0xFF0000.
-      * Unpopulated physical access -> NMI with 0xFF41 bit 6 set (the READY
+      * Unpopulated physical access -> NMI with 0xFF41 bit 7 set (the READY
         fault the ROM's RAM sizing / slot scan rely on).
       * The diagnostic console code latch (I/O 0xFFE0) is printed to stdout.
 
@@ -134,6 +134,9 @@ private:
 	std::unique_ptr<uint8_t[]> m_vram;   // 64 KB video window @ 0xFF0000
 	uint8_t *m_ramptr = nullptr;
 	uint32_t m_ramsize = 0;
+	bool m_low_bank0_ram_enabled = false;
+	bool m_bank0_rom_mirror_enabled = false;
+	uint8_t m_low_bank0_ram[0xc000] = {};
 	uint8_t m_ff41 = 0;
 	uint8_t m_mmu_mode = 0;   // shadow of Z8010 mode reg (bit7 = master enable)
 	// MB15652/UCY805 bus arbiter (0xFF80-8F), per re/UCY805_bus_arbiter.md, model
@@ -166,6 +169,16 @@ private:
 	uint8_t  m_kbd_tail = 0;
 	uint8_t  m_kbd_count = 0;
 
+	// MDOS30 E0xx line-console stub.  Segment 0x3e uses E008 as status/control
+	// and E000 as character data; keep it minimal until the line governo is known.
+	uint8_t m_line_status = 0x01; // bit 0 = transmitter ready
+	bool    m_line_active = false;
+	bool    m_line_pending = false;
+	uint8_t m_line_fifo[256] = {};
+	uint8_t m_line_head = 0;
+	uint8_t m_line_tail = 0;
+	uint16_t m_line_count = 0;
+
 	// GO280 FDU floppy governo (slot 2): upd765 FDC + (TODO) AM9517 DMAC
 	bool    m_fdc_int = false;   // FDC INTRQ level (INTOO, reg 0xF7 bit 1)
 	bool    m_timer_int = false; // 8253 ch1 end-of-count (INTMO, reg 0xF7 bit 0)
@@ -174,7 +187,14 @@ private:
 	bool    m_fdu_pending = false; // governo pending-interrupt latch INTP1 (edge-set, VIACK-cleared)
 	bool    m_fdu_ien = false;   // governo interrupt enable (EN100/ENSOO, reg 0xE7 bit 0)
 	uint8_t m_fdu_vector = 0;    // governo interrupt vector (VETTN, reg 0xEF)
-	uint8_t  m_fdu_dma_hi = 0;   // ADRLN (0xF6): high byte of the DMA *word* address
+	uint8_t m_fdu_id = 0xe1;     // RD1DN identifier; override with M40_FDU_ID for MDOS probes
+	uint8_t m_fdu_dma_hi = 0;    // ADRLN (0xF6): high byte of the DMA *word* address
+	uint8_t m_fdu_rdgnn = 0xff;  // RDGNN diagnostic/status readback; override with M40_FDU_RDGNN
+	uint8_t m_fdu_rdgnn_after_vec08 = 0xff; // MDOS FDU-module probe value; override with M40_FDU_RDGNN_VEC08
+	bool    m_fdu_rdgnn_vec08_override = false;
+	bool    m_mdos_fdublk_ready_hack = false;
+	bool    m_mdos_fdu_st0_unit0_probe = false;
+	uint8_t m_mdos_fdu_sense_result_left = 0;
 	uint16_t m_dma_ch1 = 0;      // AM9517 ch1 = low 16 bits of the DMA word address (0x44)
 	bool     m_dma_ff = false;   // flip-flop for the two-byte 0x44 address load
 	uint32_t m_dma_byte = 0;     // running byte offset within the current transfer
@@ -185,7 +205,7 @@ private:
 	bool     xlate(int spacenum, bool write, offs_t &addr);
 	uint16_t phys_r(offs_t addr, uint16_t mem_mask);
 	void     phys_w(offs_t addr, uint16_t data, uint16_t mem_mask);
-	void     ready_fault();
+	void     ready_fault(offs_t addr, bool write);
 
 	// MMU special-I/O programming
 	uint8_t  mmu_r(offs_t offset);
@@ -215,6 +235,10 @@ private:
 	void     kdc_uc_data_w(uint8_t data);
 	uint8_t  pit_r(offs_t offset)            { return m_pit->read((offset >> 1) & 3); }
 	void     pit_w(offs_t offset, uint8_t d) { m_pit->write((offset >> 1) & 3, d); }
+	uint8_t  line_r(offs_t offset);
+	void     line_w(offs_t offset, uint8_t data);
+	void     line_queue(uint8_t data);
+	void     line_update_irq();
 
 	// GO252 video/keyboard governo I/O (slot 1)
 	uint16_t vid16_r(offs_t offset, uint16_t mem_mask);
@@ -224,11 +248,34 @@ private:
 #if M40_DEBUG_TRACE
 	std::FILE *m_vram_trace = nullptr;
 	std::FILE *m_fdu_trace = nullptr;
+	std::FILE *m_mdos_trace = nullptr;
+	std::FILE *m_line_trace = nullptr;
+	bool m_mdos_cfg_phys_valid = false;
+	offs_t m_mdos_cfg_phys_base = 0;
+	bool m_mdos_flag_phys_valid = false;
+	offs_t m_mdos_flag_phys = 0;
+	bool m_mdos_last_flag_read_valid = false;
+	uint32_t m_mdos_last_flag_read_pc = 0xffffffff;
+	uint16_t m_mdos_last_flag_read_data = 0xffff;
+	bool m_mdos_vi_asserted = false;
+	unsigned m_mdos_probe_count = 0;
+	unsigned m_mdos_state_probe_count = 0;
+	uint8_t m_mmu_dbg_sar = 0;
+	uint8_t m_mmu_dbg_dsc = 0;
+	uint8_t m_mmu_dbg_sdr[64][4] = {};
 	void     debug_vram_w(offs_t addr, uint8_t data, uint16_t mem_mask);
 	void     debug_crtc_w(uint8_t reg, uint8_t data);
 	void     debug_fdu(char const *event, uint8_t reg, uint8_t data);
 	void     debug_diag_w(offs_t logical, offs_t physical, uint16_t data, uint16_t mem_mask);
 	void     debug_pc_ctx(char const *event);
+	bool     debug_mdos_cfg_logical(offs_t logical) const;
+	bool     debug_mdos_cfg_physical(offs_t physical) const;
+	bool     debug_mdos_flag_logical(offs_t logical) const;
+	bool     debug_mdos_flag_physical(offs_t physical) const;
+	void     debug_mdos_mem(char const *event, int spacenum, offs_t logical, offs_t physical, uint16_t data, uint16_t mem_mask);
+	void     debug_mdos_phys(char const *event, offs_t physical, uint16_t data, uint16_t mem_mask);
+	void     debug_mdos_mmu(char const *event, offs_t offset, uint8_t reg, uint8_t data);
+	void     debug_mdos_vi(char const *event, char const *source, bool line, uint8_t vector);
 #endif
 	void     kdc_queue(uint8_t data);
 	void     kdc_update_irq();
@@ -271,12 +318,21 @@ private:
 //  MEMORY (segmented -> MMU -> physical)
 //**************************************************************************
 
-void m40_state::ready_fault()
+void m40_state::ready_fault(offs_t addr, bool write)
 {
 	// no READY -> NMI. The RAM-sizing NMI handler reads 0xFF41 and, when
 	// bit6 is CLEAR (a plain READY/unpopulated fault), resumes via rr12 to
 	// record the boundary; bit6 SET would make it keep scanning. Mark the
 	// NMI cause in bit7 and leave bit6 clear.
+#if M40_DEBUG_TRACE
+	if (m_mdos_trace)
+	{
+		std::fprintf(m_mdos_trace, "READY pc=%08X fcw=%04X %c phys=%06X ff41=%02X\n",
+			unsigned(m_maincpu->pc()), unsigned(m_maincpu->state_int(Z8000_FCW)),
+			write ? 'W' : 'R', unsigned(addr & 0xffffff), m_ff41);
+		std::fflush(m_mdos_trace);
+	}
+#endif
 	m_ff41 = (m_ff41 & ~0x40) | 0x80;
 	m_maincpu->set_input_line(z8001_device::NMI_LINE, ASSERT_LINE);
 }
@@ -286,17 +342,36 @@ uint16_t m40_state::phys_r(offs_t addr, uint16_t mem_mask)
 	addr &= 0xffffff;
 	if (addr < 0x4000)                                   // ROM (16 KB @ bank 0)
 		return m_rom[addr >> 1];
+	if (m_bank0_rom_mirror_enabled && addr < 0x010000)
+		return m_rom[(addr & 0x3fff) >> 1];
+	if (m_low_bank0_ram_enabled && addr >= 0x004000 && addr < 0x010000)
+	{
+		uint8_t *p = &m_low_bank0_ram[addr - 0x004000];
+		uint16_t const data = (p[0] << 8) | p[1];
+#if M40_DEBUG_TRACE
+		debug_mdos_phys("R", addr, data, mem_mask);
+#endif
+		return data;
+	}
 	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize) // contiguous RAM from bank 1
 	{
 		uint8_t *p = m_ramptr + (addr - 0x010000);
-		return (p[0] << 8) | p[1];
+		uint16_t const data = (p[0] << 8) | p[1];
+#if M40_DEBUG_TRACE
+		debug_mdos_phys("R", addr, data, mem_mask);
+#endif
+		return data;
 	}
 	if (addr >= 0xff0000)                                // video window (64 KB)
 	{
 		uint8_t *p = &m_vram[addr & 0xffff];
-		return (p[0] << 8) | p[1];
+		uint16_t const data = (p[0] << 8) | p[1];
+#if M40_DEBUG_TRACE
+		debug_mdos_phys("R", addr, data, mem_mask);
+#endif
+		return data;
 	}
-	ready_fault();                                       // unpopulated
+	ready_fault(addr, false);                            // unpopulated
 	return 0xffff;
 }
 
@@ -305,13 +380,17 @@ void m40_state::phys_w(offs_t addr, uint16_t data, uint16_t mem_mask)
 	addr &= 0xffffff;
 	uint8_t *p = nullptr;
 	bool const is_vram = (addr >= 0xff0000);
-	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
+	if (m_low_bank0_ram_enabled && addr >= 0x004000 && addr < 0x010000)
+		p = &m_low_bank0_ram[addr - 0x004000];
+	else if (m_bank0_rom_mirror_enabled && addr < 0x010000)
+		return;                                          // bank-0 ROM mirror: ignore writes
+	else if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
 		p = m_ramptr + (addr - 0x010000);
 	else if (is_vram)
 		p = &m_vram[addr & 0xffff];
 	else if (addr < 0x4000)
 		return;                                          // ROM: ignore writes
-	else { ready_fault(); return; }                      // unpopulated
+	else { ready_fault(addr, true); return; }            // unpopulated
 
 	if (ACCESSING_BITS_8_15)
 	{
@@ -329,6 +408,9 @@ void m40_state::phys_w(offs_t addr, uint16_t data, uint16_t mem_mask)
 			debug_vram_w((addr + 1) & 0xffff, p[1], mem_mask);
 #endif
 	}
+#if M40_DEBUG_TRACE
+	debug_mdos_phys("W", addr, data, mem_mask);
+#endif
 }
 
 #if M40_DEBUG_TRACE
@@ -376,6 +458,19 @@ void m40_state::debug_fdu(char const *event, uint8_t reg, uint8_t data)
 			m_intmo_lat ? 1 : 0, m_timer_int ? 1 : 0,
 			m_intoo_lat ? 1 : 0, m_fdc_int ? 1 : 0,
 			m_fdu_vector, m_fdu_dma_hi, m_dma_ch1, unsigned(m_dma_byte));
+		if (reg == 0xed)
+			std::fprintf(m_fdu_trace,
+				"RDGNNCTX pc=%08X fcw=%04X data=%02X r0=%04X r1=%04X r2=%04X r3=%04X r4=%04X r5=%04X r6=%04X r7=%04X "
+				"r8=%04X r9=%04X r10=%04X r11=%04X r12=%04X r13=%04X r14=%04X r15=%04X\n",
+				unsigned(m_maincpu->pc()), unsigned(m_maincpu->state_int(Z8000_FCW)), data,
+				unsigned(m_maincpu->state_int(Z8000_R0)), unsigned(m_maincpu->state_int(Z8000_R1)),
+				unsigned(m_maincpu->state_int(Z8000_R2)), unsigned(m_maincpu->state_int(Z8000_R3)),
+				unsigned(m_maincpu->state_int(Z8000_R4)), unsigned(m_maincpu->state_int(Z8000_R5)),
+				unsigned(m_maincpu->state_int(Z8000_R6)), unsigned(m_maincpu->state_int(Z8000_R7)),
+				unsigned(m_maincpu->state_int(Z8000_R8)), unsigned(m_maincpu->state_int(Z8000_R9)),
+				unsigned(m_maincpu->state_int(Z8000_R10)), unsigned(m_maincpu->state_int(Z8000_R11)),
+				unsigned(m_maincpu->state_int(Z8000_R12)), unsigned(m_maincpu->state_int(Z8000_R13)),
+				unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
 		std::fflush(m_fdu_trace);
 	}
 }
@@ -428,6 +523,352 @@ void m40_state::debug_pc_ctx(char const *event)
 		unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
 	std::fflush(m_fdu_trace);
 }
+
+bool m40_state::debug_mdos_cfg_logical(offs_t logical) const
+{
+	return logical >= 0x010230 && logical <= 0x01026f;
+}
+
+bool m40_state::debug_mdos_cfg_physical(offs_t physical) const
+{
+	return m_mdos_cfg_phys_valid
+		&& physical >= m_mdos_cfg_phys_base
+		&& physical <= (m_mdos_cfg_phys_base + 0x3f);
+}
+
+bool m40_state::debug_mdos_flag_logical(offs_t logical) const
+{
+	return logical == 0x3e0024;
+}
+
+bool m40_state::debug_mdos_flag_physical(offs_t physical) const
+{
+	return m_mdos_flag_phys_valid && physical == m_mdos_flag_phys;
+}
+
+void m40_state::debug_mdos_mem(char const *event, int spacenum, offs_t logical, offs_t physical, uint16_t data, uint16_t mem_mask)
+{
+	if (!m_mdos_trace)
+		return;
+
+	uint32_t const pc = m_maincpu->pc();
+	bool const is_read = event[0] == 'R';
+	bool const is_write = event[0] == 'W';
+	bool const fdu_descriptor_read = is_read && pc >= 0x003b072a && pc <= 0x003b072e;
+	bool const fdu_setup_write = is_write
+		&& (pc == 0x000003c6 || pc == 0x000003e0 || pc == 0x000003e6
+			|| pc == 0x003803c6 || pc == 0x003803e0 || pc == 0x003803e6
+			|| pc == 0x003903c6 || pc == 0x003903e0 || pc == 0x003903e6);
+	if ((fdu_descriptor_read || fdu_setup_write) && m_mdos_probe_count++ < 800)
+	{
+		std::fprintf(m_mdos_trace,
+			"PROBE%s pc=%08X fcw=%04X spc=%d log=%06X phys=%06X data=%04X mask=%04X "
+			"r0=%04X r1=%04X r2=%04X r3=%04X r4=%04X r5=%04X r6=%04X r7=%04X "
+			"r8=%04X r9=%04X r10=%04X r11=%04X r12=%04X r13=%04X r14=%04X r15=%04X\n",
+			event, unsigned(pc), unsigned(m_maincpu->state_int(Z8000_FCW)),
+			spacenum, unsigned(logical), unsigned(physical), unsigned(data), unsigned(mem_mask),
+			unsigned(m_maincpu->state_int(Z8000_R0)), unsigned(m_maincpu->state_int(Z8000_R1)),
+			unsigned(m_maincpu->state_int(Z8000_R2)), unsigned(m_maincpu->state_int(Z8000_R3)),
+			unsigned(m_maincpu->state_int(Z8000_R4)), unsigned(m_maincpu->state_int(Z8000_R5)),
+			unsigned(m_maincpu->state_int(Z8000_R6)), unsigned(m_maincpu->state_int(Z8000_R7)),
+			unsigned(m_maincpu->state_int(Z8000_R8)), unsigned(m_maincpu->state_int(Z8000_R9)),
+			unsigned(m_maincpu->state_int(Z8000_R10)), unsigned(m_maincpu->state_int(Z8000_R11)),
+			unsigned(m_maincpu->state_int(Z8000_R12)), unsigned(m_maincpu->state_int(Z8000_R13)),
+			unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
+		std::fflush(m_mdos_trace);
+	}
+
+	bool const logical_hit = debug_mdos_cfg_logical(logical);
+	bool const flag_hit = debug_mdos_flag_logical(logical);
+	if (logical_hit)
+	{
+		m_mdos_cfg_phys_base = (physical - (logical - 0x010230)) & 0xffffff;
+		m_mdos_cfg_phys_valid = true;
+	}
+	if (flag_hit)
+	{
+		m_mdos_flag_phys = physical;
+		m_mdos_flag_phys_valid = true;
+	}
+
+	if (flag_hit || debug_mdos_flag_physical(physical))
+	{
+		if (is_read
+			&& m_mdos_last_flag_read_valid
+			&& m_mdos_last_flag_read_pc == m_maincpu->pc()
+			&& m_mdos_last_flag_read_data == data)
+		{
+			return;
+		}
+		if (is_read)
+		{
+			m_mdos_last_flag_read_valid = true;
+			m_mdos_last_flag_read_pc = m_maincpu->pc();
+			m_mdos_last_flag_read_data = data;
+		}
+
+		std::fprintf(m_mdos_trace,
+			"FLAG%s pc=%08X fcw=%04X spc=%d log=%06X phys=%06X data=%04X mask=%04X flagphys=%s%06X "
+			"r0=%04X r1=%04X r2=%04X r3=%04X r4=%04X r5=%04X r6=%04X r7=%04X "
+			"r8=%04X r9=%04X r10=%04X r11=%04X r12=%04X r13=%04X r14=%04X r15=%04X\n",
+			event, unsigned(m_maincpu->pc()), unsigned(m_maincpu->state_int(Z8000_FCW)),
+			spacenum, unsigned(logical), unsigned(physical), unsigned(data), unsigned(mem_mask),
+			m_mdos_flag_phys_valid ? "" : "?", unsigned(m_mdos_flag_phys),
+			unsigned(m_maincpu->state_int(Z8000_R0)), unsigned(m_maincpu->state_int(Z8000_R1)),
+			unsigned(m_maincpu->state_int(Z8000_R2)), unsigned(m_maincpu->state_int(Z8000_R3)),
+			unsigned(m_maincpu->state_int(Z8000_R4)), unsigned(m_maincpu->state_int(Z8000_R5)),
+			unsigned(m_maincpu->state_int(Z8000_R6)), unsigned(m_maincpu->state_int(Z8000_R7)),
+			unsigned(m_maincpu->state_int(Z8000_R8)), unsigned(m_maincpu->state_int(Z8000_R9)),
+			unsigned(m_maincpu->state_int(Z8000_R10)), unsigned(m_maincpu->state_int(Z8000_R11)),
+			unsigned(m_maincpu->state_int(Z8000_R12)), unsigned(m_maincpu->state_int(Z8000_R13)),
+			unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
+		std::fflush(m_mdos_trace);
+		return;
+	}
+
+	if (!logical_hit && !debug_mdos_cfg_physical(physical))
+		return;
+
+	std::fprintf(m_mdos_trace,
+		"CFG%s pc=%08X fcw=%04X spc=%d log=%06X phys=%06X data=%04X mask=%04X base=%s%06X "
+		"r0=%04X r1=%04X r2=%04X r3=%04X r4=%04X r5=%04X r6=%04X r7=%04X "
+		"r8=%04X r9=%04X r10=%04X r11=%04X r12=%04X r13=%04X r14=%04X r15=%04X\n",
+		event, unsigned(m_maincpu->pc()), unsigned(m_maincpu->state_int(Z8000_FCW)),
+		spacenum, unsigned(logical), unsigned(physical), unsigned(data), unsigned(mem_mask),
+		m_mdos_cfg_phys_valid ? "" : "?", unsigned(m_mdos_cfg_phys_base),
+		unsigned(m_maincpu->state_int(Z8000_R0)), unsigned(m_maincpu->state_int(Z8000_R1)),
+		unsigned(m_maincpu->state_int(Z8000_R2)), unsigned(m_maincpu->state_int(Z8000_R3)),
+		unsigned(m_maincpu->state_int(Z8000_R4)), unsigned(m_maincpu->state_int(Z8000_R5)),
+		unsigned(m_maincpu->state_int(Z8000_R6)), unsigned(m_maincpu->state_int(Z8000_R7)),
+		unsigned(m_maincpu->state_int(Z8000_R8)), unsigned(m_maincpu->state_int(Z8000_R9)),
+		unsigned(m_maincpu->state_int(Z8000_R10)), unsigned(m_maincpu->state_int(Z8000_R11)),
+		unsigned(m_maincpu->state_int(Z8000_R12)), unsigned(m_maincpu->state_int(Z8000_R13)),
+		unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
+	std::fflush(m_mdos_trace);
+}
+
+void m40_state::debug_mdos_phys(char const *event, offs_t physical, uint16_t data, uint16_t mem_mask)
+{
+	if (!m_mdos_trace)
+		return;
+
+	if (debug_mdos_flag_physical(physical))
+	{
+		if (event[0] == 'R')
+			return;
+
+		std::fprintf(m_mdos_trace,
+			"FLAGPHYS%s pc=%08X fcw=%04X phys=%06X data=%04X mask=%04X flagphys=%06X\n",
+			event, unsigned(m_maincpu->pc()), unsigned(m_maincpu->state_int(Z8000_FCW)),
+			unsigned(physical), unsigned(data), unsigned(mem_mask), unsigned(m_mdos_flag_phys));
+		std::fflush(m_mdos_trace);
+		return;
+	}
+
+	if (physical >= 0x0225e0 && physical <= 0x022640)
+	{
+		uint32_t const pc = m_maincpu->pc();
+		bool const interesting_read = event[0] == 'R'
+			&& (pc == 0x003b0b28 || pc == 0x003b0756 || pc == 0x003b076a || pc == 0x003b0ad2);
+		if (event[0] == 'W' || interesting_read)
+		{
+			std::fprintf(m_mdos_trace,
+				"FDUBLK%s pc=%08X fcw=%04X phys=%06X off=%04X data=%04X mask=%04X "
+				"r0=%04X r1=%04X r2=%04X r3=%04X r4=%04X r5=%04X r6=%04X r7=%04X "
+				"r8=%04X r9=%04X r10=%04X r11=%04X r12=%04X r13=%04X r14=%04X r15=%04X\n",
+				event, unsigned(pc), unsigned(m_maincpu->state_int(Z8000_FCW)),
+				unsigned(physical), unsigned(physical - 0x0225e6), unsigned(data), unsigned(mem_mask),
+				unsigned(m_maincpu->state_int(Z8000_R0)), unsigned(m_maincpu->state_int(Z8000_R1)),
+				unsigned(m_maincpu->state_int(Z8000_R2)), unsigned(m_maincpu->state_int(Z8000_R3)),
+				unsigned(m_maincpu->state_int(Z8000_R4)), unsigned(m_maincpu->state_int(Z8000_R5)),
+				unsigned(m_maincpu->state_int(Z8000_R6)), unsigned(m_maincpu->state_int(Z8000_R7)),
+				unsigned(m_maincpu->state_int(Z8000_R8)), unsigned(m_maincpu->state_int(Z8000_R9)),
+				unsigned(m_maincpu->state_int(Z8000_R10)), unsigned(m_maincpu->state_int(Z8000_R11)),
+				unsigned(m_maincpu->state_int(Z8000_R12)), unsigned(m_maincpu->state_int(Z8000_R13)),
+				unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
+			std::fflush(m_mdos_trace);
+		}
+		return;
+	}
+
+	if (physical >= 0x00e000 && physical < 0x00f000)
+	{
+		std::fprintf(m_mdos_trace,
+			"LOW%s pc=%08X fcw=%04X phys=%06X data=%04X mask=%04X lowram=%d\n",
+			event, unsigned(m_maincpu->pc()), unsigned(m_maincpu->state_int(Z8000_FCW)),
+			unsigned(physical), unsigned(data), unsigned(mem_mask),
+			m_low_bank0_ram_enabled ? 1 : 0);
+		std::fflush(m_mdos_trace);
+		return;
+	}
+
+	if (!debug_mdos_cfg_physical(physical))
+		return;
+
+	std::fprintf(m_mdos_trace,
+		"PHYS%s pc=%08X fcw=%04X phys=%06X data=%04X mask=%04X base=%06X\n",
+		event, unsigned(m_maincpu->pc()), unsigned(m_maincpu->state_int(Z8000_FCW)),
+		unsigned(physical), unsigned(data), unsigned(mem_mask), unsigned(m_mdos_cfg_phys_base));
+	std::fflush(m_mdos_trace);
+}
+
+void m40_state::debug_mdos_mmu(char const *event, offs_t offset, uint8_t reg, uint8_t data)
+{
+	if (!m_mdos_trace)
+		return;
+
+	uint8_t sel_seg = m_mmu_dbg_sar;
+	uint8_t sel_field = m_mmu_dbg_dsc;
+	char const *const field_names[4] = { "BAH", "BAL", "LIM", "ATR" };
+	bool descriptor_access = false;
+	bool update_field = event[0] == 'W';
+	bool inc_sar = false;
+	int max_dsc = 3;
+
+	auto inc_dsc = [&]()
+	{
+		if (m_mmu_dbg_dsc < max_dsc)
+			m_mmu_dbg_dsc++;
+	};
+	auto inc_dsc_sar = [&]()
+	{
+		if (m_mmu_dbg_dsc < max_dsc)
+			m_mmu_dbg_dsc++;
+		else if (m_mmu_dbg_sar < 63)
+		{
+			m_mmu_dbg_dsc = 0;
+			m_mmu_dbg_sar++;
+		}
+	};
+	auto inc_sar_only = [&]()
+	{
+		if (m_mmu_dbg_sar < 63)
+			m_mmu_dbg_sar++;
+	};
+
+	switch (reg)
+	{
+	case 0x01:
+		if (event[0] == 'W')
+		{
+			m_mmu_dbg_sar = data & 0x3f;
+			m_mmu_dbg_dsc = 0;
+		}
+		break;
+	case 0x20:
+		if (event[0] == 'W')
+			m_mmu_dbg_dsc = data & 0x03;
+		break;
+	case 0x08:
+		descriptor_access = true;
+		if (m_mmu_dbg_dsc > 1)
+			m_mmu_dbg_dsc = 0;
+		sel_seg = m_mmu_dbg_sar;
+		sel_field = m_mmu_dbg_dsc;
+		max_dsc = 1;
+		break;
+	case 0x09:
+		descriptor_access = true;
+		m_mmu_dbg_dsc = 2;
+		sel_seg = m_mmu_dbg_sar;
+		sel_field = m_mmu_dbg_dsc;
+		break;
+	case 0x0a:
+		descriptor_access = true;
+		m_mmu_dbg_dsc = 3;
+		sel_seg = m_mmu_dbg_sar;
+		sel_field = m_mmu_dbg_dsc;
+		break;
+	case 0x0b:
+		descriptor_access = true;
+		sel_seg = m_mmu_dbg_sar;
+		sel_field = m_mmu_dbg_dsc;
+		break;
+	case 0x0c:
+		descriptor_access = true;
+		if (m_mmu_dbg_dsc > 1)
+			m_mmu_dbg_dsc = 0;
+		sel_seg = m_mmu_dbg_sar;
+		sel_field = m_mmu_dbg_dsc;
+		max_dsc = 1;
+		inc_sar = true;
+		break;
+	case 0x0d:
+		descriptor_access = true;
+		m_mmu_dbg_dsc = 2;
+		sel_seg = m_mmu_dbg_sar;
+		sel_field = m_mmu_dbg_dsc;
+		inc_sar = true;
+		break;
+	case 0x0e:
+		descriptor_access = true;
+		m_mmu_dbg_dsc = 3;
+		sel_seg = m_mmu_dbg_sar;
+		sel_field = m_mmu_dbg_dsc;
+		inc_sar = true;
+		break;
+	case 0x0f:
+		descriptor_access = true;
+		sel_seg = m_mmu_dbg_sar;
+		sel_field = m_mmu_dbg_dsc;
+		inc_sar = true;
+		break;
+	default:
+		break;
+	}
+
+	if (descriptor_access && update_field)
+		m_mmu_dbg_sdr[sel_seg][sel_field] = data;
+
+	std::fprintf(m_mdos_trace,
+		"MMU%s pc=%08X fcw=%04X off=%04X reg=%02X data=%02X mode=%02X",
+		event, unsigned(m_maincpu->pc()), unsigned(m_maincpu->state_int(Z8000_FCW)),
+		unsigned(offset), reg, data, m_mmu_mode);
+	if (descriptor_access)
+	{
+		std::fprintf(m_mdos_trace,
+			" seg=%02X field=%s desc=%02X%02X:%02X:%02X",
+			sel_seg, field_names[sel_field],
+			m_mmu_dbg_sdr[sel_seg][0], m_mmu_dbg_sdr[sel_seg][1],
+			m_mmu_dbg_sdr[sel_seg][2], m_mmu_dbg_sdr[sel_seg][3]);
+	}
+	std::fprintf(m_mdos_trace, "\n");
+	std::fflush(m_mdos_trace);
+
+	if (descriptor_access)
+	{
+		if (reg == 0x0b)
+			inc_dsc();
+		else if (inc_sar)
+		{
+			if (reg == 0x0d || reg == 0x0e)
+				inc_sar_only();
+			else
+				inc_dsc_sar();
+		}
+		else if (reg == 0x08)
+			inc_dsc();
+	}
+}
+
+void m40_state::debug_mdos_vi(char const *event, char const *source, bool line, uint8_t vector)
+{
+	if (!m_mdos_trace)
+		return;
+
+	std::fprintf(m_mdos_trace,
+		"VI%s pc=%08X fcw=%04X line=%d src=%s vec=%02X "
+		"fdu=%d/%d kdc_rx=%d kdc_tx=%d line_rx=%d/%d timer=%d/%d acia=%d "
+		"fduvec=%02X kdcvec=%02X timvec=%02X aciavec=%02X\n",
+		event, unsigned(m_maincpu->pc()), unsigned(m_maincpu->state_int(Z8000_FCW)),
+		line ? 1 : 0, source, vector,
+		m_fdu_pending ? 1 : 0, m_fdu_ien ? 1 : 0,
+		(m_kdc_pending && BIT(m_kdc_ctrl, 7)) ? 1 : 0, BIT(m_kdc_ctrl, 5) ? 1 : 0,
+		m_line_pending ? 1 : 0, m_line_active ? 1 : 0,
+		m_timer_pending ? 1 : 0, m_arb_vieno ? 1 : 0, m_acia_irq ? 1 : 0,
+		m_fdu_vector, m_kdc_vector, m_timer_vector, m_acia_vector);
+	std::fflush(m_mdos_trace);
+}
 #endif
 
 bool m40_state::xlate(int spacenum, bool write, offs_t &addr)
@@ -469,15 +910,40 @@ uint16_t m40_state::mem_r(address_space &space, offs_t offset, uint16_t mem_mask
 		return 0xffff;   // rest-of-instruction data access under SUP
 #if M40_DEBUG_TRACE
 	if (space.spacenum() == AS_PROGRAM)
-	{
-		static uint32_t last_pc = 0xffffffff;
-		uint32_t const pc = m_maincpu->pc();
-		if (pc != last_pc)
 		{
-			last_pc = pc;
-			switch (pc)
+			static uint32_t last_pc = 0xffffffff;
+			static unsigned fdu_pc_trace_count = 0;
+			uint32_t const pc = m_maincpu->pc();
+			if (pc != last_pc)
 			{
-			case 0x00027fde: debug_pc_ctx("7fde-entry"); break;
+				last_pc = pc;
+				switch (pc)
+				{
+				case 0x003b0722: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-0722"); break;
+				case 0x003b0756: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-0756"); break;
+				case 0x003b076a: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-076a"); break;
+				case 0x003b07c4: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-07c4"); break;
+				case 0x003b082c: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-082c"); break;
+				case 0x003b0ad2: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-0ad2"); break;
+				case 0x003b0ade: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-0ade"); break;
+				case 0x003b0c04: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-isr"); break;
+				case 0x003b0c4a: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-isr-rd1nt"); break;
+				case 0x003b0c7c: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-isr-st0"); break;
+				case 0x003b0caa: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-isr-unit"); break;
+				case 0x003b0d00: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-isr-state"); break;
+				case 0x003b0d10: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-isr-write"); break;
+				case 0x003b0d16: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-isr-store"); break;
+				case 0x003b0d28: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-isr-done"); break;
+				case 0x003b0d52: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-0d52"); break;
+				case 0x003b0f3c: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-0f3c"); break;
+				case 0x003b0f5c: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-0f5c"); break;
+				case 0x003b0f76: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-0f76"); break;
+				case 0x003b0f90: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-0f90"); break;
+				case 0x003b131c: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-read-int"); break;
+				case 0x003b1338: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-sense"); break;
+				case 0x003b134e: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-sense-st0"); break;
+				case 0x003b13ce: if (fdu_pc_trace_count++ < 4000) debug_pc_ctx("mdos-fdu-read-int-ret"); break;
+				case 0x00027fde: debug_pc_ctx("7fde-entry"); break;
 			case 0x00027fe8: debug_pc_ctx("7fe8-fatal"); break;
 			case 0x00028002: debug_pc_ctx("8002-return"); break;
 			case 0x0002a800: debug_pc_ctx("a800-call"); break;
@@ -504,7 +970,11 @@ uint16_t m40_state::mem_r(address_space &space, offs_t offset, uint16_t mem_mask
 		}
 	}
 #endif
-	return phys_r(addr, mem_mask);
+	uint16_t const data = phys_r(addr, mem_mask);
+#if M40_DEBUG_TRACE
+	debug_mdos_mem("R", space.spacenum(), offset << 1, addr, data, mem_mask);
+#endif
+	return data;
 }
 
 void m40_state::mem_w(address_space &space, offs_t offset, uint16_t data, uint16_t mem_mask)
@@ -515,6 +985,9 @@ void m40_state::mem_w(address_space &space, offs_t offset, uint16_t data, uint16
 	if (!ok && !m_suppress_enabled)
 	{
 		// Suppression gate disabled (0xFF00): the violating write reaches memory.
+#if M40_DEBUG_TRACE
+		debug_mdos_mem("WNS", space.spacenum(), logical, addr, data, mem_mask);
+#endif
 		phys_w(addr, data, mem_mask);
 		return;
 	}
@@ -526,6 +999,49 @@ void m40_state::mem_w(address_space &space, offs_t offset, uint16_t data, uint16
 	{
 #if M40_DEBUG_TRACE
 		debug_diag_w(logical, addr, data, mem_mask);
+		debug_mdos_mem("W", space.spacenum(), logical, addr, data, mem_mask);
+#endif
+		if (m_mdos_fdublk_ready_hack && m_maincpu->pc() == 0x003b07e0 && addr == 0x0225fc && mem_mask == 0xffff)
+		{
+#if M40_DEBUG_TRACE
+			if (m_mdos_trace)
+			{
+				std::fprintf(m_mdos_trace, "FDUBLK_READY_HACK pc=%08X phys=%06X old=%04X new=%04X\n",
+					unsigned(m_maincpu->pc()), unsigned(addr), unsigned(data), unsigned(data | 0x0010));
+				std::fflush(m_mdos_trace);
+			}
+#endif
+			data |= 0x0010;
+		}
+#if M40_DEBUG_TRACE
+		if (m_mdos_trace && addr >= 0x0225f8 && addr <= 0x022610 && m_mdos_state_probe_count++ < 1000)
+		{
+			uint8_t const *p = m_ramptr + (addr - 0x010000);
+			uint16_t const old = (uint16_t(p[0]) << 8) | p[1];
+			uint16_t next = old;
+			if (ACCESSING_BITS_8_15)
+				next = (next & 0x00ff) | (data & 0xff00);
+			if (ACCESSING_BITS_0_7)
+				next = (next & 0xff00) | (data & 0x00ff);
+			if (old != next)
+			{
+				std::fprintf(m_mdos_trace,
+					"FDUSTATEW pc=%08X fcw=%04X phys=%06X off=%04X old=%04X new=%04X mask=%04X "
+					"r0=%04X r1=%04X r2=%04X r3=%04X r4=%04X r5=%04X r6=%04X r7=%04X "
+					"r8=%04X r9=%04X r10=%04X r11=%04X r12=%04X r13=%04X r14=%04X r15=%04X\n",
+					unsigned(m_maincpu->pc()), unsigned(m_maincpu->state_int(Z8000_FCW)),
+					unsigned(addr), unsigned(addr - 0x0225e6), unsigned(old), unsigned(next), unsigned(mem_mask),
+					unsigned(m_maincpu->state_int(Z8000_R0)), unsigned(m_maincpu->state_int(Z8000_R1)),
+					unsigned(m_maincpu->state_int(Z8000_R2)), unsigned(m_maincpu->state_int(Z8000_R3)),
+					unsigned(m_maincpu->state_int(Z8000_R4)), unsigned(m_maincpu->state_int(Z8000_R5)),
+					unsigned(m_maincpu->state_int(Z8000_R6)), unsigned(m_maincpu->state_int(Z8000_R7)),
+					unsigned(m_maincpu->state_int(Z8000_R8)), unsigned(m_maincpu->state_int(Z8000_R9)),
+					unsigned(m_maincpu->state_int(Z8000_R10)), unsigned(m_maincpu->state_int(Z8000_R11)),
+					unsigned(m_maincpu->state_int(Z8000_R12)), unsigned(m_maincpu->state_int(Z8000_R13)),
+					unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
+				std::fflush(m_mdos_trace);
+			}
+		}
 #endif
 		phys_w(addr, data, mem_mask);
 	}
@@ -542,6 +1058,7 @@ uint8_t m40_state::mmu_r(offs_t offset)
 		uint8_t const reg = (uint8_t)(offset >> 8);
 		uint8_t const data = m_mmu->read(reg);
 #if M40_DEBUG_TRACE
+		debug_mdos_mmu("R", offset, reg, data);
 		if (m_fdu_trace && (reg == 0x0b || reg == 0x01 || reg == 0x20 || reg == 0x0f || reg == 0x05))
 		{
 			std::fprintf(m_fdu_trace, "MMU R pc=%08X off=%04X reg=%02X data=%02X\n",
@@ -560,6 +1077,7 @@ void m40_state::mmu_w(offs_t offset, uint8_t data)
 	{
 		uint8_t reg = (uint8_t)(offset >> 8);
 #if M40_DEBUG_TRACE
+		debug_mdos_mmu("W", offset, reg, data);
 		if (m_fdu_trace && (reg == 0x0b || reg == 0x01 || reg == 0x20 || reg == 0x0f || reg == 0x05))
 		{
 			std::fprintf(m_fdu_trace, "MMU W pc=%08X off=%04X reg=%02X data=%02X\n",
@@ -599,7 +1117,7 @@ uint8_t m40_state::ff41_r()
 void m40_state::ff41_w(uint8_t data)
 {
 	// write = clear / re-arm the NMI latch
-	m_ff41 &= ~0x40;
+	m_ff41 &= ~0xc0;
 	m_maincpu->set_input_line(z8001_device::NMI_LINE, CLEAR_LINE);
 }
 
@@ -662,6 +1180,108 @@ void m40_state::kdc_uc_data_w(uint8_t data)
 	m_acia->data_w(data);
 }
 
+uint8_t m40_state::line_r(offs_t offset)
+{
+	uint8_t const reg = offset & 0xff;
+	uint8_t data = 0xff;
+
+	switch (reg)
+	{
+	case 0x00: // receive data
+		if (m_line_count)
+		{
+			data = m_line_fifo[m_line_tail];
+			m_line_tail++;
+			m_line_count--;
+			if (!m_line_count)
+			{
+				m_line_status &= ~0x02;
+				m_line_pending = false;
+			}
+			line_update_irq();
+		}
+		else
+		{
+			data = 0x00;
+		}
+		break;
+	case 0x08: // status: bit 0 TX-ready, bit 1 RX-ready
+		data = m_line_status;
+		break;
+	case 0xff: // keep the ROM slot scan seeing no physical governo here for now
+		data = 0xff;
+		break;
+	default:
+		data = 0xff;
+		break;
+	}
+
+#if M40_DEBUG_TRACE
+	if (m_line_trace)
+	{
+		std::fprintf(m_line_trace, "R pc=%08X reg=%02X data=%02X\n",
+			unsigned(m_maincpu->pc()), reg, data);
+		std::fflush(m_line_trace);
+	}
+#endif
+	return data;
+}
+
+void m40_state::line_w(offs_t offset, uint8_t data)
+{
+	uint8_t const reg = offset & 0xff;
+	switch (reg)
+	{
+	case 0x00: // transmit data
+		break;
+	case 0x08:
+	case 0x80:
+	case 0x90:
+	case 0xa0:
+	case 0xb0:
+	case 0xc0:
+	case 0xd0:
+		// Handshake/control strobes seen in MDOS30's seg-0x3e driver.
+		if (reg == 0xb0)
+		{
+			m_line_active = true;
+			line_update_irq();
+		}
+		m_line_status |= 0x01;
+		break;
+	default:
+		break;
+	}
+
+#if M40_DEBUG_TRACE
+	if (m_line_trace)
+	{
+		char const ch = (data >= 0x20 && data < 0x7f) ? char(data) : '.';
+		std::fprintf(m_line_trace, "W pc=%08X reg=%02X data=%02X char=%c\n",
+			unsigned(m_maincpu->pc()), reg, data, ch);
+		std::fflush(m_line_trace);
+	}
+#endif
+}
+
+void m40_state::line_queue(uint8_t data)
+{
+	if (m_line_count == sizeof(m_line_fifo))
+		return;
+
+	m_line_fifo[m_line_head] = data;
+	m_line_head++;
+	m_line_count++;
+	m_line_status |= 0x02;
+	m_line_pending = true;
+	line_update_irq();
+}
+
+void m40_state::line_update_irq()
+{
+	update_fdu_irq();
+}
+
 void m40_state::io_map(address_map &map)
 {
 	map.unmap_value_high();
@@ -669,6 +1289,11 @@ void m40_state::io_map(address_map &map)
 	map(0x1000, 0x1fff).rw(FUNC(m40_state::vid16_r), FUNC(m40_state::vid16_w));
 	// GO280 FDU floppy governo — slot 2 window
 	map(0x2000, 0x2fff).rw(FUNC(m40_state::fdu_r), FUNC(m40_state::fdu_w));
+	// Diagnostic alias: the monitor GO keystroke leaks into 6030T6's slot prompt as "4".
+	map(0x4000, 0x4fff).rw(FUNC(m40_state::fdu_r), FUNC(m40_state::fdu_w));
+	// MDOS30 line-console path.  This is only a minimal status/data model; reg
+	// 0xff intentionally returns 0xff so it does not alter the ROM's slot table.
+	map(0xe000, 0xefff).rw(FUNC(m40_state::line_r), FUNC(m40_state::line_w));
 	// UC (slot 15) on-board registers, byte-wide
 	map(0xff20, 0xff21).rw(FUNC(m40_state::kdc_uc_status_r), FUNC(m40_state::kdc_uc_status_w)).umask16(0xff00);
 	map(0xff22, 0xff23).rw(FUNC(m40_state::kdc_uc_data_r), FUNC(m40_state::kdc_uc_data_w)).umask16(0xff00);
@@ -763,6 +1388,16 @@ TIMER_CALLBACK_MEMBER(m40_state::kdc_poll)
 		//     OLD(66) left(4A) right(3E) / RUN(64) DRAW(40) PR-ALL(3F)
 		{ 0x52,0x3b,0x39,0x51,0x4c,0x3a,0x5e,0x4e,0x3c,0x4a,0x3e,0x66,0x64,0x40,0x3f,0x00 }
 	};
+	static constexpr uint8_t ascii[7][16] =
+	{
+		{ 0x7f,'1','2','3','4','5','6','7','8','9','0','-','=',0x08,0,0 },
+		{ 0x09,'Q','W','E','R','T','Y','U','I','O','P','@','[',0,0x0d,0 },
+		{ 0,'A','S','D','F','G','H','J','K','L',';',':',']',0,0,0 },
+		{ 0,'\\','Z','X','C','V','B','N','M',',','.','?',0,' ',0,0 },
+		{ 0,0,0,0,0,0,0,0,0x1b,0,0,0,0,0,0,0 },
+		{ 0,'7','8','9','-','4','5','6','.','1','2','3','0',0,0,0x0d },
+		{ 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 }
+	};
 
 	for (int row = 0; row < 7; row++)
 	{
@@ -774,7 +1409,11 @@ TIMER_CALLBACK_MEMBER(m40_state::kdc_poll)
 				continue;
 			uint8_t const code = codes[row][bit];
 			if (BIT(now, bit))
+			{
 				kdc_queue(code);
+				if (ascii[row][bit])
+					line_queue(ascii[row][bit]);
+			}
 			else if (code == 0x6e || code == 0x6f || code == 0x70)
 				kdc_queue(code + 8);   // SHIFT/LOCK/CONTROL send a break code
 		}
@@ -929,7 +1568,25 @@ uint8_t m40_state::fdu_r(offs_t offset)
 	switch (reg)
 	{
 	case 0x1d: data = m_fdc->msr_r(); break;         // uPD765 main status
-	case 0x1f: data = m_fdc->fifo_r(); break;        // uPD765 data
+	case 0x1f:                                       // uPD765 data
+		data = m_fdc->fifo_r();
+		if (m_mdos_fdu_st0_unit0_probe && m_fdu_vector == 0x08 && m_mdos_fdu_sense_result_left != 0)
+		{
+			if (m_mdos_fdu_sense_result_left == 2)
+			{
+				uint8_t const old = data;
+				if ((data & 0xc0) == 0x00 && BIT(data, 5))
+					data &= 0xf8;
+				if (m_mdos_trace && old != data)
+				{
+					std::fprintf(m_mdos_trace, "FDU_ST0_UNIT0_PROBE pc=%08X old=%02X new=%02X\n",
+						unsigned(m_maincpu->pc()), unsigned(old), unsigned(data));
+					std::fflush(m_mdos_trace);
+				}
+			}
+			m_mdos_fdu_sense_result_left--;
+		}
+		break;
 	case 0x40: case 0x42: case 0x44: case 0x46:      // AM9517A DMAC internal regs
 	case 0x48: case 0x4a: case 0x4c: case 0x4e:      // (byte-spaced: reg = (addr>>1)&0x0f)
 	case 0x50: case 0x52: case 0x54: case 0x56:
@@ -941,8 +1598,10 @@ uint8_t m40_state::fdu_r(offs_t offset)
 		data = ((m_intmo_lat || m_timer_int) ? 0x01 : 0)
 			| ((m_intoo_lat || m_fdc_int) ? 0x02 : 0);
 		break;
-	case 0xff: data = 0xe1;            break;        // RD1DN identifier: 0xE0 | NOM10(=1 FDU)
-	case 0xed: data = 0xff;            break;        // RDGNN diagnostic port
+	case 0xff: data = m_fdu_id;        break;        // RD1DN identifier: 0xE0 | NOM10(=1 FDU)
+	case 0xed:                                       // RDGNN diagnostic/status port
+		data = (m_fdu_rdgnn_vec08_override && m_fdu_vector == 0x08) ? m_fdu_rdgnn_after_vec08 : m_fdu_rdgnn;
+		break;
 	default:   data = 0xff;            break;
 	}
 #if M40_DEBUG_TRACE
@@ -956,7 +1615,11 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 	uint8_t const reg = offset & 0xff;
 	switch (reg)
 	{
-	case 0x1f: m_fdc->fifo_w(data); break;           // uPD765 command/parameter
+	case 0x1f:                                       // uPD765 command/parameter
+		if ((data & 0x1f) == 0x08)
+			m_mdos_fdu_sense_result_left = 2;
+		m_fdc->fifo_w(data);
+		break;
 	case 0x40: case 0x42: case 0x44: case 0x46:      // AM9517A DMAC internal regs
 	case 0x48: case 0x4a: case 0x4c: case 0x4e:
 	case 0x50: case 0x52: case 0x54: case 0x56:
@@ -1020,13 +1683,24 @@ void m40_state::update_fdu_irq()
 	// UC timer VI: 8253 ch1 OUT (level), enabled by the VIENO flip-flop; vector
 	// from 0xFF01 (UC3003 TST03 counter-1).
 	bool const timer_vi = m_timer_pending && m_arb_vieno;
+	bool const line_vi = m_line_pending && m_line_active;
 	// ACIA VI: the 6850 IRQ (self-clearing via its ISR's status/data reads)
 	// vectors through the same UC 0xFF01 latch as the timer — UC3003 test 6
 	// phase 2 loops vectors through 0xFF01 and expects the ACIA interrupt to
 	// deliver each one.  The UC ACIA's int enables stay off in normal monitor
 	// use (only the 0x03 master reset is written at boot).
-	m_maincpu->set_input_line(z8001_device::VI_LINE,
-		((m_fdu_pending && m_fdu_ien) || kdc_vi || timer_vi || m_acia_irq) ? ASSERT_LINE : CLEAR_LINE);
+	bool const fdu_vi = m_fdu_pending && m_fdu_ien;
+	bool const vi = fdu_vi || kdc_vi || line_vi || timer_vi || m_acia_irq;
+#if M40_DEBUG_TRACE
+	if (m_mdos_trace && vi != m_mdos_vi_asserted)
+	{
+		char const *source = fdu_vi ? "fdu" : (kdc_vi ? "kdc" : (line_vi ? "line" : (timer_vi ? "timer" : (m_acia_irq ? "acia" : "none"))));
+		uint8_t const vector = fdu_vi ? m_fdu_vector : (kdc_vi ? m_kdc_vector : (line_vi ? 0x00 : (timer_vi ? m_timer_vector : (m_acia_irq ? m_acia_vector : 0))));
+		debug_mdos_vi("LINE", source, vi, vector);
+		m_mdos_vi_asserted = vi;
+	}
+#endif
+	m_maincpu->set_input_line(z8001_device::VI_LINE, vi ? ASSERT_LINE : CLEAR_LINE);
 }
 
 void m40_state::fdc_intrq_w(int state)
@@ -1063,16 +1737,26 @@ uint16_t m40_state::vi_ack_r()
 {
 	// UC timer VI (ch1 OUT & VIENO): supply the 0xFF01 vector unless a governo/KDC
 	// source is pending (they take priority on the shared line).
-	bool const kdc_or_fdu = ((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
-	                     || (m_fdu_pending && m_fdu_ien);
-	if (m_timer_pending && m_arb_vieno && !kdc_or_fdu)
+	bool const kdc_fdu_or_line = ((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
+	                          || (m_fdu_pending && m_fdu_ien)
+	                          || (m_line_pending && m_line_active);
+	if (m_timer_pending && m_arb_vieno && !kdc_fdu_or_line)
 	{
+		uint8_t const vector = m_timer_vector;
 		m_timer_pending = false;   // edge-latched: served by this ack
 		update_fdu_irq();
-		return m_timer_vector;     // UC timer vector latch (0xFF01)
+#if M40_DEBUG_TRACE
+		debug_mdos_vi("ACK", "timer", false, vector);
+#endif
+		return vector;             // UC timer vector latch (0xFF01)
 	}
-	if (m_acia_irq && !kdc_or_fdu)
+	if (m_acia_irq && !kdc_fdu_or_line)
+	{
+#if M40_DEBUG_TRACE
+		debug_mdos_vi("ACK", "acia", true, m_acia_vector);
+#endif
 		return m_acia_vector;      // UC ACIA vector latch (0xFFA0); the 6850 IRQ
+	}
 		                           // clears when its ISR services the cause
 	if ((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
 	{
@@ -1082,16 +1766,30 @@ uint16_t m40_state::vi_ack_r()
 		// driver clears ctrl bit 5.
 		if (m_kdc_pending && BIT(m_kdc_ctrl, 7))
 			m_kdc_pending = false;
+		uint8_t const vector = m_kdc_vector;
 		update_fdu_irq();
-		return m_kdc_vector;
+#if M40_DEBUG_TRACE
+		debug_mdos_vi("ACK", "kdc", BIT(m_kdc_ctrl, 5), vector);
+#endif
+		return vector;
+	}
+	if (m_line_pending && m_line_active)
+	{
+		update_fdu_irq();
+#if M40_DEBUG_TRACE
+		debug_mdos_vi("ACK", "line", true, 0x00);
+#endif
+		return 0x00;
 	}
 
+	uint8_t const vector = m_fdu_vector;
 	m_fdu_pending = false;       // vector-enable strobe also resets INTP1
 #if M40_DEBUG_TRACE
 	debug_fdu("VIACK", 0x00, m_fdu_vector);
+	debug_mdos_vi("ACK", "fdu", false, vector);
 #endif
 	update_fdu_irq();
-	return m_fdu_vector;
+	return vector;
 }
 
 void m40_state::fdc_drq_w(int state)
@@ -1137,6 +1835,10 @@ uint32_t m40_state::dma_phys()
 uint8_t m40_state::dma_memr(offs_t /*offset*/)
 {
 	uint32_t const addr = dma_phys();
+	if (m_low_bank0_ram_enabled && addr >= 0x004000 && addr < 0x010000)
+		return m_low_bank0_ram[addr - 0x004000];
+	if (m_bank0_rom_mirror_enabled && addr < 0x010000)
+		return (addr & 1) ? (m_rom[(addr & 0x3fff) >> 1] & 0xff) : (m_rom[(addr & 0x3fff) >> 1] >> 8);
 	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
 		return m_ramptr[addr - 0x010000];
 	if (addr >= 0xff0000)
@@ -1149,11 +1851,14 @@ uint8_t m40_state::dma_memr(offs_t /*offset*/)
 void m40_state::dma_memw(offs_t /*offset*/, uint8_t data)
 {
 	uint32_t const addr = dma_phys();
-	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
+	if (m_low_bank0_ram_enabled && addr >= 0x004000 && addr < 0x010000)
+		m_low_bank0_ram[addr - 0x004000] = data;
+	else if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
 		m_ramptr[addr - 0x010000] = data;
 	else if (addr >= 0xff0000)
 		m_vram[addr & 0xffff] = data;
 #if M40_DEBUG_TRACE
+	debug_mdos_phys("DMAW", addr, data, 0x00ff);
 	if (m_fdu_trace)
 	{
 		uint32_t const pos = (m_dma_byte - 1) & 0xffffff;
@@ -1371,7 +2076,16 @@ uint8_t m40_state::arb_r(offs_t offset)
 		// bit 3 = VIENO FF or any-grant.  Satisfies both UCY805 (0x0F after ack-all
 		// following 0xFF8D-8F writes; 0xF8 with all granted) and UC3003 test 2
 		// (bit 3: 0 at entry, 1 after 0xFF8C, 0 after 0xFF84).
-		return hi | (m_arb_grant ? 0 : 0x07) | ((m_arb_vieno || m_arb_grant) ? 0x08 : 0);
+		uint8_t const result = hi | (m_arb_grant ? 0 : 0x07) | ((m_arb_vieno || m_arb_grant) ? 0x08 : 0);
+#if M40_DEBUG_TRACE
+		if (m_mdos_trace)
+		{
+			std::fprintf(m_mdos_trace, "ARBR pc=%08X off=%X result=%02X req=%X grant=%X rel=%X vieno=%u\n",
+				unsigned(m_maincpu->pc()), reg, result, m_arb_req, m_arb_grant, m_arb_rel, m_arb_vieno ? 1 : 0);
+			std::fflush(m_mdos_trace);
+		}
+#endif
+		return result;
 	}
 	return 0;
 }
@@ -1399,7 +2113,6 @@ void m40_state::arb_w(offs_t offset, uint8_t data)
 	{
 	case 0x0: case 0x1: case 0x2: case 0x3:          // ack/clear channel reg
 		m_arb_req &= ~(1 << reg);
-		if (m_arb_req == 0) m_arb_rel = 0;           // idle -> reset release level
 		break;
 	case 0x8: case 0x9: case 0xa: case 0xb:          // request channel reg-8
 		m_arb_req |= (1 << (reg - 8));
@@ -1414,6 +2127,14 @@ void m40_state::arb_w(offs_t offset, uint8_t data)
 	if (reg >= 0xc)              m_arb_vieno = true;
 	else if (reg >= 0x4 && reg <= 0x7) m_arb_vieno = false;
 	arb_update();
+#if M40_DEBUG_TRACE
+	if (m_mdos_trace)
+	{
+		std::fprintf(m_mdos_trace, "ARBW pc=%08X off=%X data=%02X req=%X grant=%X rel=%X vieno=%u\n",
+			unsigned(m_maincpu->pc()), reg, data, m_arb_req, m_arb_grant, m_arb_rel, m_arb_vieno ? 1 : 0);
+		std::fflush(m_mdos_trace);
+	}
+#endif
 }
 
 TIMER_CALLBACK_MEMBER(m40_state::arb_done)
@@ -1439,6 +2160,19 @@ void m40_state::machine_start()
 	m_vram = std::make_unique<uint8_t[]>(0x10000);
 	m_ramptr = m_ram->pointer();
 	m_ramsize = m_ram->size();
+	m_low_bank0_ram_enabled = std::getenv("M40_LOW_BANK0_RAM") != nullptr;
+	m_bank0_rom_mirror_enabled = std::getenv("M40_BANK0_ROM_MIRROR") != nullptr;
+	if (char const *const fdu_id = std::getenv("M40_FDU_ID"))
+		m_fdu_id = uint8_t(std::strtoul(fdu_id, nullptr, 0));
+	if (char const *const rdgnn = std::getenv("M40_FDU_RDGNN"))
+		m_fdu_rdgnn = uint8_t(std::strtoul(rdgnn, nullptr, 0));
+	if (char const *const rdgnn = std::getenv("M40_FDU_RDGNN_VEC08"))
+	{
+		m_fdu_rdgnn_after_vec08 = uint8_t(std::strtoul(rdgnn, nullptr, 0));
+		m_fdu_rdgnn_vec08_override = true;
+	}
+	m_mdos_fdublk_ready_hack = std::getenv("M40_MDOS_FDUBLK_READY_HACK") != nullptr;
+	m_mdos_fdu_st0_unit0_probe = std::getenv("M40_MDOS_FDU_ST0_UNIT0_PROBE") != nullptr;
 	m_arb_timer = timer_alloc(FUNC(m40_state::arb_done), this);
 	m_kdc_timer = timer_alloc(FUNC(m40_state::kdc_poll), this);
 #if M40_DEBUG_TRACE
@@ -1451,6 +2185,16 @@ void m40_state::machine_start()
 		{
 			if (path[0] != '\0')
 				m_fdu_trace = std::fopen(path, "w");
+		}
+		if (char const *const path = std::getenv("M40_MDOS_TRACE"))
+		{
+			if (path[0] != '\0')
+				m_mdos_trace = std::fopen(path, "w");
+		}
+		if (char const *const path = std::getenv("M40_LINE_TRACE"))
+		{
+			if (path[0] != '\0')
+				m_line_trace = std::fopen(path, "w");
 		}
 	#endif
 
@@ -1465,6 +2209,9 @@ void m40_state::machine_start()
 	}
 
 	save_item(NAME(m_ff41));
+	save_item(NAME(m_low_bank0_ram_enabled));
+	save_item(NAME(m_bank0_rom_mirror_enabled));
+	save_item(NAME(m_low_bank0_ram));
 	save_item(NAME(m_vid_live));
 	save_item(NAME(m_crtc_index));
 	save_item(NAME(m_crtc_max_ras));
@@ -1474,6 +2221,13 @@ void m40_state::machine_start()
 	save_item(NAME(m_kdc_vector));
 	save_item(NAME(m_kdc_pending));
 	save_item(NAME(m_kdc_fe_data_armed));
+	save_item(NAME(m_line_status));
+	save_item(NAME(m_line_active));
+	save_item(NAME(m_line_pending));
+	save_item(NAME(m_line_fifo));
+	save_item(NAME(m_line_head));
+	save_item(NAME(m_line_tail));
+	save_item(NAME(m_line_count));
 	save_item(NAME(m_kbd_prev));
 	save_item(NAME(m_kbd_fifo));
 	save_item(NAME(m_kbd_head));
@@ -1492,6 +2246,8 @@ void m40_state::machine_reset()
 	m_acia_irq = false;
 	m_lamp = 0;
 	m_ff41 = 0x01;   // BBU-valid clear? start with a defined value
+	for (auto &v : m_low_bank0_ram)
+		v = 0;
 	m_crtc_index = 0;
 	m_kdc_ctrl = 0;
 	m_kdc_data = 0;
@@ -1499,6 +2255,32 @@ void m40_state::machine_reset()
 	m_kdc_vector = 0x28;
 	m_kdc_pending = false;
 	m_kdc_fe_data_armed = false;
+	m_line_status = 0x01;
+	m_line_active = false;
+	m_line_pending = false;
+	m_line_head = 0;
+	m_line_tail = 0;
+	m_line_count = 0;
+	for (auto &v : m_line_fifo)
+		v = 0;
+#if M40_DEBUG_TRACE
+	m_mdos_cfg_phys_valid = false;
+	m_mdos_cfg_phys_base = 0;
+	m_mdos_flag_phys_valid = false;
+	m_mdos_flag_phys = 0;
+	m_mdos_last_flag_read_valid = false;
+	m_mdos_last_flag_read_pc = 0xffffffff;
+	m_mdos_last_flag_read_data = 0xffff;
+	m_mdos_vi_asserted = false;
+	m_mdos_probe_count = 0;
+	m_mdos_state_probe_count = 0;
+	m_mdos_fdu_sense_result_left = 0;
+	m_mmu_dbg_sar = 0;
+	m_mmu_dbg_dsc = 0;
+	for (auto &seg : m_mmu_dbg_sdr)
+		for (auto &v : seg)
+			v = 0;
+#endif
 	for (auto &v : m_kbd_prev)
 		v = 0;
 	m_kbd_head = 0;
