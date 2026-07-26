@@ -963,12 +963,18 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 	case 0x58: case 0x5a: case 0x5c: case 0x5e:
 		// Capture the ch1 (0x44) load — it carries the real transfer address (low
 		// 16 bits of the DMA *word* address); ch2 only counts bytes. 0x58 clears
-		// the address flip-flop and starts a fresh transfer.
-		if (reg == 0x58) { m_dma_ff = false; m_dma_byte = 0; }
+		// only the AM9517 first/second-byte flip-flop. A complete ch1 address load
+		// starts the board-level transfer cursor at that new address.
+		if (reg == 0x58)
+			m_dma_ff = false;
 		else if (reg == 0x44)
 		{
 			if (!m_dma_ff) m_dma_ch1 = (m_dma_ch1 & 0xff00) | data;
-			else           m_dma_ch1 = (m_dma_ch1 & 0x00ff) | (uint16_t(data) << 8);
+			else
+			{
+				m_dma_ch1 = (m_dma_ch1 & 0x00ff) | (uint16_t(data) << 8);
+				m_dma_byte = 0;
+			}
 			m_dma_ff = !m_dma_ff;
 		}
 		m_dmac->write((reg >> 1) & 0x0f, data);
@@ -986,6 +992,9 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 	case 0xe7:                                        // CONTR (manual 3963590 p.3-5)
 		m_fdu_ien = BIT(data, 0);                     // EN100 — interrupt-request enable
 		m_fdc->reset_w(BIT(data, 1) ? 0 : 1);         // RESFD — reset FDC (active low)
+		// MFDU RDY10 is pulled active. DIAGN can also force READY, but clearing it
+		// must not manufacture a ready-to-not-ready transition and FDC interrupt.
+		m_fdc->ready_w(false);                        // MAME external READY is inverted
 		update_fdu_irq();
 		for (auto &drive : m_floppy)
 			if (floppy_image_device *f = drive->get_device())
@@ -1502,6 +1511,7 @@ void m40_state::machine_reset()
 	// FDC's MF bit picks FM vs MFM per command). MAME's µPD765 defaults to 250 kbps,
 	// which halves the cell clock and makes every read miss the address mark.
 	m_fdc->set_rate(500000);
+	m_fdc->ready_w(false); // MFDU RDY10 pull-up; MAME external READY is inverted
 }
 
 void m40_state::m40(machine_config &config)
@@ -1561,7 +1571,9 @@ void m40_state::m40(machine_config &config)
 
 	// GO280 FDU floppy governo — uPD765 FDC (P8272) + 8" drive
 	M40_UPD765A(config, m_fdc, 8_MHz_XTAL);
-	m_fdc->set_ready_line_connected(true);
+	// GO280 supplies RDY10 through MFDU board logic rather than the drive's
+	// actuator-interface READY signal; the MFDU input is pulled active.
+	m_fdc->set_ready_line_connected(false);
 	m_fdc->set_select_lines_connected(true);
 	m_fdc->intrq_wr_callback().set(FUNC(m40_state::fdc_intrq_w));
 	m_fdc->drq_wr_callback().set(FUNC(m40_state::fdc_drq_w));
@@ -1632,7 +1644,9 @@ static INPUT_PORTS_START( m40 )
 	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_TILDE) PORT_NAME("@ ' (2A)") PORT_CHAR('@')
 	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_OPENBRACE) PORT_NAME("[ { (36)") PORT_CHAR('[')
 	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F9) PORT_NAME("CLEAR (37)") PORT_CHAR(UCHAR_MAMEKEY(F9))
-	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER) PORT_NAME("RETURN (35)") PORT_CHAR(13)
+	// The alpha RETURN is a plain typing key: the boot prompt and the monitor menus
+	// read the KEYPAD terminator (0x61), not this one, so char 13 lives there.
+	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER) PORT_NAME("RETURN (35)")
 	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_UNUSED)
 
 	PORT_START("K2")  // KB-MODE A..L ;+ *: ]}
@@ -1706,7 +1720,7 @@ static INPUT_PORTS_START( m40 )
 	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_0_PAD) PORT_CHAR('0')
 	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_PLUS_PAD) PORT_NAME("Keypad 00 (68)")
 	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_NUMLOCK) PORT_NAME("Keypad 000 (65)")
-	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER_PAD) PORT_NAME("Keypad ENTER (61)") PORT_CHAR(UCHAR_MAMEKEY(ENTER_PAD))
+	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER_PAD) PORT_NAME("Keypad ENTER (61)") PORT_CHAR(13) PORT_CHAR(UCHAR_MAMEKEY(ENTER_PAD))
 
 	PORT_START("K6")  // SKIP, DEL LINE, top-right key, right 3x4 block
 	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_PGDN) PORT_NAME("SKIP tall (52)") PORT_CHAR(UCHAR_MAMEKEY(PGDN))
