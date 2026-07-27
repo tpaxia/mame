@@ -27,6 +27,7 @@ public:
 	virtual void input_txd(int state) override { m_tlbc->serial_in_w(state); }
 	virtual void input_rts(int state) override { m_tlbc->cts_in_w(state); }
 	virtual void input_dtr(int state) override { m_tlbc->dsr_in_w(state); }
+	void output_dtr(int state) { output_dsr(state); output_dcd(state); }
 
 protected:
 
@@ -55,7 +56,7 @@ void serial_heath_h19_device::device_add_mconfig(machine_config &config)
 	HEATH_TLB_CONNECTOR(config, m_tlbc, tlb_options, "heath");
 	m_tlbc->serial_data_callback().set(FUNC(serial_heath_h19_device::output_rxd));
 	m_tlbc->rts_callback().set(FUNC(serial_heath_h19_device::output_cts));
-	m_tlbc->dtr_callback().set(FUNC(serial_heath_h19_device::input_dtr));
+	m_tlbc->dtr_callback().set(FUNC(serial_heath_h19_device::output_dtr));
 }
 
 } // anonymous namespace

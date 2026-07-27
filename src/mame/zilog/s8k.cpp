@@ -125,6 +125,7 @@ protected:
 	// Timer functions to catch rapid activity pulses
 	TIMER_CALLBACK_MEMBER(normal_led_delay);
 	TIMER_CALLBACK_MEMBER(busack_led_delay);
+	TIMER_CALLBACK_MEMBER(console_ready);
 
 	required_device<zbi_bus_device> m_bus;
 	required_device<zbi_slot_device> m_slot_cpu;
@@ -139,8 +140,10 @@ private:
 
 	emu_timer *m_normal_timer;
 	emu_timer *m_busack_timer;
+	emu_timer *m_console_timer;
 
 	s8k_cpu_base *m_cpu_device;
+	cpu_device *m_maincpu;
 };
 
 //**************************************************************************
@@ -207,6 +210,7 @@ void s8k_state::machine_start()
 {
 	m_normal_timer = timer_alloc(FUNC(s8k_state::normal_led_delay), this);
 	m_busack_timer = timer_alloc(FUNC(s8k_state::busack_led_delay), this);
+	m_console_timer = timer_alloc(FUNC(s8k_state::console_ready), this);
 
 	m_power_led = 0;
 	m_normal_led = 0;
@@ -216,6 +220,22 @@ void s8k_state::machine_start()
 void s8k_state::machine_reset()
 {
 	m_power_led = (m_cpu_device != nullptr);
+
+	// A real S8000's console terminal would normally already be running when
+	// the computer was powered on.  The emulated H19 needs a few milliseconds
+	// after reset to initialise its UART; hold the S8000 CPU until it is ready,
+	// or the monitor's initial banner is decoded as garbage.
+	if (subdevice("slot_cpu:cpu_a:sio0:chb:console:h19") ||
+			subdevice("slot_cpu:cpu_h:scc:chb:console:h19"))
+	{
+		m_maincpu->set_input_line(INPUT_LINE_RESET, ASSERT_LINE);
+		m_console_timer->adjust(attotime::from_msec(50));
+	}
+}
+
+TIMER_CALLBACK_MEMBER(s8k_state::console_ready)
+{
+	m_maincpu->set_input_line(INPUT_LINE_RESET, CLEAR_LINE);
 }
 
 void s8k_state::device_config_complete()
@@ -225,6 +245,7 @@ void s8k_state::device_config_complete()
 	if (cpu_lookup)
 	{
 		m_cpu_device = dynamic_cast<s8k_cpu_base*>(cpu_lookup);
+		m_maincpu = cpu_lookup->subdevice<cpu_device>("maincpu");
 		m_cpu_device->ns_cb().set(*this, FUNC(s8k_state::normal_led_w));
 		m_cpu_device->busack_cb().set(*this, FUNC(s8k_state::busack_led_w));
 	}

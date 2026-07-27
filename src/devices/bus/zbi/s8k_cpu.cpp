@@ -691,7 +691,7 @@ void zbi_s8k_cpu10_card_device::device_add_mconfig(machine_config &config)
 	rs232_0.rxd_handler().set(m_sio[0], FUNC(z80sio_device::rxa_w));
 	rs232_0.cts_handler().set(m_sio[0], FUNC(z80sio_device::ctsa_w));
 	rs232_0.dcd_handler().set(m_sio[0], FUNC(z80sio_device::dcda_w));
-	rs232_port_device &rs232_1(RS232_PORT(config, "sio0:chb:console", default_rs232_devices, "terminal"));
+	rs232_port_device &rs232_1(RS232_PORT(config, "sio0:chb:console", default_rs232_devices, "h19"));
 	rs232_1.rxd_handler().set(m_sio[0], FUNC(z80sio_device::rxb_w));
 	rs232_1.cts_handler().set(m_sio[0], FUNC(z80sio_device::ctsb_w));
 	rs232_1.dcd_handler().set(m_sio[0], FUNC(z80sio_device::dcdb_w));
@@ -1259,7 +1259,7 @@ void zbi_s8k_hpcpu_card_device::device_add_mconfig(machine_config &config)
 	rs232a.rxd_handler().set(m_scc, FUNC(scc8530_device::rxa_w));
 	rs232a.cts_handler().set(m_scc, FUNC(scc8530_device::ctsa_w));
 	rs232a.dcd_handler().set(m_scc, FUNC(scc8530_device::dcda_w));
-	rs232_port_device &rs232b(RS232_PORT(config, "scc:chb:console", default_rs232_devices, "terminal"));
+	rs232_port_device &rs232b(RS232_PORT(config, "scc:chb:console", default_rs232_devices, "h19"));
 	rs232b.rxd_handler().set(m_scc, FUNC(scc8530_device::rxb_w));
 	rs232b.cts_handler().set(m_scc, FUNC(scc8530_device::ctsb_w));
 	rs232b.dcd_handler().set(m_scc, FUNC(scc8530_device::dcdb_w));
