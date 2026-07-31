@@ -13,49 +13,35 @@ int main(int ac, char **av)
 	int i;
 
 	for (i = 0; i < DF; i++) {
-		if (i & CF) {
-			if (i & 0x0f < 0x0a)
-				dab[i] = CF | ((i + 0x60) & 0xff);
-			else
-				dab[i] = CF | ((i + 0x66) & 0xff);
-		} else {
-			if (i & HF) {
-				if (i & 0xf0 < 0xa0)
-					dab[i] = ((i + 0x06) & 0xff);
-				else
-					dab[i] = CF | ((i + 0x66) & 0xff);
-			} else {
-				if ((i & 0xf0) < 0xa0 && (i & 0x0f) < 0x0a)
-					dab[i] = i & 0xff;
-				else if ((i & 0xf0) < 0x90 && (i & 0x0f) >= 0x0a)
-					dab[i] = ((i + 0x06) & 0xff);
-				else if ((i & 0xf0) >= 0xa0 && (i & 0x0f) < 0x0a)
-					dab[i] = CF | ((i + 0x60) & 0xff);
-				else if ((i & 0xf0) >= 0x90 && (i & 0x0f) >= 0x0a)
-					dab[i] = CF | ((i + 0x66) & 0xff);
-				else {
-					fprintf(stderr, "unhandled $%04x\n", i);
-					return 1;
-				}
+		int val = i & 0xff;
+		int result;
 
-			}
+		/* add/adc: correct the low digit if it overflowed or a half
+		   carry was produced, the high digit if it overflowed or a
+		   carry was produced; the high correction is the carry out */
+		result = val;
+		if ((i & HF) || (val & 0x0f) > 0x09)
+			result += 0x06;
+		if ((i & CF) || val > 0x99) {
+			result += 0x60;
+			dab[i] = CF | (result & 0xff);
+		} else {
+			dab[i] = result & 0xff;
 		}
 
-		if (i & CF) {
-			if (i & HF) {
-				dab[DF+i] = CF | ((i + 0x9a) & 0xff);
-			} else {
-				dab[DF+i] = CF | ((i + 0xa0) & 0xff);
-			}
-		} else {
-			if (i & HF) {
-				dab[DF+i] = CF | ((i + 0xfa) & 0xff);
-			} else {
-				dab[DF+i] = (i & 0xff);
-			}
-		}
+		/* sub/sbc: undo the binary borrow(s); the carry out is the
+		   carry in, since no new borrow can be generated here */
+		result = val;
+		if (i & HF)
+			result += 0xfa;
+		if (i & CF)
+			dab[DF+i] = CF | ((result + 0xa0) & 0xff);
+		else
+			dab[DF+i] = result & 0xff;
 	}
 
+	printf("// license:BSD-3-Clause\n");
+	printf("// copyright-holders:Juergen Buchmueller,Ernesto Corvi\n");
 	printf("/************************************************ \n");
 	printf(" * Result table for Z8000 DAB instruction         \n");
 	printf(" *                                                \n");
