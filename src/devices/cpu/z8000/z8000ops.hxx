@@ -108,7 +108,10 @@ void z8002_device::addr_to_reg(int regno, uint32_t addr)
 {
 	if (get_segmented_mode()) {
 		uint32_t segaddr = make_segmented_addr(addr);
-		RW(regno) = (RW(regno) & 0x00ff) | ((segaddr >> 16) & 0xff00);
+		/* the whole high word is replaced - the segment number with bit
+		   31 set - so nothing of the previous contents survives, not
+		   even the unused low byte */
+		RW(regno) = (segaddr >> 16) & 0xff00;
 		RW(regno | 1) = segaddr & 0xffff;
 	}
 	else
@@ -197,14 +200,13 @@ void z8002_device::WRBX_L(uint8_t reg, uint16_t idx, uint32_t value)
 	WRMEM_L(reg == SP ? m_stack : m_data, addr_add(addr_from_reg(reg), idx), value);
 }
 
-#define ADD_ALIGNED16(x, value) (x) += (value) - ((x) & 1)
 
 void z8002_device::PUSHW(uint8_t dst, uint16_t value)
 {
 	if (get_segmented_mode())
-		ADD_ALIGNED16(RW(dst | 1), -2);
+		RW(dst | 1) -= 2;
 	else
-		ADD_ALIGNED16(RW(dst), -2);
+		RW(dst) -= 2;
 	WRIR_W(dst, value);
 }
 
@@ -212,18 +214,18 @@ uint16_t z8002_device::POPW(uint8_t src)
 {
 	uint16_t result = RDIR_W(src);
 	if (get_segmented_mode())
-		ADD_ALIGNED16(RW(src | 1), 2);
+		RW(src | 1) += 2;
 	else
-		ADD_ALIGNED16(RW(src), 2);
+		RW(src) += 2;
 	return result;
 }
 
 void z8002_device::PUSHL(uint8_t dst, uint32_t value)
 {
 	if (get_segmented_mode())
-		ADD_ALIGNED16(RW(dst | 1), -4);
+		RW(dst | 1) -= 4;
 	else
-		ADD_ALIGNED16(RW(dst), -4);
+		RW(dst) -= 4;
 	WRIR_L(dst, value);
 }
 
@@ -231,9 +233,9 @@ uint32_t z8002_device::POPL(uint8_t src)
 {
 	uint32_t result = RDIR_L(src);
 	if (get_segmented_mode())
-		ADD_ALIGNED16(RW(src | 1), 4);
+		RW(src | 1) += 4;
 	else
-		ADD_ALIGNED16(RW(src), 4);
+		RW(src) += 4;
 	return result;
 }
 
@@ -708,7 +710,10 @@ uint64_t z8002_device::MULTL(uint32_t dest, uint32_t value)
 	}
 	CLR_CZSV;
 	CHK_XXXQ_ZS;
-	if((int64_t)result < -0x7fffffffL || (int64_t)result >= 0x7fffffffL) SET_C;
+	/* carry marks a product that will not fit in the low long: the
+	   representable range is [-2^31, 2^31), so exactly -2^31 and
+	   2^31-1 do fit */
+	if((int64_t)result < -0x80000000LL || (int64_t)result >= 0x80000000LL) SET_C;
 	return result;
 }
 
@@ -740,8 +745,10 @@ uint32_t z8002_device::DIVW(uint32_t dest, uint16_t value)
 				/* CASE 4: the quotient is a 17-bit two's complement
 				   number; the destination register keeps the low 16
 				   bits and the S flag holds the sign-extension MSB, so
-				   preserve the computed result rather than forcing -1/0. */
-				CHK_XXXW_ZS;
+				   preserve the computed result rather than forcing -1/0.
+				   S is that 17th bit - the sign of the whole quotient -
+				   not bit 15 of the truncated remnant. */
+				if ((int32_t)result < 0) SET_S;
 				SET_C;
 			}
 		}
@@ -787,8 +794,10 @@ uint64_t z8002_device::DIVL(uint64_t dest, uint32_t value)
 				/* CASE 4: the quotient is a 33-bit two's complement
 				   number; the destination register keeps the low 32
 				   bits and the S flag holds the sign-extension MSB, so
-				   preserve the computed result rather than forcing -1/0. */
-				CHK_XXXL_ZS;
+				   preserve the computed result rather than forcing -1/0.
+				   S is that 33rd bit - the sign of the whole quotient -
+				   not bit 31 of the truncated remnant. */
+				if ((int64_t)result < 0) SET_S;
 				SET_C;
 			}
 		}
@@ -4951,7 +4960,8 @@ void z8002_device::Z7D_dddd_0ccc()
 			RW(dst) = m_refresh;
 			break;
 		case 4:
-			RW(dst) = m_psapseg & 0x7f00;
+			/* PSAPSEG reads back whatever was written to it */
+			RW(dst) = m_psapseg;
 			break;
 		case 5:
 			RW(dst) = m_psapoff & 0xff00;
@@ -4988,8 +4998,7 @@ void z8002_device::Z7D_ssss_1ccc()
 			m_refresh = RW(src);
 			break;
 		case 4:
-			m_psapseg &= ~0x7f00;
-			m_psapseg |= RW(src) & 0x7f00;
+			m_psapseg = RW(src);
 			break;
 		case 5:
 			m_psapoff &= ~0xff00;
@@ -5746,26 +5755,28 @@ void z8002_device::ZAE_dddd_cccc()
 {
 	GET_CCC(OP0,NIB3);
 	GET_DST(OP0,NIB2);
-	uint8_t tmp = RB(dst) & ~1;
+	/* the destination is only written when the condition is
+	   true; a false condition leaves bit 0 as it was */
+	bool cond = false;
 	switch (cc) {
-		case  0: if (CC0) tmp |= 1; break;
-		case  1: if (CC1) tmp |= 1; break;
-		case  2: if (CC2) tmp |= 1; break;
-		case  3: if (CC3) tmp |= 1; break;
-		case  4: if (CC4) tmp |= 1; break;
-		case  5: if (CC5) tmp |= 1; break;
-		case  6: if (CC6) tmp |= 1; break;
-		case  7: if (CC7) tmp |= 1; break;
-		case  8: if (CC8) tmp |= 1; break;
-		case  9: if (CC9) tmp |= 1; break;
-		case 10: if (CCA) tmp |= 1; break;
-		case 11: if (CCB) tmp |= 1; break;
-		case 12: if (CCC) tmp |= 1; break;
-		case 13: if (CCD) tmp |= 1; break;
-		case 14: if (CCE) tmp |= 1; break;
-		case 15: if (CCF) tmp |= 1; break;
+		case  0: cond = CC0; break;
+		case  1: cond = CC1; break;
+		case  2: cond = CC2; break;
+		case  3: cond = CC3; break;
+		case  4: cond = CC4; break;
+		case  5: cond = CC5; break;
+		case  6: cond = CC6; break;
+		case  7: cond = CC7; break;
+		case  8: cond = CC8; break;
+		case  9: cond = CC9; break;
+		case 10: cond = CCA; break;
+		case 11: cond = CCB; break;
+		case 12: cond = CCC; break;
+		case 13: cond = CCD; break;
+		case 14: cond = CCE; break;
+		case 15: cond = CCF; break;
 	}
-	RB(dst) = tmp;
+	if (cond) RB(dst) |= 1;
 }
 
 /******************************************
@@ -5776,26 +5787,28 @@ void z8002_device::ZAF_dddd_cccc()
 {
 	GET_CCC(OP0,NIB3);
 	GET_DST(OP0,NIB2);
-	uint16_t tmp = RW(dst) & ~1;
+	/* the destination is only written when the condition is
+	   true; a false condition leaves bit 0 as it was */
+	bool cond = false;
 	switch (cc) {
-		case  0: if (CC0) tmp |= 1; break;
-		case  1: if (CC1) tmp |= 1; break;
-		case  2: if (CC2) tmp |= 1; break;
-		case  3: if (CC3) tmp |= 1; break;
-		case  4: if (CC4) tmp |= 1; break;
-		case  5: if (CC5) tmp |= 1; break;
-		case  6: if (CC6) tmp |= 1; break;
-		case  7: if (CC7) tmp |= 1; break;
-		case  8: if (CC8) tmp |= 1; break;
-		case  9: if (CC9) tmp |= 1; break;
-		case 10: if (CCA) tmp |= 1; break;
-		case 11: if (CCB) tmp |= 1; break;
-		case 12: if (CCC) tmp |= 1; break;
-		case 13: if (CCD) tmp |= 1; break;
-		case 14: if (CCE) tmp |= 1; break;
-		case 15: if (CCF) tmp |= 1; break;
+		case  0: cond = CC0; break;
+		case  1: cond = CC1; break;
+		case  2: cond = CC2; break;
+		case  3: cond = CC3; break;
+		case  4: cond = CC4; break;
+		case  5: cond = CC5; break;
+		case  6: cond = CC6; break;
+		case  7: cond = CC7; break;
+		case  8: cond = CC8; break;
+		case  9: cond = CC9; break;
+		case 10: cond = CCA; break;
+		case 11: cond = CCB; break;
+		case 12: cond = CCC; break;
+		case 13: cond = CCD; break;
+		case 14: cond = CCE; break;
+		case 15: cond = CCF; break;
 	}
-	RW(dst) = tmp;
+	if (cond) RW(dst) |= 1;
 }
 
 /******************************************
@@ -6152,9 +6165,9 @@ void z8002_device::ZB8_ddN0_0010_0000_rrrr_ssN0_0000()
 	GET_CNT(OP1,NIB1);
 	uint8_t xlt = RDBX_B(src, RDIR_B(dst));
 	if (xlt) CLR_Z; else SET_Z;
+	RB(1) = xlt;  /* RH1 is loaded before the pointer is stepped */
 	add_to_addr_reg(dst, 1);
 	if (--RW(cnt)) CLR_V; else SET_V;
-	RB(1) = xlt;  /* load RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6168,6 +6181,7 @@ void z8002_device::ZB8_ddN0_0110_0000_rrrr_ssN0_1110()
 	GET_CNT(OP1,NIB1);
 	uint8_t xlt = RDBX_B(src, RDIR_B(dst));
 	if (xlt) CLR_Z; else SET_Z;
+	RB(1) = xlt;  /* RH1 is loaded before the pointer is stepped */
 	add_to_addr_reg(dst, 1);
 	if (--RW(cnt)) {
 		CLR_V;
@@ -6175,7 +6189,6 @@ void z8002_device::ZB8_ddN0_0110_0000_rrrr_ssN0_1110()
 		m_pc -= 4;
 	}
 	else SET_V;
-	RB(1) = xlt;  /* load RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6190,8 +6203,11 @@ void z8002_device::ZB8_ddN0_1010_0000_rrrr_ssN0_0000()
 	uint8_t xlt = RDBX_B(src, RDIR_B(dst));
 	if (xlt) CLR_Z; else SET_Z;
 	sub_from_addr_reg(dst, 1);
+	/* trtdb alone loads RH1 after stepping the pointer; trtib, trtirb and
+	   trtdrb all load it before.  Captured from a Z8001 - sys_trtdb_basic
+	   and mame_trtdb_dst_rh1_overlap_borrow both pin this ordering. */
+	RB(1) = xlt;
 	if (--RW(cnt)) CLR_V; else SET_V;
-	RB(1) = xlt;  /* load RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6205,6 +6221,7 @@ void z8002_device::ZB8_ddN0_1110_0000_rrrr_ssN0_1110()
 	GET_CNT(OP1,NIB1);
 	uint8_t xlt = RDBX_B(src, RDIR_B(dst));
 	if (xlt) CLR_Z; else SET_Z;
+	RB(1) = xlt;  /* RH1 is loaded before the pointer is stepped */
 	sub_from_addr_reg(dst, 1);
 	if (--RW(cnt)) {
 		CLR_V;
@@ -6212,7 +6229,6 @@ void z8002_device::ZB8_ddN0_1110_0000_rrrr_ssN0_1110()
 		m_pc -= 4;
 	}
 	else SET_V;
-	RB(1) = xlt;  /* load RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6227,10 +6243,14 @@ void z8002_device::ZB8_ddN0_0000_0000_rrrr_ssN0_0000()
 	memory_access<23, 1, 0, ENDIANNESS_BIG>::specific &dstspace = dst == SP ? m_stack : m_data;
 	uint32_t dstaddr = addr_from_reg(dst);
 	uint8_t xlt = RDBX_B(src, RDMEM_B(dstspace, dstaddr));
-	WRMEM_B(dstspace, dstaddr, xlt);
+	/* RH1 is destroyed before the result is stored, and the store takes
+	   its address from the pointer register as it stands at that point -
+	   so a destination pointer overlapping RH1 stores through the value
+	   just written, not through the address the source byte came from */
+	RB(1) = xlt;  /* RH1 is destroyed before the result is stored */
+	WRMEM_B(dstspace, addr_from_reg(dst), xlt);
 	add_to_addr_reg(dst, 1);
 	if (--RW(cnt)) CLR_V; else SET_V;
-	RB(1) = xlt;  /* destroy RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6245,10 +6265,14 @@ void z8002_device::ZB8_ddN0_0100_0000_rrrr_ssN0_0000()
 	memory_access<23, 1, 0, ENDIANNESS_BIG>::specific &dstspace = dst == SP ? m_stack : m_data;
 	uint32_t dstaddr = addr_from_reg(dst);
 	uint8_t xlt = RDBX_B(src, RDMEM_B(dstspace, dstaddr));
-	WRMEM_B(dstspace, dstaddr, xlt);
+	/* RH1 is destroyed before the result is stored, and the store takes
+	   its address from the pointer register as it stands at that point -
+	   so a destination pointer overlapping RH1 stores through the value
+	   just written, not through the address the source byte came from */
+	RB(1) = xlt;  /* RH1 is destroyed before the result is stored */
+	WRMEM_B(dstspace, addr_from_reg(dst), xlt);
 	add_to_addr_reg(dst, 1);
 	if (--RW(cnt)) { CLR_V; m_pc -= 4; } else SET_V;
-	RB(1) = xlt;  /* destroy RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6263,10 +6287,14 @@ void z8002_device::ZB8_ddN0_1000_0000_rrrr_ssN0_0000()
 	memory_access<23, 1, 0, ENDIANNESS_BIG>::specific &dstspace = dst == SP ? m_stack : m_data;
 	uint32_t dstaddr = addr_from_reg(dst);
 	uint8_t xlt = RDBX_B(src, RDMEM_B(dstspace, dstaddr));
-	WRMEM_B(dstspace, dstaddr, xlt);
+	/* RH1 is destroyed before the result is stored, and the store takes
+	   its address from the pointer register as it stands at that point -
+	   so a destination pointer overlapping RH1 stores through the value
+	   just written, not through the address the source byte came from */
+	RB(1) = xlt;  /* RH1 is destroyed before the result is stored */
+	WRMEM_B(dstspace, addr_from_reg(dst), xlt);
 	sub_from_addr_reg(dst, 1);
 	if (--RW(cnt)) CLR_V; else SET_V;
-	RB(1) = xlt;  /* destroy RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6281,10 +6309,14 @@ void z8002_device::ZB8_ddN0_1100_0000_rrrr_ssN0_0000()
 	memory_access<23, 1, 0, ENDIANNESS_BIG>::specific &dstspace = dst == SP ? m_stack : m_data;
 	uint32_t dstaddr = addr_from_reg(dst);
 	uint8_t xlt = RDBX_B(src, RDMEM_B(dstspace, dstaddr));
-	WRMEM_B(dstspace, dstaddr, xlt);
+	/* RH1 is destroyed before the result is stored, and the store takes
+	   its address from the pointer register as it stands at that point -
+	   so a destination pointer overlapping RH1 stores through the value
+	   just written, not through the address the source byte came from */
+	RB(1) = xlt;  /* RH1 is destroyed before the result is stored */
+	WRMEM_B(dstspace, addr_from_reg(dst), xlt);
 	sub_from_addr_reg(dst, 1);
 	if (--RW(cnt)) { CLR_V; m_pc -= 4; } else SET_V;
-	RB(1) = xlt;  /* destroy RH1 - must be last, after addr update */
 }
 
 /******************************************
