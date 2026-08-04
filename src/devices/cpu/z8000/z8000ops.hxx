@@ -6162,9 +6162,9 @@ void z8002_device::ZB8_ddN0_0010_0000_rrrr_ssN0_0000()
 	GET_CNT(OP1,NIB1);
 	uint8_t xlt = RDBX_B(src, RDIR_B(dst));
 	if (xlt) CLR_Z; else SET_Z;
+	RB(1) = xlt;  /* RH1 is loaded before the pointer is stepped */
 	add_to_addr_reg(dst, 1);
 	if (--RW(cnt)) CLR_V; else SET_V;
-	RB(1) = xlt;  /* load RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6178,6 +6178,7 @@ void z8002_device::ZB8_ddN0_0110_0000_rrrr_ssN0_1110()
 	GET_CNT(OP1,NIB1);
 	uint8_t xlt = RDBX_B(src, RDIR_B(dst));
 	if (xlt) CLR_Z; else SET_Z;
+	RB(1) = xlt;  /* RH1 is loaded before the pointer is stepped */
 	add_to_addr_reg(dst, 1);
 	if (--RW(cnt)) {
 		CLR_V;
@@ -6185,7 +6186,6 @@ void z8002_device::ZB8_ddN0_0110_0000_rrrr_ssN0_1110()
 		m_pc -= 4;
 	}
 	else SET_V;
-	RB(1) = xlt;  /* load RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6200,8 +6200,11 @@ void z8002_device::ZB8_ddN0_1010_0000_rrrr_ssN0_0000()
 	uint8_t xlt = RDBX_B(src, RDIR_B(dst));
 	if (xlt) CLR_Z; else SET_Z;
 	sub_from_addr_reg(dst, 1);
+	/* trtdb alone loads RH1 after stepping the pointer; trtib, trtirb and
+	   trtdrb all load it before.  Captured from a Z8001 - sys_trtdb_basic
+	   and mame_trtdb_dst_rh1_overlap_borrow both pin this ordering. */
+	RB(1) = xlt;
 	if (--RW(cnt)) CLR_V; else SET_V;
-	RB(1) = xlt;  /* load RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6215,6 +6218,7 @@ void z8002_device::ZB8_ddN0_1110_0000_rrrr_ssN0_1110()
 	GET_CNT(OP1,NIB1);
 	uint8_t xlt = RDBX_B(src, RDIR_B(dst));
 	if (xlt) CLR_Z; else SET_Z;
+	RB(1) = xlt;  /* RH1 is loaded before the pointer is stepped */
 	sub_from_addr_reg(dst, 1);
 	if (--RW(cnt)) {
 		CLR_V;
@@ -6222,7 +6226,6 @@ void z8002_device::ZB8_ddN0_1110_0000_rrrr_ssN0_1110()
 		m_pc -= 4;
 	}
 	else SET_V;
-	RB(1) = xlt;  /* load RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6237,10 +6240,14 @@ void z8002_device::ZB8_ddN0_0000_0000_rrrr_ssN0_0000()
 	memory_access<23, 1, 0, ENDIANNESS_BIG>::specific &dstspace = dst == SP ? m_stack : m_data;
 	uint32_t dstaddr = addr_from_reg(dst);
 	uint8_t xlt = RDBX_B(src, RDMEM_B(dstspace, dstaddr));
-	WRMEM_B(dstspace, dstaddr, xlt);
+	/* RH1 is destroyed before the result is stored, and the store takes
+	   its address from the pointer register as it stands at that point -
+	   so a destination pointer overlapping RH1 stores through the value
+	   just written, not through the address the source byte came from */
+	RB(1) = xlt;  /* RH1 is destroyed before the result is stored */
+	WRMEM_B(dstspace, addr_from_reg(dst), xlt);
 	add_to_addr_reg(dst, 1);
 	if (--RW(cnt)) CLR_V; else SET_V;
-	RB(1) = xlt;  /* destroy RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6255,10 +6262,14 @@ void z8002_device::ZB8_ddN0_0100_0000_rrrr_ssN0_0000()
 	memory_access<23, 1, 0, ENDIANNESS_BIG>::specific &dstspace = dst == SP ? m_stack : m_data;
 	uint32_t dstaddr = addr_from_reg(dst);
 	uint8_t xlt = RDBX_B(src, RDMEM_B(dstspace, dstaddr));
-	WRMEM_B(dstspace, dstaddr, xlt);
+	/* RH1 is destroyed before the result is stored, and the store takes
+	   its address from the pointer register as it stands at that point -
+	   so a destination pointer overlapping RH1 stores through the value
+	   just written, not through the address the source byte came from */
+	RB(1) = xlt;  /* RH1 is destroyed before the result is stored */
+	WRMEM_B(dstspace, addr_from_reg(dst), xlt);
 	add_to_addr_reg(dst, 1);
 	if (--RW(cnt)) { CLR_V; m_pc -= 4; } else SET_V;
-	RB(1) = xlt;  /* destroy RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6273,10 +6284,14 @@ void z8002_device::ZB8_ddN0_1000_0000_rrrr_ssN0_0000()
 	memory_access<23, 1, 0, ENDIANNESS_BIG>::specific &dstspace = dst == SP ? m_stack : m_data;
 	uint32_t dstaddr = addr_from_reg(dst);
 	uint8_t xlt = RDBX_B(src, RDMEM_B(dstspace, dstaddr));
-	WRMEM_B(dstspace, dstaddr, xlt);
+	/* RH1 is destroyed before the result is stored, and the store takes
+	   its address from the pointer register as it stands at that point -
+	   so a destination pointer overlapping RH1 stores through the value
+	   just written, not through the address the source byte came from */
+	RB(1) = xlt;  /* RH1 is destroyed before the result is stored */
+	WRMEM_B(dstspace, addr_from_reg(dst), xlt);
 	sub_from_addr_reg(dst, 1);
 	if (--RW(cnt)) CLR_V; else SET_V;
-	RB(1) = xlt;  /* destroy RH1 - must be last, after addr update */
 }
 
 /******************************************
@@ -6291,10 +6306,14 @@ void z8002_device::ZB8_ddN0_1100_0000_rrrr_ssN0_0000()
 	memory_access<23, 1, 0, ENDIANNESS_BIG>::specific &dstspace = dst == SP ? m_stack : m_data;
 	uint32_t dstaddr = addr_from_reg(dst);
 	uint8_t xlt = RDBX_B(src, RDMEM_B(dstspace, dstaddr));
-	WRMEM_B(dstspace, dstaddr, xlt);
+	/* RH1 is destroyed before the result is stored, and the store takes
+	   its address from the pointer register as it stands at that point -
+	   so a destination pointer overlapping RH1 stores through the value
+	   just written, not through the address the source byte came from */
+	RB(1) = xlt;  /* RH1 is destroyed before the result is stored */
+	WRMEM_B(dstspace, addr_from_reg(dst), xlt);
 	sub_from_addr_reg(dst, 1);
 	if (--RW(cnt)) { CLR_V; m_pc -= 4; } else SET_V;
-	RB(1) = xlt;  /* destroy RH1 - must be last, after addr update */
 }
 
 /******************************************
