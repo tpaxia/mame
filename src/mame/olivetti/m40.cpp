@@ -19,6 +19,8 @@
 
 #include "emu.h"
 
+#include "m40_kbd.h"
+
 #include "cpu/z8000/z8000.h"
 #include "machine/z8010.h"
 #include "machine/pit8253.h"
@@ -93,7 +95,7 @@ public:
 		, m_floppy(*this, "fdc:%u", 0U)
 		, m_fdu_timer(*this, "fdu_timer")
 		, m_dmac(*this, "dmac")
-		, m_kbd(*this, "K%u", 0U)
+		, m_keyboard(*this, "keyboard")
 		, m_rom(*this, "maincpu")
 	{ }
 
@@ -126,7 +128,7 @@ private:
 	required_device_array<floppy_connector, 4> m_floppy;
 	required_device<pit8253_device> m_fdu_timer;
 	required_device<am9517a_device> m_dmac;
-	required_ioport_array<7> m_kbd;
+	required_device<m40_keyboard_device> m_keyboard;
 	required_region_ptr<uint16_t> m_rom;
 
 	std::unique_ptr<uint8_t[]> m_vram;   // 64 KB video window @ 0xFF0000
@@ -155,8 +157,6 @@ private:
 	uint8_t m_kdc_vector = 0;    // keyboard VI vector, installed by the disk monitor's PSA
 	bool    m_kdc_pending = false;
 	bool    m_kdc_data_armed = false;
-	emu_timer *m_kdc_timer = nullptr;
-	uint16_t m_kbd_prev[7] = {};
 	uint8_t  m_kbd_fifo[16] = {};
 	uint8_t  m_kbd_head = 0;
 	uint8_t  m_kbd_tail = 0;
@@ -227,7 +227,6 @@ private:
 	void     debug_pc_ctx(char const *event);
 #endif
 	void     kdc_queue(uint8_t data);
-	TIMER_CALLBACK_MEMBER(kdc_poll);
 	MC6845_UPDATE_ROW(crtc_update_row);
 	void palette_init(palette_device &palette) ATTR_COLD;
 
@@ -716,57 +715,6 @@ void m40_state::kdc_queue(uint8_t data)
 	m_kbd_count++;
 	m_kdc_pending = true;
 	update_vi();
-}
-
-TIMER_CALLBACK_MEMBER(m40_state::kdc_poll)
-{
-	// ANK1426 positional scancodes, organized as the six physical key rows of the
-	// board photo set plus the function/editing block. Codes
-	// verified against KEYTE1's on-screen expected-code grids (TEST 1 alpha, TEST 2
-	// functions.numerical) and live echo; '?'-marked entries in the ioports below
-	// are geometry-based hypotheses pending the TEST 3 read-off. Each entry is the
-	// raw byte the keyboard MCU would send; the matrix bit that carries it is the
-	// matching ioport PORT_BIT.
-	static constexpr uint8_t codes[7][16] =
-	{
-		// K0: DEL 1..0 -= ~^ BS
-		{ 0x06,0x01,0x04,0x07,0x17,0x1d,0x1e,0x13,0x21,0x24,0x2e,0x2c,0x2b,0x31,0x00,0x00 },
-		// K1: TAB Q..P @' [{ CLEAR RETURN
-		{ 0x05,0x03,0x0c,0x08,0x1f,0x11,0x14,0x19,0x25,0x26,0x30,0x2a,0x36,0x37,0x35,0x00 },
-		// K2: KB-MODE A..L ;+ *: ]}
-		{ 0x02,0x09,0x0f,0x0d,0x18,0x15,0x1b,0x1a,0x28,0x22,0x2f,0x34,0x38,0x00,0x00,0x00 },
-		// K3: SHIFT \ Z..M , . ? CONTROL SPACE  (SHIFT/CONTROL are make/break
-		//     keys: break = make + 8, handled below)
-		{ 0x6e,0x0a,0x0b,0x0e,0x10,0x20,0x1c,0x16,0x27,0x23,0x2d,0x29,0x70,0x12,0x00,0x00 },
-		// K4: F9/F1..F16/F8 (shift level is the M40's own SHIFT, so PC Shift+Fn =
-		//     F9..F16 for free)  EXIT(3D, fn row2 pos 6)  fn row2: \ E^ ( ) ERASE
-		//     LIST FETCH (SCANCODES_NUMERIC.png is the authoritative cell map)
-		{ 0x44,0x46,0x63,0x5b,0x53,0x4b,0x56,0x5a,0x3d,0x42,0x43,0x41,0x47,0x48,0x54,0x5c },
-		// K5: keypad 49 7 8 9  - 4 5 6  . 1 2 3  0 00 000  ENTER (fn table
-		//     geometry; translate table @seg21:0x300c: 62='.' 68=00 65=000)
-		{ 0x49,0x4f,0x50,0x4d,0x59,0x57,0x58,0x55,0x62,0x5f,0x60,0x5d,0x67,0x68,0x65,0x61 },
-		// K6: SKIP(52)  DEL LINE(3B)  top-right key(39)  right 3x4 block:
-		//     RES(51) |<-(4C) ->|(3A) / AUTO#(5E) up(4E) down(3C) /
-		//     OLD(66) left(4A) right(3E) / RUN(64) DRAW(40) PR-ALL(3F)
-		{ 0x52,0x3b,0x39,0x51,0x4c,0x3a,0x5e,0x4e,0x3c,0x4a,0x3e,0x66,0x64,0x40,0x3f,0x00 }
-	};
-
-	for (int row = 0; row < 7; row++)
-	{
-		uint16_t const now = m_kbd[row]->read();
-		uint16_t const changed = now ^ m_kbd_prev[row];
-		for (int bit = 0; bit < 16; bit++)
-		{
-			if (!BIT(changed, bit))
-				continue;
-			uint8_t const code = codes[row][bit];
-			if (BIT(now, bit))
-				kdc_queue(code);
-			else if (code == 0x6e || code == 0x6f || code == 0x70)
-				kdc_queue(code + 8);   // SHIFT/LOCK/CONTROL send a break code
-		}
-		m_kbd_prev[row] = now;
-	}
 }
 
 //**************************************************************************
@@ -1358,7 +1306,6 @@ void m40_state::machine_start()
 	m_ramptr = m_ram->pointer();
 	m_ramsize = m_ram->size();
 	m_arb_timer = timer_alloc(FUNC(m40_state::arb_done), this);
-	m_kdc_timer = timer_alloc(FUNC(m40_state::kdc_poll), this);
 #if M40_DEBUG_TRACE
 	if (char const *const path = std::getenv("M40_VRAM_TRACE"))
 		{
@@ -1392,7 +1339,6 @@ void m40_state::machine_start()
 	save_item(NAME(m_kdc_vector));
 	save_item(NAME(m_kdc_pending));
 	save_item(NAME(m_kdc_data_armed));
-	save_item(NAME(m_kbd_prev));
 	save_item(NAME(m_kbd_fifo));
 	save_item(NAME(m_kbd_head));
 	save_item(NAME(m_kbd_tail));
@@ -1417,14 +1363,11 @@ void m40_state::machine_reset()
 	m_kdc_vector = 0x28;
 	m_kdc_pending = false;
 	m_kdc_data_armed = false;
-	for (auto &v : m_kbd_prev)
-		v = 0;
 	m_kbd_head = 0;
 	m_kbd_tail = 0;
 	m_kbd_count = 0;
 	for (auto &v : m_kbd_fifo)
 		v = 0;
-	m_kdc_timer->adjust(attotime::from_hz(120), 0, attotime::from_hz(120));
 	// GO280 runs at a fixed 500 kbit/s; MF selects FM or MFM.
 	m_fdc->set_rate(500000);
 	m_fdc->ready_w(false); // MFDU RDY10 pull-up; MAME external READY is inverted
@@ -1476,6 +1419,9 @@ void m40_state::m40(machine_config &config)
 	m_crtc->set_char_width(8);
 	m_crtc->set_update_row_callback(FUNC(m40_state::crtc_update_row));
 
+	M40_KEYBOARD(config, m_keyboard, 0);
+	m_keyboard->data_handler().set(FUNC(m40_state::kdc_queue));
+
 	// GO280 floppy governo
 	M40_UPD765A(config, m_fdc, 8_MHz_XTAL);
 	// RDY10 comes from GO280 board logic, not the drive actuator interface.
@@ -1505,6 +1451,8 @@ void m40_state::m40(machine_config &config)
 	m_fdu_timer->out_handler<1>().set(FUNC(m40_state::fdu_timer_out));   // ch1 -> INTMO
 }
 
+} // anonymous namespace
+
 // ANK1426 (US, "KUSA02") mapped onto a standard PC keyboard, 1:1 by character/
 // position wherever the PC has the key (L1 MOS Programmer Guide 7-14 Note 1);
 // combination-only rows of the official table get single-key stand-ins. The
@@ -1512,7 +1460,7 @@ void m40_state::m40(machine_config &config)
 // scancodes, so natural-keyboard/automated typing must land there. PORT_NAMEs
 // carry the M40 legend and scancode; a trailing '?' marks a hypothesis awaiting
 // the KEYTE1 TEST 3 read-off.
-static INPUT_PORTS_START( m40 )
+INPUT_PORTS_START( m40_keyboard )
 	PORT_START("K0")  // DEL 1..0 -= ~^ BS (digit chars live on the keypad)
 	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_DEL) PORT_NAME("DEL (06)") PORT_CHAR(UCHAR_MAMEKEY(DEL))
 	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_1) PORT_NAME("1 ! (01)")
@@ -1642,6 +1590,8 @@ static INPUT_PORTS_START( m40 )
 	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_UNUSED)
 INPUT_PORTS_END
 
+namespace {
+
 //**************************************************************************
 //  ROM
 //**************************************************************************
@@ -1663,5 +1613,5 @@ ROM_END
 } // anonymous namespace
 
 //    YEAR  NAME  PARENT  COMPAT  MACHINE  INPUT  CLASS      INIT        COMPANY     FULLNAME           FLAGS
-COMP( 1982, m40,  0,      0,      m40,     m40,  m40_state, empty_init, "Olivetti", "M40 (L1)",        MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
-COMP( 1986, m44,  0,      0,      m40,     m40,  m40_state, empty_init, "Olivetti", "Olivetti L1 M44", MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
+COMP( 1982, m40,  0,      0,      m40,     0,     m40_state, empty_init, "Olivetti", "M40 (L1)",        MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
+COMP( 1986, m44,  0,      0,      m40,     0,     m40_state, empty_init, "Olivetti", "Olivetti L1 M44", MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
