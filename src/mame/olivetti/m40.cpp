@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders:
+// copyright-holders: Salvatore Paxia
 /***************************************************************************
 
     Olivetti M40 (L1 line)
@@ -134,19 +134,18 @@ private:
 	uint32_t m_ramsize = 0;
 	uint8_t m_nmi_status = 0;
 	uint8_t m_mmu_mode = 0;   // shadow of Z8010 mode reg (bit7 = master enable)
-	// MB15652/UCY805 bus arbiter, verified against disk test 13 and the ROM power-on test.
-	emu_timer *m_arb_timer = nullptr;   // delays the grant NVI to the ROM's spin-loop
-	uint8_t m_arb_req = 0;    // pending channel requests   (bit0=ch0 .. bit3=ch3)
-	uint8_t m_arb_grant = 0;  // channels currently granted (bit0=ch0 .. bit3=ch3)
-	uint8_t m_arb_rel = 0;    // release level from 0xFF8D/8E/8F (and 0xFF85/86/87)
-	bool m_arb_vieno = false; // VIENO flip-flop: 0xFF81 bit 3 (set by 0xFF8C-8F, cleared by 0xFF84-87)
-	bool m_masto = true;      // MASTO flip-flop: 0xFFB1 bit 6 (set by 0xFF19 write, cleared by 0xFF11; master at reset)
+	// MB15652 bus arbiter
+	emu_timer *m_arb_timer = nullptr;
+	uint8_t m_arb_req = 0;
+	uint8_t m_arb_grant = 0;
+	uint8_t m_arb_rel = 0;
+	bool m_arb_vieno = false;
+	bool m_masto = true;
 	void masto_clear_w(uint8_t data) { m_masto = false; }
 	void masto_set_w(uint8_t data) { m_masto = true; }
 	uint8_t masto_r() { return m_masto ? 0x40 : 0x00; }
 
-	// GO252 video/keyboard governo (KDC): I/O window at slot 1 (0x1000-0x1FFF,
-	// register = low byte); framebuffer is the seg-61 window (m_vram)
+	// GO252 video/keyboard governo (KDC)
 	bool    m_vid_live = false;  // CRTC live-signal state exposed in status bit 3
 	uint8_t m_crtc_index = 0;
 	uint8_t m_crtc_max_ras = 16;   // CRTC R9 (max raster address); firmware sets 0x10 -> 17-line cells
@@ -163,7 +162,7 @@ private:
 	uint8_t  m_kbd_tail = 0;
 	uint8_t  m_kbd_count = 0;
 
-	// GO280 FDU floppy governo (slot 2): upd765 FDC + AM9517 DMAC
+	// GO280 floppy governo (FDU)
 	bool    m_fdc_int = false;   // FDC INTRQ level (INTOO, reg 0xF7 bit 1)
 	bool    m_timer_int = false; // 8253 ch1 end-of-count (INTMO, reg 0xF7 bit 0)
 	bool    m_intoo_lat = false; // INTOO latched into RD1NT until E01NT-acknowledged
@@ -189,7 +188,7 @@ private:
 	void     mmu_w(offs_t offset, uint8_t data);
 
 	// UC I/O registers
-	void     console_w(uint8_t data);       // 0xFFE0 diagnostic code latch -> stdout
+	void     console_w(uint8_t data);
 	uint8_t  nmi_status_r();
 	void     nmi_ack_w(uint8_t data);
 	uint8_t  config_r();
@@ -237,15 +236,15 @@ private:
 	void     fdu_w(offs_t offset, uint8_t data);
 	void     fdc_intrq_w(int state);
 	void     fdc_drq_w(int state);
-	void     dma_hreq_w(int state);           // AM9517 bus request -> hold/grant
-	void     dma_eop_w(int state);            // AM9517 EOP/TC -> FDC TC
-	void     fdu_index_w(int state);          // FDC index pulse -> 8253 channel 2 clock
-	uint32_t dma_phys();                      // next DMA physical byte address
-	uint8_t  dma_memr(offs_t offset);         // DMA physical-memory read
-	void     dma_memw(offs_t offset, uint8_t data); // DMA physical-memory write
-	void     fdu_timer_out(int state);   // 8253 ch1 -> INTMO
+	void     dma_hreq_w(int state);
+	void     dma_eop_w(int state);
+	void     fdu_index_w(int state);
+	uint32_t dma_phys();
+	uint8_t  dma_memr(offs_t offset);
+	void     dma_memw(offs_t offset, uint8_t data);
+	void     fdu_timer_out(int state);
 	void     update_vi();
-	uint16_t vi_ack_r();   // VI vector = interrupting governo's VETTN; clears INTP1
+	uint16_t vi_ack_r();
 	static void floppy_formats(format_registration &fr);
 
 	// MB15652 bus/DMA arbiter (0xFF80-8F)
@@ -661,21 +660,18 @@ void m40_state::kdc_uc_data_w(uint8_t data)
 void m40_state::io_map(address_map &map)
 {
 	map.unmap_value_high();
-	// GO252 video/keyboard governo — slot 1 window (register = low byte)
+	// Governo slots (register = low byte)
 	map(0x1000, 0x1fff).rw(FUNC(m40_state::vid16_r), FUNC(m40_state::vid16_w));
-	// GO280 FDU floppy governo — slot 2 window
 	map(0x2000, 0x2fff).rw(FUNC(m40_state::fdu_r), FUNC(m40_state::fdu_w));
-	// UC (slot 15) on-board registers, byte-wide
+	// UC registers
 	map(0xff20, 0xff21).rw(FUNC(m40_state::kdc_uc_status_r), FUNC(m40_state::kdc_uc_status_w)).umask16(0xff00);
 	map(0xff22, 0xff23).rw(FUNC(m40_state::kdc_uc_data_r), FUNC(m40_state::kdc_uc_data_w)).umask16(0xff00);
 	map(0xff41, 0xff41).rw(FUNC(m40_state::nmi_status_r), FUNC(m40_state::nmi_ack_w));
-	// MASTO flip-flop (UCV305 test 2): set 0xFF19, clear 0xFF11, read 0xFFB1 bit 6
 	map(0xff11, 0xff11).w(FUNC(m40_state::masto_clear_w));
 	map(0xff19, 0xff19).w(FUNC(m40_state::masto_set_w));
 	map(0xffb1, 0xffb1).r(FUNC(m40_state::masto_r));
-	// UC diagnostic lamp latch: set 0xFF68-6A / clear 0xFF60-62; read = 0xC0|L|L<<3.
 	map(0xff60, 0xff6f).rw(FUNC(m40_state::diagnostic_lamps_r), FUNC(m40_state::diagnostic_lamps_w));
-	map(0xff80, 0xff8f).rw(FUNC(m40_state::arb_r), FUNC(m40_state::arb_w)); // MB15652 arbiter
+	map(0xff80, 0xff8f).rw(FUNC(m40_state::arb_r), FUNC(m40_state::arb_w));
 	map(0xff00, 0xff00).r(FUNC(m40_state::suppression_disable_r));
 	map(0xff01, 0xff01).w(FUNC(m40_state::timer_vector_w));
 	map(0xffa0, 0xffa0).rw(FUNC(m40_state::config_r), FUNC(m40_state::acia_vector_w));
@@ -776,15 +772,6 @@ TIMER_CALLBACK_MEMBER(m40_state::kdc_poll)
 //**************************************************************************
 //  GO252 video/keyboard governo (KDC)
 //**************************************************************************
-//
-// The board answers on its slot's I/O window (register = low byte). The boot
-// scans slots reading register 0xFF (type-ID); reporting 0xFE routes the ROM to
-// the video self-test (ROM 0x0bc6), which:
-//   - reads status reg 0x81: low 3 bits = monitor type (0 = 80x25), bit 3 = a
-//     "live signal" (CRTC vsync/display) that it polls for a *change*;
-//   - programs the MC6845 via reg 0x41 (index) / 0x43 (data);
-//   - walks the seg-61 framebuffer (m_vram);
-//   - arms control reg 0x01 (0x03), then enables video via reg 0x6a on success.
 uint16_t m40_state::vid16_r(offs_t offset, uint16_t mem_mask)
 {
 	uint8_t const reg = ((offset << 1) + (ACCESSING_BITS_0_7 ? 1 : 0)) & 0xff;
@@ -902,12 +889,9 @@ void m40_state::vid_w(offs_t offset, uint8_t data)
 	}
 }
 
-// GO280 FDU floppy governo (type 0xE1). The µPD765 FDC (P8272) is wired to the
-// governo's register window: 0x1D = main status, 0x1F = command/data. Identifier
-// 0xFF = 0xE1. The boot's IPL then programs the interrupt vector (0xEF), 8253
-// motor timing (0x9x), control (0xE7), and the AM9517 DMAC (0x40-0x5E, high byte
-// 0xF6) and issues a µPD765 READ, DMAing the boot track into logical segment 60,
-// then validates the "SYS0" header.
+//**************************************************************************
+//  GO280 floppy governo (FDU)
+//**************************************************************************
 uint8_t m40_state::fdu_r(offs_t offset)
 {
 	uint8_t const reg = offset & 0xff;
@@ -993,10 +977,6 @@ void m40_state::fdu_w(offs_t offset, uint8_t data)
 #endif
 }
 
-// Governo interrupt logic: the FDC INTRQ (INTOO) is latched
-// on its rising edge into the pending flag INTP1; when INTP1 and the enable
-// (ENSOO/EN100) are both set the governo raises the CPU's VI. INTP1 is cleared by
-// the VI-acknowledge (the same strobe that gates the vector onto the bus).
 void m40_state::update_vi()
 {
 	// KDC VI causes: RX (queued keyboard byte, edge-latched in m_kdc_pending,
@@ -1006,11 +986,7 @@ void m40_state::update_vi()
 	// UC timer VI: 8253 ch1 OUT (level), enabled by the VIENO flip-flop; vector
 	// from 0xFF01 (UC3003 TST03 counter-1).
 	bool const timer_vi = m_timer_pending && m_arb_vieno;
-	// ACIA VI: the 6850 IRQ (self-clearing via its ISR's status/data reads)
-	// vectors through the same UC 0xFF01 latch as the timer — UC3003 test 6
-	// phase 2 loops vectors through 0xFF01 and expects the ACIA interrupt to
-	// deliver each one.  The UC ACIA's int enables stay off in normal monitor
-	// use (only the 0x03 master reset is written at boot).
+	// The 6850 IRQ clears when its ISR services the status/data cause.
 	m_maincpu->set_input_line(z8001_device::VI_LINE,
 		((m_fdu_pending && m_fdu_ien) || kdc_vi || timer_vi || m_acia_irq) ? ASSERT_LINE : CLEAR_LINE);
 }
@@ -1107,13 +1083,7 @@ void m40_state::fdu_index_w(int state)
 #endif
 }
 
-// GO280's DMA uses an "anomalous" 2-channel scheme: ch2 streams
-// the FDC bytes while ch1 (+ the 0xF6 latch) holds the *word* address, which the
-// ROM formed by shifting the byte address right by one (0f96: srll rr2,#1). So the
-// running physical byte address is (word_addr << 1) + byte_offset, incrementing per
-// byte. ch2's own AM9517 address (0xFFFF) is ignored. DMA bypasses the MMU. RAM is
-// stored big-endian (byte X of a word at even A is the MS byte), so a physical byte
-// address maps straight onto the backing array.
+// Channel 1 and ADRLN hold a word address; channel 2 supplies the transfer count.
 uint32_t m40_state::dma_phys()
 {
 	uint32_t const base = ((uint32_t(m_fdu_dma_hi) << 16) | m_dma_ch1) << 1;
@@ -1166,10 +1136,7 @@ static void m40_floppies(device_slot_interface &device)
 	device.option_add("8dsdd", FLOPPY_8_DSDD);
 }
 
-// Character generator derived from the Olivetti M20/L1 5x7 house font,
-// ASCII 0x20-0x7E. It is a provisional substitute for the undumped GO252
-// GI 9428DS character generator. Each 5-wide row
-// is shifted left 1 and the 10-row glyph is centred at rows 3-12 of the 16-line cell.
+// Provisional substitute for the undumped GO252 character generator.
 static const uint8_t s_chargen[96 * 16] =
 {
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x20 ' '
@@ -1270,11 +1237,6 @@ static const uint8_t s_chargen[96 * 16] =
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x7f '.'
 };
 
-// The framebuffer holds 2 bytes/cell in the seg-61 window; the character code is
-// the low (odd) byte of each big-endian word. The real board uses a GI character
-// generator (not dumped); s_chargen above is an 8x16 stand-in so text is readable.
-// Palette: pen 0 = background (off), pen 1 = normal intensity, pen 2 = HIGH LIGHT.
-// A real GO252 mono CRT runs normal text dimmed and "high light" at full beam.
 void m40_state::palette_init(palette_device &palette)
 {
 	palette.set_pen_color(0, rgb_t::black());
@@ -1282,12 +1244,7 @@ void m40_state::palette_init(palette_device &palette)
 	palette.set_pen_color(2, rgb_t(0xff, 0xff, 0xff));   // high light
 }
 
-// Each screen cell is two bytes: even = attribute, odd = character. CRTAN5's
-// attribute test names the effects in this order — HIGH/LOW/LEFT/RIGHT LINE,
-// BLINKING(BL), HIGH LIGHT(HL), REVERSE VIDEO(RV) — and the resident monitor is
-// observed writing attribute bytes 0x00/0x20/0x40/0x50. Both are consistent with
-// bits 0..6 in that order (0x10=blink, 0x20=high light, 0x40=reverse; the monitor's
-// 0x50 header = reverse+blink). PROVISIONAL until CRTAN5's attribute-fill code is decoded.
+// Provisional attribute mapping pending a full CRTAN5 decode.
 static constexpr int ATTR_HIGH_LINE  = 0;   // 0x01 line along top of cell
 static constexpr int ATTR_LOW_LINE   = 1;   // 0x02 line along bottom of cell
 static constexpr int ATTR_LEFT_LINE  = 2;   // 0x04 line down left edge
@@ -1300,9 +1257,7 @@ MC6845_UPDATE_ROW(m40_state::crtc_update_row)
 {
 	uint32_t *p = &bitmap.pix(y);
 	rgb_t const *const pal = m_palette->palette()->entry_list_raw();
-	// Character-blink phase, clocked by the field/frame counter (~1.5 Hz), the way
-	// MAME MC6845 text drivers derive it (attribute blink is board logic gated by
-	// VSYNC, not a CRTC function).
+	// Attribute blink is board logic, not an MC6845 feature.
 	bool const blink_off = BIT(m_screen->frame_number(), 4);
 	int const last_ra = m_crtc_max_ras;   // LOW LINE sits on the cell's true last scanline
 	for (int col = 0; col < x_count; col++)
@@ -1332,16 +1287,6 @@ MC6845_UPDATE_ROW(m40_state::crtc_update_row)
 	}
 }
 
-// MB15652 arbiter: a DMA-request write (0xFF84-87) starts one bus-arbitration
-// cycle (ignored while one is in progress); it completes after a fixed latency
-// and raises the NVI. 0xFF80-83 = per-channel acknowledge, 0xFF8C-8F = DMA
-// control (writing control must NOT trigger arbitration — the device-enumeration
-// loop writes 0xFF8C, and a spurious NVI there resumes via a stale rr12).
-// NOTE: the latency is a plausible approximation (no MB15652 datasheet); it must
-// outlast the ROM's request-write burst. To be refined against disk-A's arbiter test.
-// 0xFF81 exposes the grant bitmap in the high nibble (ch0=0x80 .. ch3=0x10) plus
-// an idle/active low nibble (0x0f idle, 0x08 when any channel is granted). The
-// ROM reads this in the NVI handler to learn which channel was granted.
 uint8_t m40_state::arb_r(offs_t offset)
 {
 	uint8_t const reg = offset & 0x0f;
@@ -1349,20 +1294,12 @@ uint8_t m40_state::arb_r(offs_t offset)
 	{
 		uint8_t const hi = (BIT(m_arb_grant, 0) ? 0x80 : 0) | (BIT(m_arb_grant, 1) ? 0x40 : 0)
 		                 | (BIT(m_arb_grant, 2) ? 0x20 : 0) | (BIT(m_arb_grant, 3) ? 0x10 : 0);
-		// Low nibble: bits 0-2 = idle marker (clear while any grant is active);
-		// bit 3 = VIENO FF or any-grant.  Satisfies both UCY805 (0x0F after ack-all
-		// following 0xFF8D-8F writes; 0xF8 with all granted) and UC3003 test 2
-		// (bit 3: 0 at entry, 1 after 0xFF8C, 0 after 0xFF84).
+		// Bits 0-2 indicate idle; bit 3 is VIENO or an active grant.
 		return hi | (m_arb_grant ? 0 : 0x07) | ((m_arb_vieno || m_arb_grant) ? 0x08 : 0);
 	}
 	return 0;
 }
 
-// Priority ch0 > ch1 > ch2 > ch3: chN is granted only once requested AND the
-// release level has reached N (ch0 at once; ch1 needs 0xFF8D, ch2 8D+8E, ch3
-// 8D+8E+8F). A pending grant raises NVI, but delayed by m_arb_timer so it lands in
-// the ROM's post-`ei nvi` spin-loop (matching the real board's arbitration latency)
-// rather than mid-setup.
 void m40_state::arb_update()
 {
 	uint8_t g = 0;
@@ -1391,8 +1328,7 @@ void m40_state::arb_w(offs_t offset, uint8_t data)
 	case 0x7: case 0xf: if (m_arb_rel < 3) m_arb_rel = 3; break;   // release ch3
 	default: break;                                  // 0xFF84 / 0xFF8C: boot bus gate
 	}
-	// VIENO flip-flop (UC3003 test 2 defines it): SET by any 0xFF8C-8F write,
-	// CLEARED by any 0xFF84-87 write.  Read back as 0xFF81 bit 3 (below).
+	// VIENO is set by control writes and cleared by request/gate writes.
 	if (reg >= 0xc)              m_arb_vieno = true;
 	else if (reg >= 0x4 && reg <= 0x7) m_arb_vieno = false;
 	arb_update();
@@ -1489,9 +1425,7 @@ void m40_state::machine_reset()
 	for (auto &v : m_kbd_fifo)
 		v = 0;
 	m_kdc_timer->adjust(attotime::from_hz(120), 0, attotime::from_hz(120));
-	// 8" governo runs at a fixed 500 kbps data rate (there is no rate register; the
-	// FDC's MF bit picks FM vs MFM per command). MAME's µPD765 defaults to 250 kbps,
-	// which halves the cell clock and makes every read miss the address mark.
+	// GO280 runs at a fixed 500 kbit/s; MF selects FM or MFM.
 	m_fdc->set_rate(500000);
 	m_fdc->ready_w(false); // MFDU RDY10 pull-up; MAME external READY is inverted
 }
@@ -1506,14 +1440,10 @@ void m40_state::m40(machine_config &config)
 	m_maincpu->set_addrmap(z8001_device::AS_SIO, &m40_state::sio_map);
 	m_maincpu->viack().set(FUNC(m40_state::vi_ack_r));   // governo VI vector (VETTN)
 	m_maincpu->nviack().set(FUNC(m40_state::nviack_r));
-	// Segment-trap acknowledge: the CPU's SEGT-ack cycle reads the identifier word
-	// from the MMU (which also drops the SEGT line).
 	m_maincpu->segtack().set(FUNC(m40_state::segtack_r));
 
 	Z8010(config, m_mmu, 32_MHz_XTAL / 8);
-	// MMU violation -> Z8001 segment trap (exercised by UC3003's TRAP REQUEST TEST:
-	// it write-protects a segment via the descriptor attributes, performs a violating
-	// write, and expects the trap handler it installed at PSA+0x20 to run).
+	// MMU violation drives the Z8001 segment-trap input.
 	m_mmu->out_segt_cb().set_inputline(m_maincpu, z8001_device::SEGT_LINE);
 
 	PIT8253(config, m_pit);
@@ -1531,11 +1461,7 @@ void m40_state::m40(machine_config &config)
 	RAM(config, m_ram).set_default_size("512K").set_default_value(0)
 		.set_extra_options("128K,256K,384K,640K,768K,896K,1024K");
 
-	// GO252 video/keyboard governo — MC6845 CRTC over the seg-61 framebuffer.
-	// Monitor type 0 (80x25, 17-line cells): the ROM programs H-total 106,
-	// V-total 26 char rows. Char width (dots) is not yet known — assume 8; the
-	// char clock is chosen for a ~57 Hz frame and will be refined with the dot
-	// clock. No character-generator ROM is dumped, so glyphs are placeholders.
+	// GO252 video/keyboard governo
 	screen_device &screen(SCREEN(config, "screen"));
 	screen.set_refresh_hz(57);
 	screen.set_vblank_time(ATTOSECONDS_IN_USEC(2500));
@@ -1550,10 +1476,9 @@ void m40_state::m40(machine_config &config)
 	m_crtc->set_char_width(8);
 	m_crtc->set_update_row_callback(FUNC(m40_state::crtc_update_row));
 
-	// GO280 FDU floppy governo — uPD765 FDC (P8272) + 8" drive
+	// GO280 floppy governo
 	M40_UPD765A(config, m_fdc, 8_MHz_XTAL);
-	// GO280 supplies RDY10 through MFDU board logic rather than the drive's
-	// actuator-interface READY signal; the MFDU input is pulled active.
+	// RDY10 comes from GO280 board logic, not the drive actuator interface.
 	m_fdc->set_ready_line_connected(false);
 	m_fdc->set_select_lines_connected(true);
 	m_fdc->intrq_wr_callback().set(FUNC(m40_state::fdc_intrq_w));
@@ -1564,10 +1489,7 @@ void m40_state::m40(machine_config &config)
 	FLOPPY_CONNECTOR(config, "fdc:2", m40_floppies, nullptr, m40_state::floppy_formats);
 	FLOPPY_CONNECTOR(config, "fdc:3", m40_floppies, nullptr, m40_state::floppy_formats);
 
-	// AM9517A DMAC: channel 2 is the FDC data channel. The FDC's
-	// DMARO drives DREQ2; the DMAC reads/writes the FDC data register on DACK and
-	// moves bytes to/from physical memory (24-bit address via the 0xF6 latch). TC
-	// terminates the µPD765 transfer.
+	// AM9517A channel 2 transfers FDC data.
 	AM9517A(config, m_dmac, 8_MHz_XTAL / 2);
 	m_dmac->out_hreq_callback().set(FUNC(m40_state::dma_hreq_w));
 	m_dmac->out_eop_callback().set(FUNC(m40_state::dma_eop_w));
@@ -1576,9 +1498,7 @@ void m40_state::m40(machine_config &config)
 	m_dmac->in_ior_callback<2>().set(m_fdc, FUNC(m40_upd765a_device::dma_r));
 	m_dmac->out_iow_callback<2>().set(m_fdc, FUNC(m40_upd765a_device::dma_w));
 
-	// FDU on-board 8253: ch0 = ~10 ms time base from CLK10 (1 us),
-	// cascaded to ch1 which generates INTMO (motor spin-up 500 ms / rd-wr time-out
-	// 800 ms); ch2 masks the FDC index signal.
+	// GO280 timer: channel 0 clocks channel 1; channel 2 receives FDC index.
 	PIT8253(config, m_fdu_timer);
 	m_fdu_timer->set_clk<0>(1'000'000);   // CLK10 = 1 us
 	m_fdu_timer->out_handler<0>().set(m_fdu_timer, FUNC(pit8253_device::write_clk1));
