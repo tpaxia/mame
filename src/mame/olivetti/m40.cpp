@@ -450,7 +450,7 @@ bool m40_state::xlate(int spacenum, bool write, offs_t &addr)
 	// N/S~ pin = the CPU's actual mode (FCW bit 14), latched into the MMU's bus
 	// cycle status and checked by the system-violation attribute.
 	bool const sys = BIT(m_maincpu->state_int(Z8000_FCW), 14);
-	return m_mmu->translate(addr, write, sys, /*dma=*/false, st, m_maincpu->pc());
+	return m_mmu->translate(addr, write, sys, /*dma=*/false, st);
 }
 
 uint16_t m40_state::mem_r(address_space &space, offs_t offset, uint16_t mem_mask)
