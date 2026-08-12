@@ -1517,7 +1517,6 @@ void m40_state::machine_reset()
 void m40_state::m40(machine_config &config)
 {
 	Z8001(config, m_maincpu, 32_MHz_XTAL / 8);   // 4 MHz (32 MHz master / 8)
-	m_maincpu->set_m20_hack(false);
 	m_maincpu->set_addrmap(AS_PROGRAM, &m40_state::mem_map);
 	m_maincpu->set_addrmap(AS_DATA, &m40_state::mem_map);
 	m_maincpu->set_addrmap(z8001_device::AS_STACK, &m40_state::mem_map);
