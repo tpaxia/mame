@@ -1750,7 +1750,17 @@ ROM_START( m40 )
 	ROM_LOAD( "m40rom-6.0.bin", 0x0000, 0x4000, CRC(8114ebec) SHA1(4e2c65b95718c77a87dbee0288f323bd1c8837a3) )
 ROM_END
 
+ROM_START( m44 )
+	ROM_REGION16_BE( 0x14000, "maincpu", 0 ) // 14 MAR. 86 REL B.1
+	ROM_LOAD16_BYTE( "pd30.128.c06", 0x0000, 0x4000, CRC(8155dc69) SHA1(ed65f842e2857ad10170c697d945745fd7d47f9c) )
+	ROM_LOAD16_BYTE( "pd29.128.a06", 0x0001, 0x4000, CRC(74d7de4b) SHA1(dd3a69ff29a2f1292f3a7db73bd2447bd664e54b) )
+
+	ROM_REGION( 0x114, "plds", 0 )
+	ROM_LOAD( "pl46.j09", 0x000, 0x114, NO_DUMP ) // PLD, chip type unknown
+ROM_END
+
 } // anonymous namespace
 
 //    YEAR  NAME  PARENT  COMPAT  MACHINE  INPUT  CLASS      INIT        COMPANY     FULLNAME           FLAGS
 COMP( 1982, m40,  0,      0,      m40,     m40,  m40_state, empty_init, "Olivetti", "M40 (L1)",        MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
+COMP( 1986, m44,  0,      0,      m40,     m40,  m40_state, empty_init, "Olivetti", "Olivetti L1 M44", MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
