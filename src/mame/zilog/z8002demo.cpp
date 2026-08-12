@@ -4,7 +4,9 @@
 
     Z8002-demo
 
-    FPGA CP/M-8000 demonstration machine from:
+    Non-segmented CP/M-8000 demonstration machine with a Z80-SIO console,
+    ATA storage and a system/normal banking MMU.  A compatible physical
+    implementation is available at:
     https://github.com/tpaxia/Z8000_FPGA/tree/main/z8000_examples/cpm8000_z8002
 
 ***************************************************************************/
