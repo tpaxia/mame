@@ -5,9 +5,7 @@
     Z8002-demo
 
     Non-segmented CP/M-8000 demonstration machine with a Z80-SIO console,
-    ATA storage and a system/normal banking MMU.  A compatible physical
-    implementation is available at:
-    https://github.com/tpaxia/Z8000_FPGA/tree/main/z8000_examples/cpm8000_z8002
+    ATA storage and a system/normal banking MMU.
 
 ***************************************************************************/
 
@@ -104,12 +102,10 @@ u32 z8002demo_state::translate(u16 address, bool program) const
 	}
 	else
 	{
-		unsigned aperture = 0;
+		bool later_aperture = false;
 		for (unsigned chunk = 0; chunk < logical_chunk; ++chunk)
-			aperture += BIT(m_ssel, chunk);
-		if (aperture > 1)
-			return 0xffffffff;
-		physical_chunk = aperture ? m_sap1 : m_sap0;
+			later_aperture |= BIT(m_ssel, chunk);
+		physical_chunk = later_aperture ? m_sap1 : m_sap0;
 	}
 
 	return (u32(physical_chunk) << 14) | (address & 0x3fff);
