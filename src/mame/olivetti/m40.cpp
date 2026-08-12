@@ -1555,7 +1555,7 @@ void m40_state::m40(machine_config &config)
 	// V-total 26 char rows. Char width (dots) is not yet known — assume 8; the
 	// char clock is chosen for a ~57 Hz frame and will be refined with the dot
 	// clock. No character-generator ROM is dumped, so glyphs are placeholders.
-	screen_device &screen(SCREEN(config, "screen", SCREEN_TYPE_RASTER));
+	screen_device &screen(SCREEN(config, "screen"));
 	screen.set_refresh_hz(57);
 	screen.set_vblank_time(ATTOSECONDS_IN_USEC(2500));
 	screen.set_size(848, 442);
