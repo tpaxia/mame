@@ -99,8 +99,10 @@ void olivetti_l1_go280_device::device_add_mconfig(machine_config &config)
 	m_dmac->out_eop_callback().set(FUNC(olivetti_l1_go280_device::dma_eop_w));
 	m_dmac->in_memr_callback().set(FUNC(olivetti_l1_go280_device::dma_memr));
 	m_dmac->out_memw_callback().set(FUNC(olivetti_l1_go280_device::dma_memw));
-	m_dmac->in_ior_callback<2>().set(m_fdc, FUNC(upd765_family_device::dma_r));
-	m_dmac->out_iow_callback<2>().set(m_fdc, FUNC(upd765_family_device::dma_w));
+	m_dmac->in_ior_callback<2>().set(FUNC(olivetti_l1_go280_device::dma_fdc_r));
+	m_dmac->out_iow_callback<2>().set(FUNC(olivetti_l1_go280_device::dma_fdc_w));
+	m_dmac->out_dack_callback<1>().set(FUNC(olivetti_l1_go280_device::dma_dack1_w));
+	m_dmac->out_dack_callback<2>().set(FUNC(olivetti_l1_go280_device::dma_dack2_w));
 
 	PIT8253(config, m_timer);
 	m_timer->set_clk<0>(1'000'000);
@@ -118,9 +120,13 @@ void olivetti_l1_go280_device::device_start()
 	save_item(NAME(m_pending));
 	save_item(NAME(m_interrupt_enable));
 	save_item(NAME(m_vector));
+	save_item(NAME(m_control));
 	save_item(NAME(m_dma_high));
 	save_item(NAME(m_dma_channel1));
 	save_item(NAME(m_dma_flipflop));
+	save_item(NAME(m_fdc_drq));
+	save_item(NAME(m_dma_fdc_cycle));
+	save_item(NAME(m_dma_channel));
 	save_item(NAME(m_dma_byte));
 	save_item(NAME(m_last_dma_address));
 }
@@ -135,13 +141,18 @@ void olivetti_l1_go280_device::device_reset()
 	m_pending = false;
 	m_interrupt_enable = false;
 	m_vector = 0;
+	m_control = 0;
 	m_dma_high = 0;
 	m_dma_channel1 = 0;
 	m_dma_flipflop = false;
+	m_fdc_drq = false;
+	m_dma_fdc_cycle = false;
+	m_dma_channel = -1;
 	m_dma_byte = 0;
 	m_last_dma_address = 0;
 	m_fdc->set_rate(500000);
 	m_fdc->ready_w(false);
+	m_dmac->dreq1_w(0);
 	update_vi();
 }
 
@@ -162,6 +173,12 @@ u8 olivetti_l1_go280_device::io_r(offs_t offset)
 	{
 	case 0x1d: data = m_fdc->msr_r(); break;
 	case 0x1f: data = m_fdc->fifo_r(); break;
+	case 0xe7:
+		// Reading VERFN presets the write-DMA sequencer.  SCRVO gates DRQ1;
+		// channel 1 supplies the memory address without transferring data.
+		m_dmac->dreq1_w(BIT(m_control, 6));
+		data = 0xff;
+		break;
 	case 0xf7:
 		data = ((m_timer_latched || m_timer_interrupt) ? 0x01 : 0)
 			| ((m_fdc_latched || m_fdc_interrupt) ? 0x02 : 0);
@@ -205,6 +222,7 @@ void olivetti_l1_go280_device::io_w(offs_t offset, u8 data)
 		m_fdc->fifo_w(data);
 		break;
 	case 0xe7:
+		m_control = data;
 		m_interrupt_enable = BIT(data, 0);
 		downcast<go280_upd765a_device &>(*m_fdc).reset_w(BIT(data, 1) ? 0 : 1);
 		m_fdc->ready_w(false);
@@ -245,6 +263,7 @@ void olivetti_l1_go280_device::fdc_intrq_w(int state)
 
 void olivetti_l1_go280_device::fdc_drq_w(int state)
 {
+	m_fdc_drq = bool(state);
 	m_dmac->dreq2_w(state);
 }
 
@@ -277,7 +296,47 @@ void olivetti_l1_go280_device::dma_hreq_w(int state)
 
 void olivetti_l1_go280_device::dma_eop_w(int state)
 {
-	m_fdc->tc_w(state);
+	if (m_dma_fdc_cycle)
+		m_fdc->tc_w(state);
+}
+
+
+void olivetti_l1_go280_device::dma_dack1_w(int state)
+{
+	if (!state)
+		m_dma_channel = 1;
+	else if (m_dma_channel == 1)
+		m_dma_channel = -1;
+}
+
+
+void olivetti_l1_go280_device::dma_dack2_w(int state)
+{
+	if (!state)
+	{
+		m_dma_channel = 2;
+		// A software request is sufficient to exercise the AM9517 registers,
+		// but only an FDC request enables the GO280 data-transfer gates.
+		m_dma_fdc_cycle = m_fdc_drq;
+	}
+	else if (m_dma_channel == 2)
+	{
+		m_dma_channel = -1;
+		m_dma_fdc_cycle = false;
+	}
+}
+
+
+u8 olivetti_l1_go280_device::dma_fdc_r()
+{
+	return m_dma_fdc_cycle ? m_fdc->dma_r() : 0xff;
+}
+
+
+void olivetti_l1_go280_device::dma_fdc_w(u8 data)
+{
+	if (m_dma_fdc_cycle)
+		m_fdc->dma_w(data);
 }
 
 
@@ -291,14 +350,17 @@ u32 olivetti_l1_go280_device::dma_phys()
 
 u8 olivetti_l1_go280_device::dma_memr(offs_t offset)
 {
-	return physical_r(dma_phys());
+	return (m_dma_channel == 2 && m_dma_fdc_cycle) ? physical_r(dma_phys()) : 0xff;
 }
 
 
 void olivetti_l1_go280_device::dma_memw(offs_t offset, u8 data)
 {
-	physical_w(dma_phys(), data);
-	trace(TRACE_DMA_W, 0, data);
+	if (m_dma_channel == 2 && m_dma_fdc_cycle)
+	{
+		physical_w(dma_phys(), data);
+		trace(TRACE_DMA_W, 0, data);
+	}
 }
 
 
