@@ -206,16 +206,14 @@ u8 olivetti_l1_go252_device::keyboard_data_r()
 
 u8 olivetti_l1_go252_device::io_r(offs_t offset)
 {
-	switch (offset & 0xff)
+	switch (offset & 0xfe)
 	{
 	case 0x00:
-	case 0x01:
 		if (m_kbd_count)
 			m_kdc_data_armed = true;
 		return 0x02 | (m_kbd_count ? 0x04 : 0x00);
 
 	case 0x02:
-	case 0x03:
 		if (m_kdc_data_armed && m_kbd_count)
 		{
 			m_kdc_data_armed = false;
@@ -224,16 +222,13 @@ u8 olivetti_l1_go252_device::io_r(offs_t offset)
 		return m_kdc_data;
 
 	case 0x42:
-	case 0x43:
 		return m_crtc->register_r();
 
 	case 0x80:
-	case 0x81:
 		m_vid_live = !m_vid_live;
 		return m_vid_live ? 0x08 : 0x00;
 
 	case 0xfe:
-	case 0xff:
 		return 0xfe;
 
 	default:
@@ -244,17 +239,15 @@ u8 olivetti_l1_go252_device::io_r(offs_t offset)
 
 void olivetti_l1_go252_device::io_w(offs_t offset, u8 data)
 {
-	switch (offset & 0xff)
+	switch (offset & 0xfe)
 	{
 	case 0x00:
-	case 0x01:
 		m_kdc_ctrl = data;
 		m_kdc_data_armed = false;
 		update_vi();
 		break;
 
 	case 0x02:
-	case 0x03:
 		m_kdc_data = data;
 		m_kdc_data_armed = false;
 		if (data == 0x02)
@@ -266,18 +259,15 @@ void olivetti_l1_go252_device::io_w(offs_t offset, u8 data)
 		break;
 
 	case 0x20:
-	case 0x21:
 		m_kdc_vector = data;
 		break;
 
 	case 0x40:
-	case 0x41:
 		m_crtc_index = data & 0x1f;
 		m_crtc->address_w(data);
 		break;
 
 	case 0x42:
-	case 0x43:
 		if (m_crtc_index == 0x09)
 			m_crtc_max_ras = data & 0x1f;
 		m_crtc->register_w(data);
