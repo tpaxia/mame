@@ -142,8 +142,8 @@ void olivetti_l1_go252_device::device_add_mconfig(machine_config &config)
 
 void olivetti_l1_go252_device::device_start()
 {
-	m_vram = std::make_unique<u8[]>(0x10000);
-	save_pointer(NAME(m_vram), 0x10000);
+	m_vram = std::make_unique<u8[]>(0x1000);
+	save_pointer(NAME(m_vram), 0x1000);
 	save_item(NAME(m_vid_live));
 	save_item(NAME(m_crtc_index));
 	save_item(NAME(m_crtc_max_ras));
@@ -156,6 +156,9 @@ void olivetti_l1_go252_device::device_start()
 	save_item(NAME(m_kbd_head));
 	save_item(NAME(m_kbd_tail));
 	save_item(NAME(m_kbd_count));
+	save_item(NAME(m_kbd_init_step));
+	save_item(NAME(m_kbd_probe_step));
+	save_item(NAME(m_kbd_irq_mode));
 }
 
 
@@ -172,6 +175,9 @@ void olivetti_l1_go252_device::device_reset()
 	m_kbd_head = 0;
 	m_kbd_tail = 0;
 	m_kbd_count = 0;
+	m_kbd_init_step = 0;
+	m_kbd_probe_step = 0;
+	m_kbd_irq_mode = false;
 	std::fill(std::begin(m_kbd_fifo), std::end(m_kbd_fifo), 0);
 	update_vi();
 }
@@ -185,7 +191,7 @@ void olivetti_l1_go252_device::kdc_queue(u8 data)
 	m_kbd_fifo[m_kbd_head] = data;
 	m_kbd_head = (m_kbd_head + 1) & 0x0f;
 	m_kbd_count++;
-	m_kdc_pending = true;
+	m_kdc_pending = m_kbd_irq_mode;
 	update_vi();
 }
 
@@ -198,7 +204,7 @@ u8 olivetti_l1_go252_device::keyboard_data_r()
 		m_kbd_tail = (m_kbd_tail + 1) & 0x0f;
 		m_kbd_count--;
 	}
-	m_kdc_pending = (m_kbd_count != 0);
+	m_kdc_pending = m_kbd_irq_mode && (m_kbd_count != 0);
 	update_vi();
 	return m_kdc_data;
 }
@@ -211,7 +217,7 @@ u8 olivetti_l1_go252_device::io_r(offs_t offset)
 	case 0x00:
 		if (m_kbd_count)
 			m_kdc_data_armed = true;
-		return 0x02 | (m_kbd_count ? 0x04 : 0x00);
+		return 0x02 | (m_kbd_count ? (m_kbd_irq_mode ? 0x04 : 0x01) : 0x00);
 
 	case 0x02:
 		if (m_kdc_data_armed && m_kbd_count)
@@ -248,15 +254,45 @@ void olivetti_l1_go252_device::io_w(offs_t offset, u8 data)
 		break;
 
 	case 0x02:
+	{
 		m_kdc_data = data;
 		m_kdc_data_armed = false;
-		if (data == 0x02)
+		// The diagnostic environment selects the interrupting keyboard path with
+		// 00 01 02.  KEYTE1 later repeats identification after its longer
+		// initialization sequence.  Older software uses 01 02 and polls status
+		// bit 0; it does not expect identification bytes or a keyboard VI.
+		static constexpr u8 init_sequence[] = { 0x06, 0x08, 0x0a, 0x0c, 0x10 };
+		bool identify = false;
+		if (m_kbd_probe_step == 2 && data == 0x02)
 		{
+			identify = true;
+			m_kbd_probe_step = 0;
+		}
+		else if ((m_kbd_probe_step == 0 && data == 0x00) || (m_kbd_probe_step == 1 && data == 0x01))
+			m_kbd_probe_step++;
+		else
+			m_kbd_probe_step = (data == 0x00) ? 1 : 0;
+
+		if (m_kbd_init_step == std::size(init_sequence))
+		{
+			if (data == 0x02)
+				identify = true;
+			m_kbd_init_step = (data == init_sequence[0]) ? 1 : 0;
+		}
+		else if (data == init_sequence[m_kbd_init_step])
+			m_kbd_init_step++;
+		else
+			m_kbd_init_step = (data == init_sequence[0]) ? 1 : 0;
+
+		if (identify)
+		{
+			m_kbd_irq_mode = true;
 			kdc_queue(0xfb);
 			kdc_queue(0xf1);
 		}
 		update_vi();
 		break;
+	}
 
 	case 0x20:
 		m_kdc_vector = data;
@@ -320,8 +356,8 @@ MC6845_UPDATE_ROW(olivetti_l1_go252_device::crtc_update_row)
 	for (int col = 0; col < x_count; col++)
 	{
 		u16 const cell = (ma + col) << 1;
-		u8 const attr = m_vram[cell & 0xffff];
-		u8 const ch = m_vram[(cell + 1) & 0xffff];
+		u8 const attr = m_vram[cell & 0x0fff];
+		u8 const ch = m_vram[(cell + 1) & 0x0fff];
 		u8 bits = (ch >= 0x20 && ch < 0x80 && ra < 16) ? s_chargen[(ch - 0x20) * 16 + ra] : 0;
 
 		if (BIT(attr, ATTR_HIGH_LINE) && ra == 0)             bits = 0xff;

@@ -25,8 +25,8 @@ public:
 	u8 keyboard_data_r();
 	void keyboard_data_w(u8 data) { m_kdc_data = data; }
 
-	u8 vram_r(offs_t offset) const { return m_vram[offset & 0xffff]; }
-	void vram_w(offs_t offset, u8 data) { m_vram[offset & 0xffff] = data; }
+	u8 vram_r(offs_t offset) const { return m_vram[offset & 0x0fff]; }
+	void vram_w(offs_t offset, u8 data) { m_vram[offset & 0x0fff] = data; }
 
 	virtual u8 io_r(offs_t offset) override;
 	virtual void io_w(offs_t offset, u8 data) override;
@@ -67,6 +67,9 @@ private:
 	u8 m_kbd_head = 0;
 	u8 m_kbd_tail = 0;
 	u8 m_kbd_count = 0;
+	u8 m_kbd_init_step = 0;
+	u8 m_kbd_probe_step = 0;
+	bool m_kbd_irq_mode = false;
 };
 
 DECLARE_DEVICE_TYPE(OLIVETTI_L1_GO252, olivetti_l1_go252_device)

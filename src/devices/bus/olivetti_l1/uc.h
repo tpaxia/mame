@@ -31,6 +31,7 @@ public:
 
 protected:
 	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
+	virtual ioport_constructor device_input_ports() const override ATTR_COLD;
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
 
@@ -109,6 +110,7 @@ private:
 	required_device<acia6850_device> m_acia;
 	required_device<nvram_device> m_earom_nvram;
 	required_region_ptr<u16> m_rom;
+	required_ioport m_isl;
 	// The UC diagnostic uses the low nibble of each word; reserve the maximum
 	// 128-entry NOVRAM population supported by this CPU-board family.
 	u8 m_earom[0x80]{};
