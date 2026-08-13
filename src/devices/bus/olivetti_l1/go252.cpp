@@ -315,6 +315,7 @@ void olivetti_l1_go252_device::palette_init(palette_device &palette)
 
 MC6845_UPDATE_ROW(olivetti_l1_go252_device::crtc_update_row)
 {
+	// Attribute bits are verified by the CRTAN5 GO252 diagnostic.
 	static constexpr int ATTR_HIGH_LINE  = 0;
 	static constexpr int ATTR_LOW_LINE   = 1;
 	static constexpr int ATTR_LEFT_LINE  = 2;

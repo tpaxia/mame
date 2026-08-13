@@ -9,6 +9,13 @@
 
 #include <cstdlib>
 
+namespace {
+
+constexpr offs_t EAROM_BASE = 0xe000;
+constexpr offs_t EAROM_END = 0xe0ff;
+
+} // anonymous namespace
+
 olivetti_l1_uc042_device::olivetti_l1_uc042_device(machine_config const &mconfig, char const *tag, device_t *owner, u32 clock)
 	: device_t(mconfig, OLIVETTI_L1_UC042, tag, owner, clock)
 	, device_olivetti_l1_cpu_card_interface(mconfig, *this)
@@ -16,6 +23,7 @@ olivetti_l1_uc042_device::olivetti_l1_uc042_device(machine_config const &mconfig
 	, m_mmu(*this, "mmu")
 	, m_pit(*this, "pit")
 	, m_acia(*this, "acia")
+	, m_earom_nvram(*this, "earom")
 	, m_rom(*this, "maincpu")
 {
 }
@@ -46,11 +54,13 @@ void olivetti_l1_uc042_device::device_add_mconfig(machine_config &config)
 	m_acia->txd_handler().set(m_acia, FUNC(acia6850_device::write_rxd));
 	m_acia->irq_handler().set(FUNC(olivetti_l1_uc042_device::acia_irq_w));
 
+	NVRAM(config, m_earom_nvram, nvram_device::DEFAULT_ALL_0);
 }
 
 void olivetti_l1_uc042_device::device_start()
 {
 	m_arb_timer = timer_alloc(FUNC(olivetti_l1_uc042_device::arb_done), this);
+	m_earom_nvram->set_base(m_earom, sizeof(m_earom));
 
 	if (char const *const path = std::getenv("M40_VRAM_TRACE"); path && path[0])
 		m_vram_trace = std::fopen(path, "w");
@@ -81,6 +91,7 @@ void olivetti_l1_uc042_device::device_start()
 	save_item(NAME(m_arb_rel));
 	save_item(NAME(m_arb_vieno));
 	save_item(NAME(m_masto));
+	save_item(NAME(m_earom));
 }
 
 void olivetti_l1_uc042_device::device_reset()
@@ -127,10 +138,25 @@ void olivetti_l1_uc042_device::ready_fault()
 	m_cpu->set_input_line(z8001_device::NMI_LINE, ASSERT_LINE);
 }
 
+bool olivetti_l1_uc042_device::memory_claims(offs_t address) const
+{
+	address &= 0xffffff;
+	return address < 0x4000 || (address >= EAROM_BASE && address <= EAROM_END);
+}
+
 u8 olivetti_l1_uc042_device::memory_r(offs_t address)
 {
 	address &= 0xffffff;
+	if (address >= EAROM_BASE && address <= EAROM_END)
+		return BIT(address, 0) ? (m_earom[(address - EAROM_BASE) >> 1] & 0x0f) : 0x00;
 	return BIT(address, 0) ? (m_rom[address >> 1] & 0xff) : (m_rom[address >> 1] >> 8);
+}
+
+void olivetti_l1_uc042_device::memory_w(offs_t address, u8 data)
+{
+	address &= 0xffffff;
+	if (address >= EAROM_BASE && address <= EAROM_END && BIT(address, 0))
+		m_earom[(address - EAROM_BASE) >> 1] = data & 0x0f;
 }
 
 u16 olivetti_l1_uc042_device::physical_word_r(offs_t address, u16 mem_mask)
@@ -173,7 +199,12 @@ bool olivetti_l1_uc042_device::xlate(int spacenum, bool write, offs_t &address)
 	{
 		status = m_cpu->is_ifetch1() ? z8002_device::ST_IFETCH_1 : z8002_device::ST_IFETCH_N;
 		if (status == z8002_device::ST_IFETCH_1)
+		{
 			m_viol_pc = 0xffffffff;
+			// The Z8010 sees all CPU bus cycles, including those it does not
+			// translate.  Keep its instruction-address latch in step with IFETCH1.
+			m_mmu->ifetch1_observed(address);
+		}
 	}
 	else if (spacenum == z8001_device::AS_STACK)
 		status = z8002_device::ST_REQ_STACK;
