@@ -61,6 +61,10 @@ private:
 	void fdu_index_w(int state);
 	void dma_hreq_w(int state);
 	void dma_eop_w(int state);
+	void dma_dack1_w(int state);
+	void dma_dack2_w(int state);
+	u8 dma_fdc_r();
+	void dma_fdc_w(u8 data);
 	u32 dma_phys();
 	u8 dma_memr(offs_t offset);
 	void dma_memw(offs_t offset, u8 data);
@@ -82,9 +86,13 @@ private:
 	bool m_pending = false;
 	bool m_interrupt_enable = false;
 	u8 m_vector = 0;
+	u8 m_control = 0;
 	u8 m_dma_high = 0;
 	u16 m_dma_channel1 = 0;
 	bool m_dma_flipflop = false;
+	bool m_fdc_drq = false;
+	bool m_dma_fdc_cycle = false;
+	s8 m_dma_channel = -1;
 	u32 m_dma_byte = 0;
 	u32 m_last_dma_address = 0;
 };
