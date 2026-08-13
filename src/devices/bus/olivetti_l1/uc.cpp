@@ -234,6 +234,7 @@ bool olivetti_l1_uc042_device::xlate(int spacenum, bool write, offs_t &address)
 u16 olivetti_l1_uc042_device::mem_r(address_space &space, offs_t offset, u16 mem_mask)
 {
 	offs_t address = offset << 1;
+	offs_t const logical = address;
 	// SUP suppresses the violating transfer and subsequent data accesses through
 	// the end of the instruction.  A first-word fetch releases it in xlate().
 	if (!xlate(space.spacenum(), false, address))
@@ -275,10 +276,23 @@ u16 olivetti_l1_uc042_device::mem_r(address_space &space, offs_t offset, u16 mem
 			case 0x002134f6: debug_pc_ctx("uc-trap-handler"); break;
 			case 0x00210ea2: debug_pc_ctx("uc-error"); break;
 			case 0x00210180: debug_pc_ctx("uc-0180-back"); break;
+			case 0x00215bc6: debug_pc_ctx("fdu-compare"); break;
+			case 0x00215c72: debug_pc_ctx("fdu-compare-mismatch"); break;
 			}
 		}
 	}
-	return physical_word_r(address, mem_mask);
+	u16 const data = physical_word_r(address, mem_mask);
+	if (m_fdu_trace && space.spacenum() != AS_PROGRAM && m_cpu->state_int(Z8000_R2) == 0x1a00)
+	{
+		u32 const pc = m_cpu->pc();
+		if (pc >= 0x00215c50 && pc <= 0x00215c70)
+		{
+			std::fprintf(m_fdu_trace, "CMPR pc=%08X space=%d log=%06X phys=%06X data=%04X mask=%04X\n",
+				unsigned(pc), space.spacenum(), unsigned(logical), unsigned(address), data, mem_mask);
+			std::fflush(m_fdu_trace);
+		}
+	}
+	return data;
 }
 
 void olivetti_l1_uc042_device::mem_w(address_space &space, offs_t offset, u16 data, u16 mem_mask)
@@ -298,6 +312,12 @@ void olivetti_l1_uc042_device::mem_w(address_space &space, offs_t offset, u16 da
 	if (valid)
 	{
 		debug_diag_w(logical, address, data, mem_mask);
+		if (m_fdu_trace && address >= 0x071ff4 && address < 0x072014)
+		{
+			std::fprintf(m_fdu_trace, "SRCW pc=%08X space=%d log=%06X phys=%06X data=%04X mask=%04X\n",
+				unsigned(m_cpu->pc()), space.spacenum(), unsigned(logical), unsigned(address), data, mem_mask);
+			std::fflush(m_fdu_trace);
+		}
 		physical_word_w(address, data, mem_mask);
 	}
 }
@@ -629,20 +649,23 @@ void olivetti_l1_uc042_device::crtc_trace_w(offs_t offset, u8 data)
 
 void olivetti_l1_uc042_device::floppy_trace_w(offs_t event, u32 data)
 {
-	static char const *const names[] = { "R", "W", "FDCINT", "TIMER", "VIACK", "INDEX", "DMAW" };
+	static char const *const names[] = { "R", "W", "FDCINT", "TIMER", "VIACK", "INDEX", "DMAW", "DMAR" };
 	u8 const reg = data >> 8;
 	u8 const value = data;
-	if (event < std::size(names) && event != olivetti_l1_go280_device::TRACE_DMA_W)
+	if (event < std::size(names)
+		&& event != olivetti_l1_go280_device::TRACE_INDEX
+		&& event != olivetti_l1_go280_device::TRACE_DMA_W
+		&& event != olivetti_l1_go280_device::TRACE_DMA_R)
 		debug_fdu(names[event], reg, value);
 
-	if (event == olivetti_l1_go280_device::TRACE_DMA_W && m_fdu_trace)
+	if ((event == olivetti_l1_go280_device::TRACE_DMA_W || event == olivetti_l1_go280_device::TRACE_DMA_R) && m_fdu_trace)
 	{
 		olivetti_l1_go280_device *const floppy = floppy_card();
 		u32 const position = (floppy->dma_byte() - 1) & 0xffffff;
 		if (position < 0x20 || !(position & 0xff))
 		{
-			std::fprintf(m_fdu_trace, "DMAW pc=%08X pos=%06X phys=%06X data=%02X dma_hi=%02X dma_ch1=%04X\n",
-				unsigned(m_cpu->pc()), unsigned(position), unsigned(floppy->last_dma_address()), value,
+			std::fprintf(m_fdu_trace, "%s pc=%08X pos=%06X phys=%06X data=%02X dma_hi=%02X dma_ch1=%04X\n",
+				names[event], unsigned(m_cpu->pc()), unsigned(position), unsigned(floppy->last_dma_address()), value,
 				floppy->dma_high(), floppy->dma_channel1());
 			std::fflush(m_fdu_trace);
 		}
