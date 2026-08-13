@@ -125,6 +125,7 @@ void olivetti_l1_go280_device::device_start()
 	save_item(NAME(m_dma_channel1));
 	save_item(NAME(m_dma_flipflop));
 	save_item(NAME(m_fdc_drq));
+	save_item(NAME(m_fdc_index));
 	save_item(NAME(m_dma_fdc_cycle));
 	save_item(NAME(m_dma_channel));
 	save_item(NAME(m_dma_byte));
@@ -146,6 +147,7 @@ void olivetti_l1_go280_device::device_reset()
 	m_dma_channel1 = 0;
 	m_dma_flipflop = false;
 	m_fdc_drq = false;
+	m_fdc_index = false;
 	m_dma_fdc_cycle = false;
 	m_dma_channel = -1;
 	m_dma_byte = 0;
@@ -184,7 +186,15 @@ u8 olivetti_l1_go280_device::io_r(offs_t offset)
 			| ((m_fdc_latched || m_fdc_interrupt) ? 0x02 : 0);
 		break;
 	case 0xff: data = 0xe1; break;
-	case 0xed: data = 0xfe | (downcast<go280_upd765a_device &>(*m_fdc).write_gate() ? 0x01 : 0x00); break;
+	case 0xed:
+		// DAW00 is the data-separator window derived from disk rotation.  The
+		// diagnostic measures successive rising edges to determine spindle speed.
+		data = 0x9a
+			| (m_fdc_index ? 0x04 : 0x00)
+			| (m_fdc_drq ? 0x20 : 0x00)
+			| (m_fdc_index ? 0x40 : 0x00)
+			| (downcast<go280_upd765a_device &>(*m_fdc).write_gate() ? 0x01 : 0x00);
+		break;
 	default: data = 0xff; break;
 	}
 	trace(TRACE_IO_R, reg, data);
@@ -283,6 +293,7 @@ void olivetti_l1_go280_device::fdu_timer_out(int state)
 
 void olivetti_l1_go280_device::fdu_index_w(int state)
 {
+	m_fdc_index = bool(state);
 	m_timer->write_clk2(state);
 	trace(TRACE_INDEX, 0, state ? 1 : 0);
 }
@@ -350,7 +361,13 @@ u32 olivetti_l1_go280_device::dma_phys()
 
 u8 olivetti_l1_go280_device::dma_memr(offs_t offset)
 {
-	return (m_dma_channel == 2 && m_dma_fdc_cycle) ? physical_r(dma_phys()) : 0xff;
+	if (m_dma_channel == 2 && m_dma_fdc_cycle)
+	{
+		u8 const data = physical_r(dma_phys());
+		trace(TRACE_DMA_R, 0, data);
+		return data;
+	}
+	return 0xff;
 }
 
 

@@ -24,7 +24,8 @@ public:
 		TRACE_TIMER,
 		TRACE_VI_ACK,
 		TRACE_INDEX,
-		TRACE_DMA_W
+		TRACE_DMA_W,
+		TRACE_DMA_R
 	};
 
 	olivetti_l1_go280_device(machine_config const &mconfig, char const *tag, device_t *owner, u32 clock = 0);
@@ -91,6 +92,7 @@ private:
 	u16 m_dma_channel1 = 0;
 	bool m_dma_flipflop = false;
 	bool m_fdc_drq = false;
+	bool m_fdc_index = false;
 	bool m_dma_fdc_cycle = false;
 	s8 m_dma_channel = -1;
 	u32 m_dma_byte = 0;
