@@ -510,21 +510,19 @@ void olivetti_l1_uc042_device::arb_update()
 void olivetti_l1_uc042_device::arb_w(offs_t offset, u8 data)
 {
 	u8 const reg = offset & 0x0f;
-	switch (reg)
+	if (reg <= 0x3)
 	{
-	case 0x0: case 0x1: case 0x2: case 0x3:
 		m_arb_req &= ~(1 << reg);
 		if (!m_arb_req)
 			m_arb_rel = 0;
-		break;
-	case 0x8: case 0x9: case 0xa: case 0xb:
-		m_arb_req |= 1 << (reg - 8);
-		break;
-	case 0x5: case 0xd: if (m_arb_rel < 1) m_arb_rel = 1; break;
-	case 0x6: case 0xe: if (m_arb_rel < 2) m_arb_rel = 2; break;
-	case 0x7: case 0xf: if (m_arb_rel < 3) m_arb_rel = 3; break;
-	default: break;
 	}
+	else if (reg >= 0x8 && reg <= 0xb)
+	{
+		m_arb_req |= 1 << (reg - 8);
+	}
+	else if ((reg & 0x7) >= 0x5)
+		m_arb_rel = std::max<u8>(m_arb_rel, (reg & 0x7) - 4);
+
 	if (reg >= 0xc)
 		m_arb_vieno = true;
 	else if (reg >= 0x4 && reg <= 0x7)
