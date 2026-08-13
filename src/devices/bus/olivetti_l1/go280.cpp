@@ -65,7 +65,7 @@ void olivetti_l1_go280_device::device_add_mconfig(machine_config &config)
 	m_fdc->intrq_wr_callback().set(FUNC(olivetti_l1_go280_device::fdc_intrq_w));
 	m_fdc->drq_wr_callback().set(FUNC(olivetti_l1_go280_device::fdc_drq_w));
 	m_fdc->idx_wr_callback().set(FUNC(olivetti_l1_go280_device::fdu_index_w));
-	FLOPPY_CONNECTOR(config, "fdc:0", go280_floppies, nullptr, olivetti_l1_go280_device::floppy_formats);
+	FLOPPY_CONNECTOR(config, "fdc:0", go280_floppies, "8dsdd", olivetti_l1_go280_device::floppy_formats);
 	FLOPPY_CONNECTOR(config, "fdc:1", go280_floppies, "8dsdd", olivetti_l1_go280_device::floppy_formats);
 	FLOPPY_CONNECTOR(config, "fdc:2", go280_floppies, nullptr, olivetti_l1_go280_device::floppy_formats);
 	FLOPPY_CONNECTOR(config, "fdc:3", go280_floppies, nullptr, olivetti_l1_go280_device::floppy_formats);
@@ -126,17 +126,18 @@ u8 olivetti_l1_go280_device::io_r(offs_t offset)
 {
 	u8 const reg = offset & 0xff;
 	u8 data;
-	switch (reg)
+	if (reg >= 0x40 && reg <= 0x5e && !BIT(reg, 0))
+	{
+		data = m_dmac->read((reg >> 1) & 0x0f);
+	}
+	else if (reg >= 0x99 && reg <= 0x9d && BIT(reg, 0))
+	{
+		data = m_timer->read((reg >> 1) & 3);
+	}
+	else switch (reg)
 	{
 	case 0x1d: data = m_fdc->msr_r(); break;
 	case 0x1f: data = m_fdc->fifo_r(); break;
-	case 0x40: case 0x42: case 0x44: case 0x46:
-	case 0x48: case 0x4a: case 0x4c: case 0x4e:
-	case 0x50: case 0x52: case 0x54: case 0x56:
-	case 0x58: case 0x5a: case 0x5c: case 0x5e:
-		data = m_dmac->read((reg >> 1) & 0x0f); break;
-	case 0x99: case 0x9b: case 0x9d:
-		data = m_timer->read((reg >> 1) & 3); break;
 	case 0xf7:
 		data = ((m_timer_latched || m_timer_interrupt) ? 0x01 : 0)
 			| ((m_fdc_latched || m_fdc_interrupt) ? 0x02 : 0);
@@ -153,15 +154,8 @@ u8 olivetti_l1_go280_device::io_r(offs_t offset)
 void olivetti_l1_go280_device::io_w(offs_t offset, u8 data)
 {
 	u8 const reg = offset & 0xff;
-	switch (reg)
+	if (reg >= 0x40 && reg <= 0x5e && !BIT(reg, 0))
 	{
-	case 0x1f:
-		m_fdc->fifo_w(data);
-		break;
-	case 0x40: case 0x42: case 0x44: case 0x46:
-	case 0x48: case 0x4a: case 0x4c: case 0x4e:
-	case 0x50: case 0x52: case 0x54: case 0x56:
-	case 0x58: case 0x5a: case 0x5c: case 0x5e:
 		if (reg == 0x58)
 			m_dma_flipflop = false;
 		else if (reg == 0x44)
@@ -176,9 +170,15 @@ void olivetti_l1_go280_device::io_w(offs_t offset, u8 data)
 			m_dma_flipflop = !m_dma_flipflop;
 		}
 		m_dmac->write((reg >> 1) & 0x0f, data);
-		break;
-	case 0x99: case 0x9b: case 0x9d: case 0x9f:
+	}
+	else if (reg >= 0x99 && reg <= 0x9f && BIT(reg, 0))
+	{
 		m_timer->write((reg >> 1) & 3, data);
+	}
+	else switch (reg)
+	{
+	case 0x1f:
+		m_fdc->fifo_w(data);
 		break;
 	case 0xe7:
 		m_interrupt_enable = BIT(data, 0);
