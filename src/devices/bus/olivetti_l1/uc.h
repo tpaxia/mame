@@ -10,6 +10,7 @@
 
 #include "cpu/z8000/z8000.h"
 #include "machine/6850acia.h"
+#include "machine/nvram.h"
 #include "machine/pit8253.h"
 #include "machine/z8010.h"
 
@@ -34,9 +35,9 @@ protected:
 	virtual void device_reset() override ATTR_COLD;
 
 private:
-	virtual bool memory_claims(offs_t address) const override { return (address & 0xffffff) < 0x4000; }
+	virtual bool memory_claims(offs_t address) const override;
 	virtual u8 memory_r(offs_t address) override;
-	virtual void memory_w(offs_t address, u8 data) override { }
+	virtual void memory_w(offs_t address, u8 data) override;
 	virtual void ready_fault_w(int state) override { if (state) ready_fault(); }
 	virtual void bus_vi_w(int state) override { update_vi(); }
 	virtual void bus_request_w(int state) override { m_cpu->set_input_line(INPUT_LINE_HALT, state ? ASSERT_LINE : CLEAR_LINE); }
@@ -106,7 +107,11 @@ private:
 	required_device<z8010_device> m_mmu;
 	required_device<pit8253_device> m_pit;
 	required_device<acia6850_device> m_acia;
+	required_device<nvram_device> m_earom_nvram;
 	required_region_ptr<u16> m_rom;
+	// The UC diagnostic uses the low nibble of each word; reserve the maximum
+	// 128-entry NOVRAM population supported by this CPU-board family.
+	u8 m_earom[0x80]{};
 	u8 m_nmi_status = 0;
 	u8 m_mmu_mode = 0;
 	u8 m_kdc_status = 0;
