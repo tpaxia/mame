@@ -6510,6 +6510,29 @@ end
 
 ---------------------------------------------------
 --
+--@src/devices/bus/olivetti_l1/l1.h,BUSES["OLIVETTI_L1"] = true
+---------------------------------------------------
+
+if BUSES["OLIVETTI_L1"] then
+	files {
+		MAME_DIR .. "src/devices/bus/olivetti_l1/go252.cpp",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/go252.h",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/go280.cpp",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/go280.h",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/keyboard.cpp",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/keyboard.h",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/l1.cpp",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/l1.h",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/ram.cpp",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/ram.h",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/uc.cpp",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/uc.h",
+	}
+end
+
+
+---------------------------------------------------
+--
 --@src/devices/bus/zbi/zbi.h,BUSES["ZBI"] = true
 ---------------------------------------------------
 

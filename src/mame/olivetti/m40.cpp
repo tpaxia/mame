@@ -4,1591 +4,158 @@
 
     Olivetti M40 (L1 line)
 
-    Central unit (UC042): Zilog Z8001 (segmented) + Z8010 MMU + 8253 PIT,
-    running the resident autodiagnostic ROM (REL 6.0).
-
-    Implemented hardware:
-      * Z8001 + a single Z8010 MMU.
-      * ROM at physical 0; contiguous RAM from bank 1 (0x010000); a 64 KB
-        video window at 0xFF0000.
-      * Unpopulated physical access -> READY-fault NMI with status bit 6 clear
-        and the NMI cause latched in bit 7.
-      * The diagnostic console code latch (I/O 0xFFE0) is printed to stdout.
+    The machine is assembled on an L1 backplane.  The M40 configuration uses
+    a UC042 central unit, RAM board, GO252 video/keyboard governo and GO280
+    floppy governo.  The resident autodiagnostic ROM is release 6.0.
 
 ***************************************************************************/
 
 #include "emu.h"
 
-#include "m40_kbd.h"
+#include "bus/olivetti_l1/l1.h"
+#include "bus/olivetti_l1/go252.h"
+#include "bus/olivetti_l1/go280.h"
+#include "bus/olivetti_l1/ram.h"
+#include "bus/olivetti_l1/uc.h"
 
-#include "cpu/z8000/z8000.h"
-#include "machine/z8010.h"
-#include "machine/pit8253.h"
 #include "machine/ram.h"
-#include "machine/upd765.h"
-#include "machine/am9517a.h"
-#include "imagedev/floppy.h"
-#include "formats/imd_dsk.h"
-#include "video/mc6845.h"
-#include "machine/6850acia.h"
-#include "emupal.h"
-#include "screen.h"
-
-#include <cstdio>
-#include <cstdlib>
-
-class m40_upd765a_device;
-
-DECLARE_DEVICE_TYPE(M40_UPD765A, m40_upd765a_device)
-
-class m40_upd765a_device : public upd765_family_device
-{
-public:
-	m40_upd765a_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock)
-		: upd765_family_device(mconfig, M40_UPD765A, tag, owner, clock)
-	{
-		has_dor = false;
-	}
-
-	void map(address_map &map) override ATTR_COLD
-	{
-		map(0x0, 0x0).r(FUNC(m40_upd765a_device::msr_r));
-		map(0x1, 0x1).rw(FUNC(m40_upd765a_device::fifo_r), FUNC(m40_upd765a_device::fifo_w));
-	}
-
-	void soft_reset() override
-	{
-		upd765_family_device::soft_reset();
-		for (floppy_info &fi : flopi)
-		{
-			fi.pcn = 0;
-			fi.st0 = ST0_ABRT | fi.id;
-			fi.st0_filled = true;
-		}
-		irq = true;
-		check_irq();
-	}
-};
-
-DEFINE_DEVICE_TYPE(M40_UPD765A, m40_upd765a_device, "m40_upd765a", "Olivetti M40 GO280 uPD765A FDC")
 
 namespace {
 
-#ifndef M40_DEBUG_TRACE
-#define M40_DEBUG_TRACE 1
-#endif
+void l1_ram_cards(device_slot_interface &device)
+{
+	device.option_add("me256k", OLIVETTI_L1_ME256K);
+	device.option_add("me384k", OLIVETTI_L1_ME384K);
+	device.option_add("me512k", OLIVETTI_L1_ME512K);
+	device.option_add("ra57d", OLIVETTI_L1_RA57D);
+	device.option_add("ra57e", OLIVETTI_L1_RA57E);
+	device.option_add("ra57c", OLIVETTI_L1_RA57C);
+	device.option_add("ra57b", OLIVETTI_L1_RA57B);
+	device.option_add("ra57a", OLIVETTI_L1_RA57A);
+}
+
+void l1_first_ram_cards(device_slot_interface &device)
+{
+	device.option_add("auto", OLIVETTI_L1_RAM);
+	l1_ram_cards(device);
+}
+
+void m40_l1_cards(device_slot_interface &device)
+{
+	device.option_add("go252", OLIVETTI_L1_GO252);
+	device.option_add("go280", OLIVETTI_L1_GO280);
+	l1_ram_cards(device);
+}
+
+void m40_l1_cpu_cards(device_slot_interface &device)
+{
+	device.option_add("uc042", OLIVETTI_L1_UC042);
+}
 
 class m40_state : public driver_device
 {
 public:
 	m40_state(const machine_config &mconfig, device_type type, const char *tag)
 		: driver_device(mconfig, type, tag)
-		, m_maincpu(*this, "maincpu")
-		, m_mmu(*this, "mmu")
-		, m_pit(*this, "pit")
-		, m_acia(*this, "acia")
-		, m_ram(*this, RAM_TAG)
-		, m_crtc(*this, "crtc")
-		, m_palette(*this, "palette")
-		, m_screen(*this, "screen")
-		, m_fdc(*this, "fdc")
-		, m_floppy(*this, "fdc:%u", 0U)
-		, m_fdu_timer(*this, "fdu_timer")
-		, m_dmac(*this, "dmac")
-		, m_keyboard(*this, "keyboard")
-		, m_rom(*this, "maincpu")
+		, m_l1bus(*this, "l1bus")
+		, m_uc042(*this, "cpu:uc042")
 	{ }
 
 	void m40(machine_config &config);
-
-protected:
-	virtual void machine_start() override ATTR_COLD;
-	virtual void machine_reset() override ATTR_COLD;
+	void m44(machine_config &config);
 
 private:
-	required_device<z8001_device> m_maincpu;
-	required_device<z8010_device> m_mmu;
-	required_device<pit8253_device> m_pit;
-	required_device<acia6850_device> m_acia;
-	bool m_acia_irq = false;
-	uint8_t m_lamp = 0;               // UC 3-bit diagnostic lamp latch (0xFF60-6F)
-	void acia_irq_w(int state) { m_acia_irq = (state != 0); update_vi(); }
-	void pit_out2_w(int state) { m_acia->write_txc(state); m_acia->write_rxc(state); }
-	uint8_t diagnostic_lamps_r(offs_t o) { return 0xc0 | m_lamp | (m_lamp << 3); }
-	void diagnostic_lamps_w(offs_t o, uint8_t d) {
-		uint8_t const n = o & 0x0f;
-		if (n >= 8 && n <= 10)      m_lamp |=  (1 << (n - 8));
-		else if (n <= 2)            m_lamp &= ~(1 << n);
-	}
-	required_device<ram_device> m_ram;
-	required_device<mc6845_device> m_crtc;
-	required_device<palette_device> m_palette;
-	required_device<screen_device> m_screen;
-	required_device<m40_upd765a_device> m_fdc;
-	required_device_array<floppy_connector, 4> m_floppy;
-	required_device<pit8253_device> m_fdu_timer;
-	required_device<am9517a_device> m_dmac;
-	required_device<m40_keyboard_device> m_keyboard;
-	required_region_ptr<uint16_t> m_rom;
-
-	std::unique_ptr<uint8_t[]> m_vram;   // 64 KB video window @ 0xFF0000
-	uint8_t *m_ramptr = nullptr;
-	uint32_t m_ramsize = 0;
-	uint8_t m_nmi_status = 0;
-	uint8_t m_mmu_mode = 0;   // shadow of Z8010 mode reg (bit7 = master enable)
-	// MB15652 bus arbiter
-	emu_timer *m_arb_timer = nullptr;
-	uint8_t m_arb_req = 0;
-	uint8_t m_arb_grant = 0;
-	uint8_t m_arb_rel = 0;
-	bool m_arb_vieno = false;
-	bool m_masto = true;
-	void masto_clear_w(uint8_t data) { m_masto = false; }
-	void masto_set_w(uint8_t data) { m_masto = true; }
-	uint8_t masto_r() { return m_masto ? 0x40 : 0x00; }
-
-	// GO252 video/keyboard governo (KDC)
-	bool    m_vid_live = false;  // CRTC live-signal state exposed in status bit 3
-	uint8_t m_crtc_index = 0;
-	uint8_t m_crtc_max_ras = 16;   // CRTC R9 (max raster address); firmware sets 0x10 -> 17-line cells
-	uint8_t m_kdc_ctrl = 0;      // FE reg 0x01 control (bit7 = KDC interrupt enable, the FDU-EN100 analogue)
-	uint8_t m_kdc_data = 0;      // UC 0xFF22 byte-data latch
-	uint8_t m_kdc_status = 0;    // UC 0xFF20 status/control latch
-	uint8_t m_kdc_vector = 0;    // keyboard VI vector, installed by the disk monitor's PSA
-	bool    m_kdc_pending = false;
-	bool    m_kdc_data_armed = false;
-	uint8_t  m_kbd_fifo[16] = {};
-	uint8_t  m_kbd_head = 0;
-	uint8_t  m_kbd_tail = 0;
-	uint8_t  m_kbd_count = 0;
-
-	// GO280 floppy governo (FDU)
-	bool    m_fdc_int = false;   // FDC INTRQ level (INTOO, reg 0xF7 bit 1)
-	bool    m_timer_int = false; // 8253 ch1 end-of-count (INTMO, reg 0xF7 bit 0)
-	bool    m_intoo_lat = false; // INTOO latched into RD1NT until E01NT-acknowledged
-	bool    m_intmo_lat = false; // INTMO latched into RD1NT until E01NT-acknowledged
-	bool    m_fdu_pending = false; // governo pending-interrupt latch INTP1 (edge-set, VIACK-cleared)
-	bool    m_fdu_ien = false;   // governo interrupt enable (EN100/ENSOO, reg 0xE7 bit 0)
-	uint8_t m_fdu_vector = 0;    // governo interrupt vector (VETTN, reg 0xEF)
-	uint8_t  m_fdu_dma_hi = 0;   // ADRLN (0xF6): high byte of the DMA *word* address
-	uint16_t m_dma_ch1 = 0;      // AM9517 ch1 = low 16 bits of the DMA word address (0x44)
-	bool     m_dma_ff = false;   // flip-flop for the two-byte 0x44 address load
-	uint32_t m_dma_byte = 0;     // running byte offset within the current transfer
-
-	// translated memory access over the whole segmented space
-	uint16_t mem_r(address_space &space, offs_t offset, uint16_t mem_mask);
-	void     mem_w(address_space &space, offs_t offset, uint16_t data, uint16_t mem_mask);
-	bool     xlate(int spacenum, bool write, offs_t &addr);
-	uint16_t phys_r(offs_t addr, uint16_t mem_mask);
-	void     phys_w(offs_t addr, uint16_t data, uint16_t mem_mask);
-	void     ready_fault();
-
-	// MMU special-I/O programming
-	uint8_t  mmu_r(offs_t offset);
-	void     mmu_w(offs_t offset, uint8_t data);
-
-	// UC I/O registers
-	void     console_w(uint8_t data);
-	uint8_t  nmi_status_r();
-	void     nmi_ack_w(uint8_t data);
-	uint8_t  config_r();
-	uint8_t  suppression_disable_r();
-	bool m_suppress_enabled = true;   // MMU-violation write suppression gate (0xFF00/0xFFA0)
-	uint8_t m_timer_vector = 0;       // UC timer VI vector (written to 0xFF01)
-	uint8_t m_acia_vector = 0;        // UC ACIA VI vector (written to 0xFFA0)
-	void acia_vector_w(uint8_t data) { m_acia_vector = data; }
-	uint32_t m_viol_pc = 0xffffffff;  // PC of a suppressed (violating) instruction: SUP holds to its end
-	bool m_timer_out1 = false;        // 8253 ch1 OUT level (timer VI source, gated by VIENO)
-	void timer_vector_w(uint8_t data) { m_timer_vector = data; }
-	void pit_out1_w(int state) {
-		if (state && !m_timer_out1) m_timer_pending = true;   // edge-latch
-		m_timer_out1 = (state != 0); update_vi();
-	}
-	bool m_timer_pending = false;
-	uint8_t  kdc_uc_status_r();
-	void     kdc_uc_status_w(uint8_t data);
-	uint8_t  kdc_uc_data_r();
-	void     kdc_uc_data_w(uint8_t data);
-	uint8_t  pit_r(offs_t offset)            { return m_pit->read((offset >> 1) & 3); }
-	void     pit_w(offs_t offset, uint8_t d) { m_pit->write((offset >> 1) & 3, d); }
-
-	// GO252 video/keyboard governo I/O (slot 1)
-	uint16_t vid16_r(offs_t offset, uint16_t mem_mask);
-	void     vid16_w(offs_t offset, uint16_t data, uint16_t mem_mask);
-	uint8_t  vid_r(offs_t offset);
-	void     vid_w(offs_t offset, uint8_t data);
-#if M40_DEBUG_TRACE
-	std::FILE *m_vram_trace = nullptr;
-	std::FILE *m_fdu_trace = nullptr;
-	void     debug_vram_w(offs_t addr, uint8_t data, uint16_t mem_mask);
-	void     debug_crtc_w(uint8_t reg, uint8_t data);
-	void     debug_fdu(char const *event, uint8_t reg, uint8_t data);
-	void     debug_diag_w(offs_t logical, offs_t physical, uint16_t data, uint16_t mem_mask);
-	void     debug_pc_ctx(char const *event);
-#endif
-	void     kdc_queue(uint8_t data);
-	MC6845_UPDATE_ROW(crtc_update_row);
-	void palette_init(palette_device &palette) ATTR_COLD;
-
-	// GO280 FDU floppy governo I/O (slot 2)
-	uint8_t  fdu_r(offs_t offset);
-	void     fdu_w(offs_t offset, uint8_t data);
-	void     fdc_intrq_w(int state);
-	void     fdc_drq_w(int state);
-	void     dma_hreq_w(int state);
-	void     dma_eop_w(int state);
-	void     fdu_index_w(int state);
-	uint32_t dma_phys();
-	uint8_t  dma_memr(offs_t offset);
-	void     dma_memw(offs_t offset, uint8_t data);
-	void     fdu_timer_out(int state);
-	void     update_vi();
-	uint16_t vi_ack_r();
-	static void floppy_formats(format_registration &fr);
-
-	// MB15652 bus/DMA arbiter (0xFF80-8F)
-	uint8_t  arb_r(offs_t offset);
-	void     arb_w(offs_t offset, uint8_t data);
-	void     arb_update();
-	TIMER_CALLBACK_MEMBER(arb_done);
-	uint16_t nviack_r();
-
-	void mem_map(address_map &map) ATTR_COLD {}   // empty; real handlers installed in machine_start
-	void io_map(address_map &map) ATTR_COLD;
-	void sio_map(address_map &map) ATTR_COLD;
-
-	uint16_t segtack_r();
-	uint16_t nmiack_r();
+	required_device<olivetti_l1_bus_device> m_l1bus;
+	optional_device<olivetti_l1_uc042_device> m_uc042;
+	void     l1_backplane(machine_config &config, olivetti_l1_bus_device::chassis chassis);
+	void     configure_slot(olivetti_l1_slot_device &slot, bool governi);
+	void     go252_crtc_trace_w(offs_t offset, uint8_t data);
+	void     go280_trace_w(offs_t event, uint32_t data);
 };
 
 //**************************************************************************
-//  MEMORY (segmented -> MMU -> physical)
-//**************************************************************************
 
-void m40_state::ready_fault()
+void m40_state::go252_crtc_trace_w(offs_t offset, uint8_t data)
 {
-	// no READY -> NMI. The RAM-sizing NMI handler reads 0xFF41 and, when
-	// bit6 is CLEAR (a plain READY/unpopulated fault), resumes via rr12 to
-	// record the boundary; bit6 SET would make it keep scanning. Mark the
-	// NMI cause in bit7 and leave bit6 clear.
-	m_nmi_status = (m_nmi_status & ~0x40) | 0x80;
-	m_maincpu->set_input_line(z8001_device::NMI_LINE, ASSERT_LINE);
+	if (m_uc042)
+		m_uc042->crtc_trace_w(offset, data);
 }
 
-uint16_t m40_state::phys_r(offs_t addr, uint16_t mem_mask)
+void m40_state::go280_trace_w(offs_t event, uint32_t data)
 {
-	addr &= 0xffffff;
-	if (addr < 0x4000)                                   // ROM (16 KB @ bank 0)
-		return m_rom[addr >> 1];
-	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize) // contiguous RAM from bank 1
-	{
-		uint8_t *p = m_ramptr + (addr - 0x010000);
-		return (p[0] << 8) | p[1];
-	}
-	if (addr >= 0xff0000)                                // video window (64 KB)
-	{
-		uint8_t *p = &m_vram[addr & 0xffff];
-		return (p[0] << 8) | p[1];
-	}
-	ready_fault();                                       // unpopulated
-	return 0xffff;
+	if (m_uc042)
+		m_uc042->floppy_trace_w(event, data);
 }
 
-void m40_state::phys_w(offs_t addr, uint16_t data, uint16_t mem_mask)
+void m40_state::configure_slot(olivetti_l1_slot_device &slot, bool governi)
 {
-	addr &= 0xffffff;
-	uint8_t *p = nullptr;
-	bool const is_vram = (addr >= 0xff0000);
-	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
-		p = m_ramptr + (addr - 0x010000);
-	else if (is_vram)
-		p = &m_vram[addr & 0xffff];
-	else if (addr < 0x4000)
-		return;                                          // ROM: ignore writes
-	else { ready_fault(); return; }                      // unpopulated
-
-	if (ACCESSING_BITS_8_15)
+	if (governi)
 	{
-		p[0] = data >> 8;
-#if M40_DEBUG_TRACE
-		if (is_vram)
-			debug_vram_w(addr & 0xffff, p[0], mem_mask);
-#endif
-	}
-	if (ACCESSING_BITS_0_7)
-	{
-		p[1] = data & 0xff;
-#if M40_DEBUG_TRACE
-		if (is_vram)
-			debug_vram_w((addr + 1) & 0xffff, p[1], mem_mask);
-#endif
-	}
-}
-
-#if M40_DEBUG_TRACE
-void m40_state::debug_vram_w(offs_t addr, uint8_t data, uint16_t mem_mask)
-{
-	if (m_vram_trace)
-	{
-		std::fprintf(m_vram_trace, "VRAM pc=%08X off=%04X data=%02X mask=%04X\n",
-			unsigned(m_maincpu->pc()), unsigned(addr & 0xffff), data, mem_mask);
-		if (m_maincpu->pc() == 0x00031156)
+		slot.set_option_machine_config("go252", [this](device_t *device)
 		{
-			std::fprintf(m_vram_trace,
-				"VRAMCTX pc=00031156 r0=%04X r1=%04X r2=%04X r3=%04X r4=%04X r5=%04X r6=%04X r7=%04X r8=%04X r9=%04X r10=%04X r11=%04X r12=%04X r13=%04X r14=%04X r15=%04X\n",
-				unsigned(m_maincpu->state_int(Z8000_R0)), unsigned(m_maincpu->state_int(Z8000_R1)),
-				unsigned(m_maincpu->state_int(Z8000_R2)), unsigned(m_maincpu->state_int(Z8000_R3)),
-				unsigned(m_maincpu->state_int(Z8000_R4)), unsigned(m_maincpu->state_int(Z8000_R5)),
-				unsigned(m_maincpu->state_int(Z8000_R6)), unsigned(m_maincpu->state_int(Z8000_R7)),
-				unsigned(m_maincpu->state_int(Z8000_R8)), unsigned(m_maincpu->state_int(Z8000_R9)),
-				unsigned(m_maincpu->state_int(Z8000_R10)), unsigned(m_maincpu->state_int(Z8000_R11)),
-				unsigned(m_maincpu->state_int(Z8000_R12)), unsigned(m_maincpu->state_int(Z8000_R13)),
-				unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
-		}
-		std::fflush(m_vram_trace);
-	}
-}
-
-void m40_state::debug_crtc_w(uint8_t reg, uint8_t data)
-{
-	if (m_vram_trace)
-	{
-		std::fprintf(m_vram_trace, "CRTC pc=%08X reg=%02X data=%02X\n",
-			unsigned(m_maincpu->pc()), reg, data);
-		std::fflush(m_vram_trace);
-	}
-}
-
-void m40_state::debug_fdu(char const *event, uint8_t reg, uint8_t data)
-{
-	if (m_fdu_trace)
-	{
-		std::fprintf(m_fdu_trace,
-			"FDU %s pc=%08X reg=%02X data=%02X pending=%d ien=%d intmo_lat=%d timer=%d intoo_lat=%d fdc=%d vec=%02X dma_hi=%02X dma_ch1=%04X dma_byte=%06X\n",
-			event, unsigned(m_maincpu->pc()), reg, data,
-			m_fdu_pending ? 1 : 0, m_fdu_ien ? 1 : 0,
-			m_intmo_lat ? 1 : 0, m_timer_int ? 1 : 0,
-			m_intoo_lat ? 1 : 0, m_fdc_int ? 1 : 0,
-			m_fdu_vector, m_fdu_dma_hi, m_dma_ch1, unsigned(m_dma_byte));
-		std::fflush(m_fdu_trace);
-	}
-}
-
-void m40_state::debug_diag_w(offs_t logical, offs_t physical, uint16_t data, uint16_t mem_mask)
-{
-	if (m_fdu_trace && logical >= 0x04a480 && logical <= 0x04a4bf)
-	{
-		std::fprintf(m_fdu_trace,
-			"DIAGW pc=%08X log=%06X phys=%06X data=%04X mask=%04X\n",
-			unsigned(m_maincpu->pc()), unsigned(logical), unsigned(physical),
-			unsigned(data), unsigned(mem_mask));
-		std::fflush(m_fdu_trace);
-	}
-	if (m_fdu_trace && logical >= 0x048f40 && logical <= 0x048f80)
-	{
-		std::fprintf(m_fdu_trace,
-			"ERRBUF pc=%08X log=%06X phys=%06X data=%04X mask=%04X "
-			"r0=%04X r1=%04X r2=%04X r3=%04X r4=%04X r5=%04X r6=%04X r7=%04X "
-			"r8=%04X r9=%04X r10=%04X r11=%04X r12=%04X r13=%04X r14=%04X r15=%04X\n",
-			unsigned(m_maincpu->pc()), unsigned(logical), unsigned(physical),
-			unsigned(data), unsigned(mem_mask),
-			unsigned(m_maincpu->state_int(Z8000_R0)), unsigned(m_maincpu->state_int(Z8000_R1)),
-			unsigned(m_maincpu->state_int(Z8000_R2)), unsigned(m_maincpu->state_int(Z8000_R3)),
-			unsigned(m_maincpu->state_int(Z8000_R4)), unsigned(m_maincpu->state_int(Z8000_R5)),
-			unsigned(m_maincpu->state_int(Z8000_R6)), unsigned(m_maincpu->state_int(Z8000_R7)),
-			unsigned(m_maincpu->state_int(Z8000_R8)), unsigned(m_maincpu->state_int(Z8000_R9)),
-			unsigned(m_maincpu->state_int(Z8000_R10)), unsigned(m_maincpu->state_int(Z8000_R11)),
-			unsigned(m_maincpu->state_int(Z8000_R12)), unsigned(m_maincpu->state_int(Z8000_R13)),
-			unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
-		std::fflush(m_fdu_trace);
-	}
-}
-
-void m40_state::debug_pc_ctx(char const *event)
-{
-	if (!m_fdu_trace)
-		return;
-	std::fprintf(m_fdu_trace,
-		"PCCTX %s pc=%08X r0=%04X r1=%04X r2=%04X r3=%04X r4=%04X r5=%04X r6=%04X r7=%04X "
-		"r8=%04X r9=%04X r10=%04X r11=%04X r12=%04X r13=%04X r14=%04X r15=%04X\n",
-		event, unsigned(m_maincpu->pc()),
-		unsigned(m_maincpu->state_int(Z8000_R0)), unsigned(m_maincpu->state_int(Z8000_R1)),
-		unsigned(m_maincpu->state_int(Z8000_R2)), unsigned(m_maincpu->state_int(Z8000_R3)),
-		unsigned(m_maincpu->state_int(Z8000_R4)), unsigned(m_maincpu->state_int(Z8000_R5)),
-		unsigned(m_maincpu->state_int(Z8000_R6)), unsigned(m_maincpu->state_int(Z8000_R7)),
-		unsigned(m_maincpu->state_int(Z8000_R8)), unsigned(m_maincpu->state_int(Z8000_R9)),
-		unsigned(m_maincpu->state_int(Z8000_R10)), unsigned(m_maincpu->state_int(Z8000_R11)),
-		unsigned(m_maincpu->state_int(Z8000_R12)), unsigned(m_maincpu->state_int(Z8000_R13)),
-		unsigned(m_maincpu->state_int(Z8000_R14)), unsigned(m_maincpu->state_int(Z8000_R15)));
-	std::fflush(m_fdu_trace);
-}
-#endif
-
-bool m40_state::xlate(int spacenum, bool write, offs_t &addr)
-{
-	int st;
-	if (spacenum == AS_PROGRAM)
-	{
-		st = m_maincpu->is_ifetch1() ? z8002_device::ST_IFETCH_1 : z8002_device::ST_IFETCH_N;
-		if (st == z8002_device::ST_IFETCH_1)
-			m_viol_pc = 0xffffffff;   // new instruction begins -> SUP released
-	}
-	else if (spacenum == z8001_device::AS_STACK)
-		st = z8002_device::ST_REQ_STACK;
-	else
-		st = z8002_device::ST_REQ_DATA;
-
-	if (!(m_mmu_mode & 0x80))
-		return true;    // MMU not master-enabled -> transparent (physical == segmented addr)
-	addr &= 0x3fffff;   // mask URS bit (single-range like the L1)
-	// N/S~ pin = the CPU's actual mode (FCW bit 14), latched into the MMU's bus
-	// cycle status and checked by the system-violation attribute.
-	bool const sys = BIT(m_maincpu->state_int(Z8000_FCW), 14);
-	return m_mmu->translate(addr, write, sys, /*dma=*/false, st);
-}
-
-uint16_t m40_state::mem_r(address_space &space, offs_t offset, uint16_t mem_mask)
-{
-	offs_t addr = offset << 1;
-	// SUP suppresses the violating transfer AND all subsequent CPU accesses to the
-	// end of the current instruction (datasheet); track the violating PC and hold
-	// suppression until the next first-word instruction fetch clears it (in xlate).
-	if (!xlate(space.spacenum(), false, addr))
-	{
-		if (m_suppress_enabled)
-			m_viol_pc = m_maincpu->pc();
-		return (space.spacenum() == AS_PROGRAM) ? 0x8d07 : 0xffff;  // seg violation -> NOP
-	}
-	if (m_viol_pc == m_maincpu->pc() && space.spacenum() != AS_PROGRAM)
-		return 0xffff;   // rest-of-instruction data access under SUP
-#if M40_DEBUG_TRACE
-	if (space.spacenum() == AS_PROGRAM)
-	{
-		static uint32_t last_pc = 0xffffffff;
-		uint32_t const pc = m_maincpu->pc();
-		if (pc != last_pc)
+			olivetti_l1_go252_device &card = downcast<olivetti_l1_go252_device &>(*device);
+			card.crtc_write_callback().set(*this, FUNC(m40_state::go252_crtc_trace_w));
+		});
+		slot.set_option_machine_config("go280", [this](device_t *device)
 		{
-			last_pc = pc;
-			switch (pc)
-			{
-			case 0x00027fde: debug_pc_ctx("7fde-entry"); break;
-			case 0x00027fe8: debug_pc_ctx("7fe8-fatal"); break;
-			case 0x00028002: debug_pc_ctx("8002-return"); break;
-			case 0x0002a800: debug_pc_ctx("a800-call"); break;
-			case 0x0002a92a: debug_pc_ctx("a92a-call"); break;
-			case 0x0002b668: debug_pc_ctx("b668-call"); break;
-			case 0x00044586: debug_pc_ctx("4-4586-call"); break;
-			// RAMVID (seg 0x21) march-phase probes
-			case 0x0021018c: debug_pc_ctx("rv-setup"); break;
-			case 0x002102b4: debug_pc_ctx("rv-fill"); break;
-			case 0x002102ce: debug_pc_ctx("rv-march1"); break;
-			case 0x00210366: debug_pc_ctx("rv-mismatch-a"); break;
-			case 0x0021038a: debug_pc_ctx("rv-errprint"); break;
-			// UC3003 (loaded in seg 0x21) control-flow probes
-			case 0x00210304: debug_pc_ctx("uc-0304-gate"); break;
-			case 0x00210330: debug_pc_ctx("uc-dispatch"); break;      // r1 = test index
-			case 0x00210358: debug_pc_ctx("uc-t1-entry"); break;
-			case 0x002106dc: debug_pc_ctx("uc-invalid-test"); break;
-			case 0x00210720: debug_pc_ctx("uc-next-test"); break;
-			case 0x00213576: debug_pc_ctx("uc-trap-body"); break;
-			case 0x002134f6: debug_pc_ctx("uc-trap-handler"); break;
-			case 0x00210ea2: debug_pc_ctx("uc-error"); break;
-			case 0x00210180: debug_pc_ctx("uc-0180-back"); break;
-			}
-		}
-	}
-#endif
-	return phys_r(addr, mem_mask);
-}
-
-void m40_state::mem_w(address_space &space, offs_t offset, uint16_t data, uint16_t mem_mask)
-{
-	offs_t addr = offset << 1;
-	offs_t const logical = addr;
-	bool ok = xlate(space.spacenum(), true, addr);
-	if (!ok && !m_suppress_enabled)
-	{
-		// Suppression gate disabled (0xFF00): the violating write reaches memory.
-		phys_w(addr, data, mem_mask);
-		return;
-	}
-	if (!ok)
-		m_viol_pc = m_maincpu->pc();       // SUP holds to the end of this instruction
-	else if (m_viol_pc == m_maincpu->pc())
-		ok = false;                        // rest-of-instruction write under SUP
-	if (ok)
-	{
-#if M40_DEBUG_TRACE
-		debug_diag_w(logical, addr, data, mem_mask);
-#endif
-		phys_w(addr, data, mem_mask);
+			olivetti_l1_go280_device &card = downcast<olivetti_l1_go280_device &>(*device);
+			card.trace_callback().set(*this, FUNC(m40_state::go280_trace_w));
+		});
 	}
 }
 
-//**************************************************************************
-//  MMU programming (special I/O)
-//**************************************************************************
-
-uint8_t m40_state::mmu_r(offs_t offset)
+void m40_state::l1_backplane(machine_config &config, olivetti_l1_bus_device::chassis chassis)
 {
-	if (!BIT(offset, 0))
+	OLIVETTI_L1_BUS(config, m_l1bus, 0).set_chassis(chassis);
+	u8 const positions = (chassis == olivetti_l1_bus_device::chassis::m30_m34) ? 9 : 14;
+	u8 const cpu_position = (chassis == olivetti_l1_bus_device::chassis::m30_m34) ? 1 : 0;
+
+	static char const *const slot_tags[14] =
 	{
-		uint8_t const reg = (uint8_t)(offset >> 8);
-		uint8_t const data = m_mmu->read(reg);
-#if M40_DEBUG_TRACE
-		if (m_fdu_trace && (reg == 0x0b || reg == 0x01 || reg == 0x20 || reg == 0x0f || reg == 0x05))
+		"slot1", "slot2", "slot3", "slot4", "slot5", "slot6", "slot7",
+		"slot8", "slot9", "slot10", "slot11", "slot12", "slot13", "slot14"
+	};
+
+	// M30/M34 has nine positions with the CPU second; M40/M44 has fourteen with
+	// the CPU first.  The CPU always has logical select F; the other positions
+	// receive selects 0 upwards in physical order, skipping the CPU.
+	u8 select = 0;
+	for (u8 position = 0; position < positions; position++)
+	{
+		if (position == cpu_position)
 		{
-			std::fprintf(m_fdu_trace, "MMU R pc=%08X off=%04X reg=%02X data=%02X\n",
-				unsigned(m_maincpu->pc()), unsigned(offset), reg, data);
-			std::fflush(m_fdu_trace);
+			OLIVETTI_L1_SLOT(config, "cpu", m_l1bus, position, 15, m40_l1_cpu_cards, "uc042", true);
+			continue;
 		}
-#endif
-		return data;
-	}
-	return 0xff;
-}
 
-void m40_state::mmu_w(offs_t offset, uint8_t data)
-{
-	if (!BIT(offset, 0))
-	{
-		uint8_t reg = (uint8_t)(offset >> 8);
-#if M40_DEBUG_TRACE
-		if (m_fdu_trace && (reg == 0x0b || reg == 0x01 || reg == 0x20 || reg == 0x0f || reg == 0x05))
-		{
-			std::fprintf(m_fdu_trace, "MMU W pc=%08X off=%04X reg=%02X data=%02X\n",
-				unsigned(m_maincpu->pc()), unsigned(offset), reg, data);
-			std::fflush(m_fdu_trace);
-		}
-#endif
-		m_mmu->write(reg, data);
-		if (reg == 0x00)   // mode change -> re-map; do NOT invalidate on every
-		{                  // descriptor byte (that disrupts the SOTIRB block load)
-			m_mmu_mode = data;
-			m_maincpu->space(AS_PROGRAM).invalidate_caches(read_or_write::READWRITE);
-			m_maincpu->space(AS_DATA).invalidate_caches(read_or_write::READWRITE);
-			m_maincpu->space(z8001_device::AS_STACK).invalidate_caches(read_or_write::READWRITE);
-		}
-	}
-}
-
-//**************************************************************************
-//  UC I/O registers
-//**************************************************************************
-
-void m40_state::console_w(uint8_t data)
-{
-	// diagnostic step / error code latch (0xFFE0) -> stdout
-	osd_printf_info("[M40 console] code = 0x%02X (%d)\n", data, data);
-}
-
-uint8_t m40_state::nmi_status_r()
-{
-	// bit0 BBU-valid, bit1 ISL (0=FDU-first), bit4 = latched 8253 ch1 OUT level
-	// (UCV305 timer test reads it inside the timer ISR), bit6 READY fault,
-	// bit7 NMI-cause
-	return m_nmi_status | (m_timer_out1 ? 0x10 : 0x00);
-}
-
-void m40_state::nmi_ack_w(uint8_t data)
-{
-	// write = clear / re-arm the NMI latch
-	m_nmi_status &= ~0x40;
-	m_maincpu->set_input_line(z8001_device::NMI_LINE, CLEAR_LINE);
-}
-
-uint8_t m40_state::config_r()
-{
-	// Reading the configuration register also re-enables the MMU suppression gate.
-	if (!machine().side_effects_disabled())
-		m_suppress_enabled = true;
-	return 0xff;   // config/jumpers — all-ones for now
-}
-
-// UC3003 TST01 "DISABLE INHIBITION MEMORY" sub-case: reading UC reg 0xFF00
-// disables the gate that suppresses memory writes on an MMU violation (the
-// violating write then reaches memory); reading 0xFFA0 restores it.
-uint8_t m40_state::suppression_disable_r()
-{
-	if (!machine().side_effects_disabled())
-		m_suppress_enabled = false;
-	return 0xff;
-}
-
-uint8_t m40_state::kdc_uc_status_r()
-{
-	// Real 6850 status with the keyboard byte stream overlaid: a pending keyboard
-	// byte raises RDRF (bit 0) and the byte-ready trigger the resident ISR checks
-	// first (bit 2).
-	return m_acia->status_r() | (m_kbd_count ? 0x05 : 0x00);
-}
-
-void m40_state::kdc_uc_status_w(uint8_t data)
-{
-	m_kdc_status = data;
-	m_acia->control_w(data);
-}
-
-uint8_t m40_state::kdc_uc_data_r()
-{
-	// Keyboard bytes take precedence; otherwise read the real 6850 (loopback data
-	// during the UC3003 ACIA test).
-	if (m_kbd_count)
-	{
-		m_kdc_data = m_kbd_fifo[m_kbd_tail];
-		m_kbd_tail = (m_kbd_tail + 1) & 0x0f;
-		m_kbd_count--;
-		m_kdc_pending = (m_kbd_count != 0);
-		update_vi();
-		return m_kdc_data;
-	}
-	m_kdc_pending = false;
-	update_vi();
-	return m_acia->data_r();
-}
-
-void m40_state::kdc_uc_data_w(uint8_t data)
-{
-	// Several resident handlers write the byte latch as an acknowledge/echo path.
-	// Keep the value visible without feeding it back into the host-key queue, and
-	// hand it to the real 6850 (TX; loops back to RX for the UC3003 ACIA test).
-	m_kdc_data = data;
-	m_acia->data_w(data);
-}
-
-void m40_state::io_map(address_map &map)
-{
-	map.unmap_value_high();
-	// Governo slots (register = low byte)
-	map(0x1000, 0x1fff).rw(FUNC(m40_state::vid16_r), FUNC(m40_state::vid16_w));
-	map(0x2000, 0x2fff).rw(FUNC(m40_state::fdu_r), FUNC(m40_state::fdu_w));
-	// UC registers
-	map(0xff20, 0xff21).rw(FUNC(m40_state::kdc_uc_status_r), FUNC(m40_state::kdc_uc_status_w)).umask16(0xff00);
-	map(0xff22, 0xff23).rw(FUNC(m40_state::kdc_uc_data_r), FUNC(m40_state::kdc_uc_data_w)).umask16(0xff00);
-	map(0xff41, 0xff41).rw(FUNC(m40_state::nmi_status_r), FUNC(m40_state::nmi_ack_w));
-	map(0xff11, 0xff11).w(FUNC(m40_state::masto_clear_w));
-	map(0xff19, 0xff19).w(FUNC(m40_state::masto_set_w));
-	map(0xffb1, 0xffb1).r(FUNC(m40_state::masto_r));
-	map(0xff60, 0xff6f).rw(FUNC(m40_state::diagnostic_lamps_r), FUNC(m40_state::diagnostic_lamps_w));
-	map(0xff80, 0xff8f).rw(FUNC(m40_state::arb_r), FUNC(m40_state::arb_w));
-	map(0xff00, 0xff00).r(FUNC(m40_state::suppression_disable_r));
-	map(0xff01, 0xff01).w(FUNC(m40_state::timer_vector_w));
-	map(0xffa0, 0xffa0).rw(FUNC(m40_state::config_r), FUNC(m40_state::acia_vector_w));
-	map(0xffc0, 0xffc7).rw(FUNC(m40_state::pit_r), FUNC(m40_state::pit_w)); // 8253: 0xC1/C3/C5=ch0-2, C7=ctl
-	map(0xffe0, 0xffe0).w(FUNC(m40_state::console_w));
-}
-
-void m40_state::sio_map(address_map &map)
-{
-	map.unmap_value_high();
-	map(0x0000, 0x20ff).rw(FUNC(m40_state::mmu_r), FUNC(m40_state::mmu_w));
-}
-
-//**************************************************************************
-//  CPU acknowledge callbacks
-//**************************************************************************
-
-uint16_t m40_state::segtack_r()
-{
-	// The segment-trap acknowledge ends the violating instruction: SUP must stop
-	// suppressing here, or the trap dispatch's own PSA reads and trap-frame stack
-	// pushes (which still run with pc == the violating instruction) get eaten and
-	// the CPU vectors into garbage.  This is what broke every SEGT after the
-	// SUP-scope change (trap test died in the monitor's fatal-NMI catcher).
-	m_viol_pc = 0xffffffff;
-	return m_mmu->segtack_r();
-}
-uint16_t m40_state::nmiack_r()
-{
-	// Same reasoning for an NMI arriving while a violating instruction is live.
-	m_viol_pc = 0xffffffff;
-	return 0;
-}
-
-void m40_state::kdc_queue(uint8_t data)
-{
-	if (m_kbd_count == sizeof(m_kbd_fifo))
-		return;
-
-	m_kbd_fifo[m_kbd_head] = data;
-	m_kbd_head = (m_kbd_head + 1) & 0x0f;
-	m_kbd_count++;
-	m_kdc_pending = true;
-	update_vi();
-}
-
-//**************************************************************************
-//  GO252 video/keyboard governo (KDC)
-//**************************************************************************
-uint16_t m40_state::vid16_r(offs_t offset, uint16_t mem_mask)
-{
-	uint8_t const reg = ((offset << 1) + (ACCESSING_BITS_0_7 ? 1 : 0)) & 0xff;
-	uint8_t const data = vid_r(reg);
-	return (data << 8) | data;
-}
-
-void m40_state::vid16_w(offs_t offset, uint16_t data, uint16_t mem_mask)
-{
-	uint8_t const reg = (offset << 1) & 0xff;
-	if (ACCESSING_BITS_8_15)
-		vid_w(reg, data >> 8);
-	if (ACCESSING_BITS_0_7)
-		vid_w((reg + 1) & 0xff, data & 0xff);
-}
-
-uint8_t m40_state::vid_r(offs_t offset)
-{
-	switch (offset & 0xff)
-	{
-	case 0x00:
-	case 0x01:                     // KDC status (read side of the control reg)
-		// bit 1 = TX ready (transmitter always empty in this model), tested by
-		// the direct-send helper (1d:043c) before writing reg 3; bit 2 = RX byte
-		// available — the vector-0x2c handler branches on it: set -> read reg 3
-		// (data path), clear -> TX/command-completion path. Both bits are status,
-		// so they combine (returning them exclusively made a pending key byte
-		// fail the TX-ready test with error 0x8006).
-		if (m_kbd_count)
-			m_kdc_data_armed = true;
-		return 0x02 | (m_kbd_count ? 0x04 : 0x00);
-	case 0x02:
-	case 0x03:                     // FE/KDC data register selected by resident vector 0x2c
-		if (m_kdc_data_armed && m_kbd_count)
-		{
-			m_kdc_data = m_kbd_fifo[m_kbd_tail];
-			m_kbd_tail = (m_kbd_tail + 1) & 0x0f;
-			m_kbd_count--;
-			m_kdc_data_armed = false;
-			m_kdc_pending = (m_kbd_count != 0);
-			update_vi();
-			return m_kdc_data;
-		}
-		return m_kdc_data;
-	case 0xfe:
-	case 0xff:                     // type-ID register -> video/KDC governo
-		return 0xfe;
-	case 0x80:
-	case 0x81:                     // status: monitor type 0 + toggling live-signal (bit 3)
-		m_vid_live = !m_vid_live;
-		return m_vid_live ? 0x08 : 0x00;
-	case 0x42:
-	case 0x43:
-		return m_crtc->register_r();
-	default:
-		return 0xff;
-	}
-}
-
-void m40_state::vid_w(offs_t offset, uint8_t data)
-{
-	switch (offset & 0xff)
-	{
-	case 0x40:
-	case 0x41:
-		m_crtc_index = data & 0x1f;
-		m_crtc->address_w(data);                 // MC6845 address (register select)
-		break;
-	case 0x42:
-	case 0x43:
-		if (m_crtc_index == 0x09)
-			m_crtc_max_ras = data & 0x1f;        // track R9 for the line attributes
-		m_crtc->register_w(data);                // MC6845 data
-#if M40_DEBUG_TRACE
-		debug_crtc_w(m_crtc_index, data);
-#endif
-		break;
-	case 0x00:
-	case 0x01:
-		// KDC control (decoded from the resident driver's mask/set table at
-		// 1d:042c and the vector-0x2c handler 1d:068e):
-		//   bit 5 = TX interrupt enable — transmitter is always empty here, so
-		//           setting it raises the "command/completion" VI at once; the
-		//           handler's TX branch fetches the byte to send via the test's
-		//           callback (which clears its busy flag) and writes it to reg 3.
-		//   bit 6 = TX handshake for the direct-send path (helper cmd 9)
-		//   bit 7 = RX interrupt enable (keyboard data)
-		m_kdc_ctrl = data;
-		m_kdc_data_armed = false;
-		update_vi();
-		break;
-	case 0x02:
-	case 0x03:
-		// Data register write = byte transmitted to the KDC (keyboard MCU) —
-		// KEYTE1's init commands 0x06/0x08/0x0a/0x0c/0x10/0x02 arrive here.
-		// The transfer completes immediately; if TX VI (bit 5) is still armed
-		// (multi-byte command), the level VI re-asserts for the next byte.
-		m_kdc_data = data;
-		m_kdc_data_armed = false;
-		// Command 0x02 = read keyboard ID/jumpers: the MCU answers 0xFB then a
-		// config byte, low 5 bits = layout (KEYTE1 table at 21:22d0: 0=INTER-
-		// NATIONAL .. 10=ITALY, 11=JAPAN/Kana, 17=USA ASCII), high 3 = jumpers.
-		// KEYTE1 blocks dequeuing its FIFO until the 0xFB arrives (21:062c).
-		if (data == 0x02)
-		{
-			kdc_queue(0xfb);
-			kdc_queue(0xf1);   // USA ASCII (layout 17), jumpers 7 = D.P.
-		}
-		update_vi();
-		break;
-	case 0x20:
-	case 0x21: m_kdc_vector = data; break;       // keyboard/FE interrupt vector latch
-	case 0x6a: break;                       // "enable normal video"
-	default:   break;
-	}
-}
-
-//**************************************************************************
-//  GO280 floppy governo (FDU)
-//**************************************************************************
-uint8_t m40_state::fdu_r(offs_t offset)
-{
-	uint8_t const reg = offset & 0xff;
-	uint8_t data;
-	switch (reg)
-	{
-	case 0x1d: data = m_fdc->msr_r(); break;         // uPD765 main status
-	case 0x1f: data = m_fdc->fifo_r(); break;        // uPD765 data
-	case 0x40: case 0x42: case 0x44: case 0x46:      // AM9517A DMAC internal regs
-	case 0x48: case 0x4a: case 0x4c: case 0x4e:      // (byte-spaced: reg = (addr>>1)&0x0f)
-	case 0x50: case 0x52: case 0x54: case 0x56:
-	case 0x58: case 0x5a: case 0x5c: case 0x5e:
-		data = m_dmac->read((reg >> 1) & 0x0f); break;
-	case 0x99: case 0x9b: case 0x9d:                 // 8253 timer (ch0/ch1/ch2 read)
-		data = m_fdu_timer->read((reg >> 1) & 3); break;
-	case 0xf7:                                       // RD1NT: INTMO (bit0) | INTOO (bit1)
-		data = ((m_intmo_lat || m_timer_int) ? 0x01 : 0)
-			| ((m_intoo_lat || m_fdc_int) ? 0x02 : 0);
-		break;
-	case 0xff: data = 0xe1;            break;        // RD1DN identifier: 0xE0 | NOM10(=1 FDU)
-	case 0xed: data = 0xff;            break;        // RDGNN diagnostic port
-	default:   data = 0xff;            break;
-	}
-#if M40_DEBUG_TRACE
-	debug_fdu("R", reg, data);
-#endif
-	return data;
-}
-
-void m40_state::fdu_w(offs_t offset, uint8_t data)
-{
-	uint8_t const reg = offset & 0xff;
-	switch (reg)
-	{
-	case 0x1f: m_fdc->fifo_w(data); break;           // uPD765 command/parameter
-	case 0x40: case 0x42: case 0x44: case 0x46:      // AM9517A DMAC internal regs
-	case 0x48: case 0x4a: case 0x4c: case 0x4e:
-	case 0x50: case 0x52: case 0x54: case 0x56:
-	case 0x58: case 0x5a: case 0x5c: case 0x5e:
-		// Capture the ch1 (0x44) load — it carries the real transfer address (low
-		// 16 bits of the DMA *word* address); ch2 only counts bytes. 0x58 clears
-		// only the AM9517 first/second-byte flip-flop. A complete ch1 address load
-		// starts the board-level transfer cursor at that new address.
-		if (reg == 0x58)
-			m_dma_ff = false;
-		else if (reg == 0x44)
-		{
-			if (!m_dma_ff) m_dma_ch1 = (m_dma_ch1 & 0xff00) | data;
-			else
-			{
-				m_dma_ch1 = (m_dma_ch1 & 0x00ff) | (uint16_t(data) << 8);
-				m_dma_byte = 0;
-			}
-			m_dma_ff = !m_dma_ff;
-		}
-		m_dmac->write((reg >> 1) & 0x0f, data);
-		break;
-	case 0xf6: m_fdu_dma_hi = data; break;           // ADRLN — high byte of the word address
-	case 0xff:                                        // E01NT — acknowledge/reset the pending interrupt
-		m_intoo_lat = false;
-		m_intmo_lat = false;
-		m_fdu_pending = false;
-		update_vi();
-		break;
-	case 0x99: case 0x9b: case 0x9d: case 0x9f:      // 8253 timer (mode 0x9f, ch2 0x9d, ch1 0x9b, ch0 0x99)
-		m_fdu_timer->write((reg >> 1) & 3, data); break;
-	case 0xef: m_fdu_vector = data; break;           // VETTN — governo interrupt vector
-	case 0xe7:                                        // CONTR
-		m_fdu_ien = BIT(data, 0);                     // EN100 — interrupt-request enable
-		m_fdc->reset_w(BIT(data, 1) ? 0 : 1);         // RESFD — reset FDC (active low)
-		// MFDU RDY10 is pulled active. DIAGN can also force READY, but clearing it
-		// must not manufacture a ready-to-not-ready transition and FDC interrupt.
-		m_fdc->ready_w(false);                        // MAME external READY is inverted
-		update_vi();
-		for (auto &drive : m_floppy)
-			if (floppy_image_device *f = drive->get_device())
-				f->mon_w(0);                          // FDU motor runs
-		break;                                        // bit6 SCRVO dir, bit3/7 MOTO1/2 (MFDU)
-	default: break;
-	}
-#if M40_DEBUG_TRACE
-	debug_fdu("W", reg, data);
-#endif
-}
-
-void m40_state::update_vi()
-{
-	// KDC VI causes: RX (queued keyboard byte, edge-latched in m_kdc_pending,
-	// enabled by ctrl bit 7) and TX (level: transmitter empty — always — while
-	// ctrl bit 5 is set; the resident driver clears bit 5 after the last byte).
-	bool const kdc_vi = (m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5);
-	// UC timer VI: 8253 ch1 OUT (level), enabled by the VIENO flip-flop; vector
-	// from 0xFF01 (UC3003 TST03 counter-1).
-	bool const timer_vi = m_timer_pending && m_arb_vieno;
-	// The 6850 IRQ clears when its ISR services the status/data cause.
-	m_maincpu->set_input_line(z8001_device::VI_LINE,
-		((m_fdu_pending && m_fdu_ien) || kdc_vi || timer_vi || m_acia_irq) ? ASSERT_LINE : CLEAR_LINE);
-}
-
-void m40_state::fdc_intrq_w(int state)
-{
-	if (state && !m_fdc_int)     // rising edge latches INTP1 and the INTOO source
-	{
-		m_fdu_pending = true;
-		m_intoo_lat = true;
-	}
-	m_fdc_int = bool(state);
-#if M40_DEBUG_TRACE
-	debug_fdu("FDCINT", 0x00, state ? 1 : 0);
-#endif
-	update_vi();
-}
-
-// 8253 channel-1 end-of-count = INTMO: motor spin-up (500 ms),
-// motor-off (2 s), and the read/write time-out (800 ms). Same INTP1 latch path.
-void m40_state::fdu_timer_out(int state)
-{
-	if (state && !m_timer_int)   // rising edge latches INTP1 and the INTMO source
-	{
-		m_fdu_pending = true;
-		m_intmo_lat = true;
-	}
-	m_timer_int = bool(state);
-#if M40_DEBUG_TRACE
-	debug_fdu("TIMER", 0x00, state ? 1 : 0);
-#endif
-	update_vi();
-}
-
-uint16_t m40_state::vi_ack_r()
-{
-	// UC timer VI (ch1 OUT & VIENO): supply the 0xFF01 vector unless a governo/KDC
-	// source is pending (they take priority on the shared line).
-	bool const kdc_or_fdu = ((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
-	                     || (m_fdu_pending && m_fdu_ien);
-	if (m_timer_pending && m_arb_vieno && !kdc_or_fdu)
-	{
-		m_timer_pending = false;   // edge-latched: served by this ack
-		update_vi();
-		return m_timer_vector;     // UC timer vector latch (0xFF01)
-	}
-	if (m_acia_irq && !kdc_or_fdu)
-		return m_acia_vector;      // UC ACIA vector latch (0xFFA0); the 6850 IRQ
-		                           // clears when its ISR services the cause
-	if ((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5))
-	{
-		// One vector for both KDC causes: the handler reads the status register
-		// and dispatches (bit 2 set -> RX, clear -> TX/completion). RX pending is
-		// edge-latched, ack'd here; the TX cause is level and only drops when the
-		// driver clears ctrl bit 5.
-		if (m_kdc_pending && BIT(m_kdc_ctrl, 7))
-			m_kdc_pending = false;
-		update_vi();
-		return m_kdc_vector;
+		char const *const default_card = (select == 0) ? "auto" : (select == 1) ? "go252" : (select == 2) ? "go280" : nullptr;
+		auto const options = (select == 0) ? l1_first_ram_cards : m40_l1_cards;
+		olivetti_l1_slot_device &slot(OLIVETTI_L1_SLOT(config, slot_tags[position], m_l1bus, position, select, options, default_card));
+		configure_slot(slot, select != 0);
+		select++;
 	}
 
-	m_fdu_pending = false;       // vector-enable strobe also resets INTP1
-#if M40_DEBUG_TRACE
-	debug_fdu("VIACK", 0x00, m_fdu_vector);
-#endif
-	update_vi();
-	return m_fdu_vector;
-}
-
-void m40_state::fdc_drq_w(int state)
-{
-	// FDC DMARO -> DMAC channel-2 request (the FDC data channel).
-	m_dmac->dreq2_w(state);
-}
-
-void m40_state::dma_hreq_w(int state)
-{
-	// The governo requests the bus (BAXXN); we grant immediately and hold the CPU.
-	m_maincpu->set_input_line(INPUT_LINE_HALT, state ? ASSERT_LINE : CLEAR_LINE);
-	m_dmac->hack_w(state);
-}
-
-void m40_state::dma_eop_w(int state)
-{
-	// AM9517 TC (end of block) -> µPD765 terminal count, ending its transfer.
-	m_fdc->tc_w(state);
-}
-
-void m40_state::fdu_index_w(int state)
-{
-	m_fdu_timer->write_clk2(state);
-#if M40_DEBUG_TRACE
-	debug_fdu("INDEX", 0x00, state ? 1 : 0);
-#endif
-}
-
-// Channel 1 and ADRLN hold a word address; channel 2 supplies the transfer count.
-uint32_t m40_state::dma_phys()
-{
-	uint32_t const base = ((uint32_t(m_fdu_dma_hi) << 16) | m_dma_ch1) << 1;
-	return (base + m_dma_byte++) & 0xffffff;
-}
-
-uint8_t m40_state::dma_memr(offs_t /*offset*/)
-{
-	uint32_t const addr = dma_phys();
-	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
-		return m_ramptr[addr - 0x010000];
-	if (addr >= 0xff0000)
-		return m_vram[addr & 0xffff];
-	if (addr < 0x4000)
-		return (addr & 1) ? (m_rom[addr >> 1] & 0xff) : (m_rom[addr >> 1] >> 8);
-	return 0xff;
-}
-
-void m40_state::dma_memw(offs_t /*offset*/, uint8_t data)
-{
-	uint32_t const addr = dma_phys();
-	if (addr >= 0x010000 && addr < 0x010000 + m_ramsize)
-		m_ramptr[addr - 0x010000] = data;
-	else if (addr >= 0xff0000)
-		m_vram[addr & 0xffff] = data;
-#if M40_DEBUG_TRACE
-	if (m_fdu_trace)
-	{
-		uint32_t const pos = (m_dma_byte - 1) & 0xffffff;
-		if (pos < 0x20 || (pos & 0xff) == 0)
-		{
-			std::fprintf(m_fdu_trace,
-				"DMAW pc=%08X pos=%06X phys=%06X data=%02X dma_hi=%02X dma_ch1=%04X\n",
-				unsigned(m_maincpu->pc()), unsigned(pos), unsigned(addr), data,
-				m_fdu_dma_hi, m_dma_ch1);
-			std::fflush(m_fdu_trace);
-		}
-	}
-#endif
-	// ROM / unpopulated: ignore (no READY fault during DMA)
-}
-
-void m40_state::floppy_formats(format_registration &fr)
-{
-	fr.add(FLOPPY_IMD_FORMAT);
-}
-
-static void m40_floppies(device_slot_interface &device)
-{
-	device.option_add("8dsdd", FLOPPY_8_DSDD);
-}
-
-// Provisional substitute for the undumped GO252 character generator.
-static const uint8_t s_chargen[96 * 16] =
-{
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x20 ' '
-	0x00,0x00,0x00,0x00,0x08,0x08,0x08,0x08,0x08,0x00,0x08,0x00,0x00,0x00,0x00,0x00,  // 0x21 '!'
-	0x00,0x00,0x00,0x00,0x12,0x12,0x24,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x22 '"'
-	0x00,0x00,0x00,0x00,0x14,0x14,0x3e,0x14,0x3e,0x14,0x14,0x00,0x00,0x00,0x00,0x00,  // 0x23 '#'
-	0x00,0x00,0x00,0x00,0x08,0x1e,0x28,0x1c,0x0a,0x3c,0x08,0x00,0x00,0x00,0x00,0x00,  // 0x24 '$'
-	0x00,0x00,0x00,0x00,0x30,0x32,0x04,0x08,0x10,0x26,0x06,0x00,0x00,0x00,0x00,0x00,  // 0x25 '%'
-	0x00,0x00,0x00,0x00,0x08,0x14,0x14,0x10,0x2a,0x24,0x1a,0x00,0x00,0x00,0x00,0x00,  // 0x26 '&'
-	0x00,0x00,0x00,0x02,0x04,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x27 '\''
-	0x00,0x00,0x00,0x00,0x0c,0x10,0x10,0x10,0x10,0x10,0x0c,0x00,0x00,0x00,0x00,0x00,  // 0x28 '('
-	0x00,0x00,0x00,0x00,0x18,0x04,0x04,0x04,0x04,0x04,0x18,0x00,0x00,0x00,0x00,0x00,  // 0x29 ')'
-	0x00,0x00,0x00,0x00,0x08,0x2a,0x1c,0x2a,0x08,0x00,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x2a '*'
-	0x00,0x00,0x00,0x00,0x00,0x08,0x08,0x3e,0x08,0x08,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x2b '+'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x08,0x08,0x10,0x00,0x00,0x00,0x00,  // 0x2c ','
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x3e,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x2d '-'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x08,0x08,0x00,0x00,0x00,0x00,0x00,  // 0x2e '.'
-	0x00,0x00,0x00,0x00,0x00,0x02,0x04,0x08,0x10,0x20,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x2f '/'
-	0x00,0x00,0x00,0x00,0x1c,0x22,0x32,0x2a,0x26,0x22,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x30 '0'
-	0x00,0x00,0x00,0x00,0x04,0x0c,0x14,0x04,0x04,0x04,0x04,0x00,0x00,0x00,0x00,0x00,  // 0x31 '1'
-	0x00,0x00,0x00,0x00,0x1c,0x22,0x02,0x04,0x08,0x10,0x3e,0x00,0x00,0x00,0x00,0x00,  // 0x32 '2'
-	0x00,0x00,0x00,0x00,0x3e,0x02,0x04,0x0c,0x02,0x22,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x33 '3'
-	0x00,0x00,0x00,0x00,0x04,0x08,0x10,0x24,0x3e,0x04,0x04,0x00,0x00,0x00,0x00,0x00,  // 0x34 '4'
-	0x00,0x00,0x00,0x00,0x1e,0x10,0x1c,0x02,0x02,0x22,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x35 '5'
-	0x00,0x00,0x00,0x00,0x1c,0x20,0x20,0x3c,0x22,0x22,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x36 '6'
-	0x00,0x00,0x00,0x00,0x3e,0x02,0x04,0x08,0x10,0x10,0x10,0x00,0x00,0x00,0x00,0x00,  // 0x37 '7'
-	0x00,0x00,0x00,0x00,0x1c,0x22,0x22,0x1c,0x22,0x22,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x38 '8'
-	0x00,0x00,0x00,0x00,0x1c,0x22,0x22,0x1e,0x02,0x02,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x39 '9'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x08,0x00,0x00,0x08,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x3a ':'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x08,0x00,0x00,0x08,0x08,0x10,0x00,0x00,0x00,0x00,  // 0x3b ';'
-	0x00,0x00,0x00,0x00,0x04,0x08,0x10,0x20,0x10,0x08,0x04,0x00,0x00,0x00,0x00,0x00,  // 0x3c '<'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x3e,0x00,0x3e,0x00,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x3d '='
-	0x00,0x00,0x00,0x00,0x10,0x08,0x04,0x02,0x04,0x08,0x10,0x00,0x00,0x00,0x00,0x00,  // 0x3e '>'
-	0x00,0x00,0x00,0x00,0x1c,0x22,0x02,0x04,0x08,0x00,0x08,0x00,0x00,0x00,0x00,0x00,  // 0x3f '?'
-	0x00,0x00,0x00,0x00,0x1c,0x22,0x02,0x1a,0x2a,0x2a,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x40 '@'
-	0x00,0x00,0x00,0x00,0x1c,0x22,0x22,0x22,0x3e,0x22,0x22,0x00,0x00,0x00,0x00,0x00,  // 0x41 'A'
-	0x00,0x00,0x00,0x00,0x3c,0x22,0x22,0x3c,0x22,0x22,0x3c,0x00,0x00,0x00,0x00,0x00,  // 0x42 'B'
-	0x00,0x00,0x00,0x00,0x1c,0x22,0x20,0x20,0x20,0x22,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x43 'C'
-	0x00,0x00,0x00,0x00,0x38,0x24,0x22,0x22,0x22,0x24,0x38,0x00,0x00,0x00,0x00,0x00,  // 0x44 'D'
-	0x00,0x00,0x00,0x00,0x3e,0x20,0x20,0x3c,0x20,0x20,0x3e,0x00,0x00,0x00,0x00,0x00,  // 0x45 'E'
-	0x00,0x00,0x00,0x00,0x3e,0x20,0x20,0x3c,0x20,0x20,0x20,0x00,0x00,0x00,0x00,0x00,  // 0x46 'F'
-	0x00,0x00,0x00,0x00,0x1c,0x22,0x20,0x20,0x2e,0x22,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x47 'G'
-	0x00,0x00,0x00,0x00,0x22,0x22,0x22,0x3e,0x22,0x22,0x22,0x00,0x00,0x00,0x00,0x00,  // 0x48 'H'
-	0x00,0x00,0x00,0x00,0x1c,0x08,0x08,0x08,0x08,0x08,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x49 'I'
-	0x00,0x00,0x00,0x00,0x02,0x02,0x02,0x02,0x22,0x22,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x4a 'J'
-	0x00,0x00,0x00,0x00,0x22,0x24,0x28,0x30,0x28,0x24,0x22,0x00,0x00,0x00,0x00,0x00,  // 0x4b 'K'
-	0x00,0x00,0x00,0x00,0x20,0x20,0x20,0x20,0x20,0x20,0x3e,0x00,0x00,0x00,0x00,0x00,  // 0x4c 'L'
-	0x00,0x00,0x00,0x00,0x22,0x36,0x2a,0x2a,0x22,0x22,0x22,0x00,0x00,0x00,0x00,0x00,  // 0x4d 'M'
-	0x00,0x00,0x00,0x00,0x22,0x32,0x2a,0x26,0x22,0x22,0x22,0x00,0x00,0x00,0x00,0x00,  // 0x4e 'N'
-	0x00,0x00,0x00,0x00,0x1c,0x22,0x22,0x22,0x22,0x22,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x4f 'O'
-	0x00,0x00,0x00,0x00,0x3c,0x22,0x22,0x3c,0x20,0x20,0x20,0x00,0x00,0x00,0x00,0x00,  // 0x50 'P'
-	0x00,0x00,0x00,0x00,0x1c,0x22,0x22,0x22,0x2a,0x24,0x1a,0x00,0x00,0x00,0x00,0x00,  // 0x51 'Q'
-	0x00,0x00,0x00,0x00,0x3c,0x22,0x22,0x3c,0x28,0x24,0x22,0x00,0x00,0x00,0x00,0x00,  // 0x52 'R'
-	0x00,0x00,0x00,0x00,0x1c,0x20,0x20,0x1c,0x02,0x02,0x3c,0x00,0x00,0x00,0x00,0x00,  // 0x53 'S'
-	0x00,0x00,0x00,0x00,0x3e,0x08,0x08,0x08,0x08,0x08,0x08,0x00,0x00,0x00,0x00,0x00,  // 0x54 'T'
-	0x00,0x00,0x00,0x00,0x22,0x22,0x22,0x22,0x22,0x22,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x55 'U'
-	0x00,0x00,0x00,0x00,0x22,0x22,0x22,0x22,0x22,0x14,0x08,0x00,0x00,0x00,0x00,0x00,  // 0x56 'V'
-	0x00,0x00,0x00,0x00,0x22,0x22,0x2a,0x2a,0x2a,0x2a,0x14,0x00,0x00,0x00,0x00,0x00,  // 0x57 'W'
-	0x00,0x00,0x00,0x00,0x22,0x22,0x14,0x08,0x14,0x22,0x22,0x00,0x00,0x00,0x00,0x00,  // 0x58 'X'
-	0x00,0x00,0x00,0x00,0x22,0x22,0x14,0x08,0x08,0x08,0x08,0x00,0x00,0x00,0x00,0x00,  // 0x59 'Y'
-	0x00,0x00,0x00,0x00,0x3e,0x02,0x04,0x08,0x10,0x20,0x3e,0x00,0x00,0x00,0x00,0x00,  // 0x5a 'Z'
-	0x00,0x00,0x00,0x00,0x1c,0x10,0x10,0x10,0x10,0x10,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x5b '['
-	0x00,0x00,0x00,0x00,0x00,0x20,0x10,0x08,0x04,0x02,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x5c '\\'
-	0x00,0x00,0x00,0x00,0x1c,0x04,0x04,0x04,0x04,0x04,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x5d ']'
-	0x00,0x00,0x00,0x08,0x14,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x5e '^'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x3e,0x00,0x00,0x00,0x00,0x00,  // 0x5f '_'
-	0x00,0x00,0x00,0x20,0x10,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x60 '`'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x1c,0x02,0x1e,0x22,0x1e,0x00,0x00,0x00,0x00,0x00,  // 0x61 'a'
-	0x00,0x00,0x00,0x00,0x20,0x20,0x3c,0x22,0x22,0x22,0x3c,0x00,0x00,0x00,0x00,0x00,  // 0x62 'b'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x1c,0x22,0x20,0x20,0x1e,0x00,0x00,0x00,0x00,0x00,  // 0x63 'c'
-	0x00,0x00,0x00,0x00,0x02,0x02,0x1e,0x22,0x22,0x22,0x1e,0x00,0x00,0x00,0x00,0x00,  // 0x64 'd'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x1c,0x22,0x3e,0x20,0x1e,0x00,0x00,0x00,0x00,0x00,  // 0x65 'e'
-	0x00,0x00,0x00,0x00,0x06,0x08,0x1e,0x08,0x08,0x08,0x08,0x00,0x00,0x00,0x00,0x00,  // 0x66 'f'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x1e,0x22,0x22,0x22,0x1e,0x02,0x3c,0x00,0x00,0x00,  // 0x67 'g'
-	0x00,0x00,0x00,0x00,0x20,0x20,0x3c,0x22,0x22,0x22,0x22,0x00,0x00,0x00,0x00,0x00,  // 0x68 'h'
-	0x00,0x00,0x00,0x00,0x08,0x00,0x18,0x08,0x08,0x08,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x69 'i'
-	0x00,0x00,0x00,0x00,0x04,0x00,0x04,0x04,0x04,0x04,0x04,0x24,0x18,0x00,0x00,0x00,  // 0x6a 'j'
-	0x00,0x00,0x00,0x00,0x20,0x20,0x22,0x24,0x38,0x24,0x22,0x00,0x00,0x00,0x00,0x00,  // 0x6b 'k'
-	0x00,0x00,0x00,0x00,0x18,0x08,0x08,0x08,0x08,0x08,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x6c 'l'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x34,0x2a,0x2a,0x2a,0x2a,0x00,0x00,0x00,0x00,0x00,  // 0x6d 'm'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x3c,0x22,0x22,0x22,0x22,0x00,0x00,0x00,0x00,0x00,  // 0x6e 'n'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x1c,0x22,0x22,0x22,0x1c,0x00,0x00,0x00,0x00,0x00,  // 0x6f 'o'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x3c,0x22,0x22,0x22,0x3c,0x20,0x20,0x00,0x00,0x00,  // 0x70 'p'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x1e,0x22,0x22,0x22,0x1e,0x02,0x02,0x00,0x00,0x00,  // 0x71 'q'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x2c,0x12,0x10,0x10,0x10,0x00,0x00,0x00,0x00,0x00,  // 0x72 'r'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x1c,0x20,0x1c,0x02,0x3c,0x00,0x00,0x00,0x00,0x00,  // 0x73 's'
-	0x00,0x00,0x00,0x00,0x00,0x10,0x3c,0x10,0x10,0x10,0x0c,0x00,0x00,0x00,0x00,0x00,  // 0x74 't'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x22,0x22,0x22,0x22,0x1e,0x00,0x00,0x00,0x00,0x00,  // 0x75 'u'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x22,0x22,0x22,0x14,0x08,0x00,0x00,0x00,0x00,0x00,  // 0x76 'v'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x22,0x2a,0x2a,0x2a,0x14,0x00,0x00,0x00,0x00,0x00,  // 0x77 'w'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x22,0x14,0x08,0x14,0x22,0x00,0x00,0x00,0x00,0x00,  // 0x78 'x'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x22,0x22,0x22,0x14,0x08,0x08,0x30,0x00,0x00,0x00,  // 0x79 'y'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x3e,0x04,0x08,0x10,0x3e,0x00,0x00,0x00,0x00,0x00,  // 0x7a 'z'
-	0x00,0x00,0x00,0x04,0x08,0x08,0x08,0x10,0x08,0x08,0x08,0x04,0x00,0x00,0x00,0x00,  // 0x7b '{'
-	0x00,0x00,0x00,0x08,0x08,0x08,0x08,0x08,0x08,0x08,0x08,0x08,0x00,0x00,0x00,0x00,  // 0x7c '|'
-	0x00,0x00,0x00,0x10,0x08,0x08,0x08,0x04,0x08,0x08,0x08,0x10,0x00,0x00,0x00,0x00,  // 0x7d '}'
-	0x00,0x00,0x00,0x3e,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x7e '~'
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,  // 0x7f '.'
-};
-
-void m40_state::palette_init(palette_device &palette)
-{
-	palette.set_pen_color(0, rgb_t::black());
-	palette.set_pen_color(1, rgb_t(0xc0, 0xc0, 0xc0));   // normal
-	palette.set_pen_color(2, rgb_t(0xff, 0xff, 0xff));   // high light
-}
-
-// Provisional attribute mapping pending a full CRTAN5 decode.
-static constexpr int ATTR_HIGH_LINE  = 0;   // 0x01 line along top of cell
-static constexpr int ATTR_LOW_LINE   = 1;   // 0x02 line along bottom of cell
-static constexpr int ATTR_LEFT_LINE  = 2;   // 0x04 line down left edge
-static constexpr int ATTR_RIGHT_LINE = 3;   // 0x08 line down right edge
-static constexpr int ATTR_BLINK      = 4;   // 0x10 blink (field-rate)
-static constexpr int ATTR_HILIGHT    = 5;   // 0x20 high light (full intensity)
-static constexpr int ATTR_REVERSE    = 6;   // 0x40 reverse video
-
-MC6845_UPDATE_ROW(m40_state::crtc_update_row)
-{
-	uint32_t *p = &bitmap.pix(y);
-	rgb_t const *const pal = m_palette->palette()->entry_list_raw();
-	// Attribute blink is board logic, not an MC6845 feature.
-	bool const blink_off = BIT(m_screen->frame_number(), 4);
-	int const last_ra = m_crtc_max_ras;   // LOW LINE sits on the cell's true last scanline
-	for (int col = 0; col < x_count; col++)
-	{
-		uint16_t const cell = (ma + col) << 1;
-		uint8_t const attr = m_vram[cell & 0xffff];              // even byte = attribute
-		uint8_t const ch   = m_vram[(cell + 1) & 0xffff];        // odd byte  = character
-		uint8_t bits = (ch >= 0x20 && ch < 0x80 && ra < 16) ? s_chargen[(ch - 0x20) * 16 + ra] : 0;
-
-		// Line attributes: force pixels along the requested cell edge.
-		if (BIT(attr, ATTR_HIGH_LINE) && ra == 0)        bits = 0xff;
-		if (BIT(attr, ATTR_LOW_LINE)  && ra == last_ra)  bits = 0xff;
-		if (BIT(attr, ATTR_LEFT_LINE))                   bits |= 0x80;
-		if (BIT(attr, ATTR_RIGHT_LINE))                  bits |= 0x01;
-
-		// Blink: blank the glyph on the off phase.
-		if (BIT(attr, ATTR_BLINK) && blink_off)          bits = 0;
-
-		// Reverse video: swap foreground/background.
-		if (BIT(attr, ATTR_REVERSE))                     bits ^= 0xff;
-
-		if (col == cursor_x) bits ^= 0xff;                       // block cursor
-
-		uint8_t const fg = BIT(attr, ATTR_HILIGHT) ? 2 : 1;      // high light -> bright pen
-		for (int b = 0; b < 8; b++)
-			*p++ = pal[BIT(bits, 7 - b) ? fg : 0];
-	}
-}
-
-uint8_t m40_state::arb_r(offs_t offset)
-{
-	uint8_t const reg = offset & 0x0f;
-	if (reg == 1)
-	{
-		uint8_t const hi = (BIT(m_arb_grant, 0) ? 0x80 : 0) | (BIT(m_arb_grant, 1) ? 0x40 : 0)
-		                 | (BIT(m_arb_grant, 2) ? 0x20 : 0) | (BIT(m_arb_grant, 3) ? 0x10 : 0);
-		// Bits 0-2 indicate idle; bit 3 is VIENO or an active grant.
-		return hi | (m_arb_grant ? 0 : 0x07) | ((m_arb_vieno || m_arb_grant) ? 0x08 : 0);
-	}
-	return 0;
-}
-
-void m40_state::arb_update()
-{
-	uint8_t g = 0;
-	for (int ch = 0; ch < 4; ch++)
-		if (BIT(m_arb_req, ch) && m_arb_rel >= ch)
-			g |= (1 << ch);
-	m_arb_grant = g;
-	if (g)
-		m_arb_timer->adjust(attotime::from_usec(50));
-}
-
-void m40_state::arb_w(offs_t offset, uint8_t data)
-{
-	uint8_t const reg = offset & 0x0f;
-	switch (reg)
-	{
-	case 0x0: case 0x1: case 0x2: case 0x3:          // ack/clear channel reg
-		m_arb_req &= ~(1 << reg);
-		if (m_arb_req == 0) m_arb_rel = 0;           // idle -> reset release level
-		break;
-	case 0x8: case 0x9: case 0xa: case 0xb:          // request channel reg-8
-		m_arb_req |= (1 << (reg - 8));
-		break;
-	case 0x5: case 0xd: if (m_arb_rel < 1) m_arb_rel = 1; break;   // release ch1
-	case 0x6: case 0xe: if (m_arb_rel < 2) m_arb_rel = 2; break;   // release ch2
-	case 0x7: case 0xf: if (m_arb_rel < 3) m_arb_rel = 3; break;   // release ch3
-	default: break;                                  // 0xFF84 / 0xFF8C: boot bus gate
-	}
-	// VIENO is set by control writes and cleared by request/gate writes.
-	if (reg >= 0xc)              m_arb_vieno = true;
-	else if (reg >= 0x4 && reg <= 0x7) m_arb_vieno = false;
-	arb_update();
-}
-
-TIMER_CALLBACK_MEMBER(m40_state::arb_done)
-{
-	if (m_arb_grant)                                 // grant still pending -> raise NVI
-		m_maincpu->set_input_line(z8001_device::NVI_LINE, ASSERT_LINE);
-}
-
-uint16_t m40_state::nviack_r()
-{
-	// Vector fetch clears only the NVI line; the grant persists so the handler can
-	// still read 0xFF81, and is cleared by the per-channel ack (0xFF80..0xFF83).
-	m_maincpu->set_input_line(z8001_device::NVI_LINE, CLEAR_LINE);
-	return 0;
-}
-
-//**************************************************************************
-//  MACHINE
-//**************************************************************************
-
-void m40_state::machine_start()
-{
-	m_vram = std::make_unique<uint8_t[]>(0x10000);
-	m_ramptr = m_ram->pointer();
-	m_ramsize = m_ram->size();
-	m_arb_timer = timer_alloc(FUNC(m40_state::arb_done), this);
-#if M40_DEBUG_TRACE
-	if (char const *const path = std::getenv("M40_VRAM_TRACE"))
-		{
-			if (path[0] != '\0')
-				m_vram_trace = std::fopen(path, "w");
-		}
-		if (char const *const path = std::getenv("M40_FDU_TRACE"))
-		{
-			if (path[0] != '\0')
-				m_fdu_trace = std::fopen(path, "w");
-		}
-	#endif
-
-	// translating handlers over the whole 24-bit segmented byte space
-	// (installed on program / data / stack)
-	for (int spc : { (int)AS_PROGRAM, (int)AS_DATA, (int)z8001_device::AS_STACK })
-	{
-		address_space &s = m_maincpu->space(spc);
-		s.install_readwrite_handler(0x000000, 0x7fffff,
-			read16_delegate(*this, FUNC(m40_state::mem_r)),
-			write16_delegate(*this, FUNC(m40_state::mem_w)));
-	}
-
-	save_item(NAME(m_nmi_status));
-	save_item(NAME(m_vid_live));
-	save_item(NAME(m_crtc_index));
-	save_item(NAME(m_crtc_max_ras));
-	save_item(NAME(m_kdc_ctrl));
-	save_item(NAME(m_kdc_data));
-	save_item(NAME(m_kdc_status));
-	save_item(NAME(m_kdc_vector));
-	save_item(NAME(m_kdc_pending));
-	save_item(NAME(m_kdc_data_armed));
-	save_item(NAME(m_kbd_fifo));
-	save_item(NAME(m_kbd_head));
-	save_item(NAME(m_kbd_tail));
-	save_item(NAME(m_kbd_count));
-	save_item(NAME(m_fdc_int));
-	save_item(NAME(m_timer_int));
-	save_item(NAME(m_fdu_pending));
-	save_item(NAME(m_fdu_vector));
-}
-
-void m40_state::machine_reset()
-{
-	m_acia->write_dcd(0);
-	m_acia->write_cts(0);
-	m_acia_irq = false;
-	m_lamp = 0;
-	m_nmi_status = 0x01;   // BBU-valid clear? start with a defined value
-	m_crtc_index = 0;
-	m_kdc_ctrl = 0;
-	m_kdc_data = 0;
-	m_kdc_status = 0;
-	m_kdc_vector = 0x28;
-	m_kdc_pending = false;
-	m_kdc_data_armed = false;
-	m_kbd_head = 0;
-	m_kbd_tail = 0;
-	m_kbd_count = 0;
-	for (auto &v : m_kbd_fifo)
-		v = 0;
-	// GO280 runs at a fixed 500 kbit/s; MF selects FM or MFM.
-	m_fdc->set_rate(500000);
-	m_fdc->ready_w(false); // MFDU RDY10 pull-up; MAME external READY is inverted
+	// MAME's root RAM device supplies the -ramsize option and backing allocation;
+	// only the RAM card responds to its physical address range on the L1 bus.
+	RAM(config, RAM_TAG).set_default_size("512K").set_default_value(0)
+		.set_extra_options("128K,256K,384K,640K,768K,896K,1024K");
 }
 
 void m40_state::m40(machine_config &config)
 {
-	Z8001(config, m_maincpu, 32_MHz_XTAL / 8);   // 4 MHz (32 MHz master / 8)
-	m_maincpu->set_addrmap(AS_PROGRAM, &m40_state::mem_map);
-	m_maincpu->set_addrmap(AS_DATA, &m40_state::mem_map);
-	m_maincpu->set_addrmap(z8001_device::AS_STACK, &m40_state::mem_map);
-	m_maincpu->set_addrmap(AS_IO, &m40_state::io_map);
-	m_maincpu->set_addrmap(z8001_device::AS_SIO, &m40_state::sio_map);
-	m_maincpu->viack().set(FUNC(m40_state::vi_ack_r));   // governo VI vector (VETTN)
-	m_maincpu->nviack().set(FUNC(m40_state::nviack_r));
-	m_maincpu->segtack().set(FUNC(m40_state::segtack_r));
+	// M40 and M44 use the fourteen-position INO74 layout: CPU in position 1,
+	// first RAM module in position 2.
+	l1_backplane(config, olivetti_l1_bus_device::chassis::m40_m44);
+}
 
-	Z8010(config, m_mmu, 32_MHz_XTAL / 8);
-	// MMU violation drives the Z8001 segment-trap input.
-	m_mmu->out_segt_cb().set_inputline(m_maincpu, z8001_device::SEGT_LINE);
-
-	PIT8253(config, m_pit);
-	m_pit->set_clk<0>(32_MHz_XTAL / 16);
-	m_pit->out_handler<0>().set(m_pit, FUNC(pit8253_device::write_clk1));
-	m_pit->out_handler<1>().set(FUNC(m40_state::pit_out1_w));   // ch1 OUT -> UC timer VI (gated by VIENO)
-	m_pit->out_handler<2>().set(FUNC(m40_state::pit_out2_w));   // ch2 OUT -> ACIA TXC/RXC (baud generator)
-
-	// UC EF68B50P ACIA; TXD looped back to RXD (internal diagnostic loop).
-	ACIA6850(config, m_acia, 0);
-	m_acia->txd_handler().set(m_acia, FUNC(acia6850_device::write_rxd));
-	m_acia->irq_handler().set(FUNC(m40_state::acia_irq_w));
-	m_pit->set_clk<2>(32_MHz_XTAL / 16);
-
-	RAM(config, m_ram).set_default_size("512K").set_default_value(0)
-		.set_extra_options("128K,256K,384K,640K,768K,896K,1024K");
-
-	// GO252 video/keyboard governo
-	screen_device &screen(SCREEN(config, "screen"));
-	screen.set_refresh_hz(57);
-	screen.set_vblank_time(ATTOSECONDS_IN_USEC(2500));
-	screen.set_size(848, 442);
-	screen.set_visarea(0, 640 - 1, 0, 425 - 1);
-	screen.set_screen_update("crtc", FUNC(mc6845_device::screen_update));
-	PALETTE(config, m_palette, FUNC(m40_state::palette_init), 3);
-
-	MC6845(config, m_crtc, 32_MHz_XTAL / 12);   // ~2.67 MHz char clock (dots/char assumed 8)
-	m_crtc->set_screen("screen");
-	m_crtc->set_show_border_area(false);
-	m_crtc->set_char_width(8);
-	m_crtc->set_update_row_callback(FUNC(m40_state::crtc_update_row));
-
-	M40_KEYBOARD(config, m_keyboard, 0);
-	m_keyboard->data_handler().set(FUNC(m40_state::kdc_queue));
-
-	// GO280 floppy governo
-	M40_UPD765A(config, m_fdc, 8_MHz_XTAL);
-	// RDY10 comes from GO280 board logic, not the drive actuator interface.
-	m_fdc->set_ready_line_connected(false);
-	m_fdc->set_select_lines_connected(true);
-	m_fdc->intrq_wr_callback().set(FUNC(m40_state::fdc_intrq_w));
-	m_fdc->drq_wr_callback().set(FUNC(m40_state::fdc_drq_w));
-	m_fdc->idx_wr_callback().set(FUNC(m40_state::fdu_index_w));
-	FLOPPY_CONNECTOR(config, "fdc:0", m40_floppies, nullptr, m40_state::floppy_formats);
-	FLOPPY_CONNECTOR(config, "fdc:1", m40_floppies, "8dsdd", m40_state::floppy_formats);
-	FLOPPY_CONNECTOR(config, "fdc:2", m40_floppies, nullptr, m40_state::floppy_formats);
-	FLOPPY_CONNECTOR(config, "fdc:3", m40_floppies, nullptr, m40_state::floppy_formats);
-
-	// AM9517A channel 2 transfers FDC data.
-	AM9517A(config, m_dmac, 8_MHz_XTAL / 2);
-	m_dmac->out_hreq_callback().set(FUNC(m40_state::dma_hreq_w));
-	m_dmac->out_eop_callback().set(FUNC(m40_state::dma_eop_w));
-	m_dmac->in_memr_callback().set(FUNC(m40_state::dma_memr));
-	m_dmac->out_memw_callback().set(FUNC(m40_state::dma_memw));
-	m_dmac->in_ior_callback<2>().set(m_fdc, FUNC(m40_upd765a_device::dma_r));
-	m_dmac->out_iow_callback<2>().set(m_fdc, FUNC(m40_upd765a_device::dma_w));
-
-	// GO280 timer: channel 0 clocks channel 1; channel 2 receives FDC index.
-	PIT8253(config, m_fdu_timer);
-	m_fdu_timer->set_clk<0>(1'000'000);   // CLK10 = 1 us
-	m_fdu_timer->out_handler<0>().set(m_fdu_timer, FUNC(pit8253_device::write_clk1));
-	m_fdu_timer->out_handler<1>().set(FUNC(m40_state::fdu_timer_out));   // ch1 -> INTMO
+void m40_state::m44(machine_config &config)
+{
+	// Provisional until the UC048 and the M44 card population are emulated.
+	m40(config);
 }
 
 } // anonymous namespace
 
-// ANK1426 (US, "KUSA02") mapped onto a standard PC keyboard, 1:1 by character/
-// position wherever the PC has the key (L1 MOS Programmer Guide 7-14 Note 1);
-// combination-only rows of the official table get single-key stand-ins. The
-// digit PORT_CHARs live on the KEYPAD bits: the monitor menus read keypad
-// scancodes, so natural-keyboard/automated typing must land there. PORT_NAMEs
-// carry the M40 legend and scancode; a trailing '?' marks a hypothesis awaiting
-// the KEYTE1 TEST 3 read-off.
-INPUT_PORTS_START( m40_keyboard )
-	PORT_START("K0")  // DEL 1..0 -= ~^ BS (digit chars live on the keypad)
-	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_DEL) PORT_NAME("DEL (06)") PORT_CHAR(UCHAR_MAMEKEY(DEL))
-	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_1) PORT_NAME("1 ! (01)")
-	PORT_BIT(0x0004, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_2) PORT_NAME("2 \" (04)")
-	PORT_BIT(0x0008, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_3) PORT_NAME("3 # (07)")
-	PORT_BIT(0x0010, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_4) PORT_NAME("4 $ (17)")
-	PORT_BIT(0x0020, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_5) PORT_NAME("5 % (1D)")
-	PORT_BIT(0x0040, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_6) PORT_NAME("6 & (1E)")
-	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_7) PORT_NAME("7 ' (13)")
-	PORT_BIT(0x0100, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_8) PORT_NAME("8 ( (21)")
-	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_9) PORT_NAME("9 ) (24)")
-	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_0) PORT_NAME("0 (2E)")
-	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_MINUS) PORT_NAME("- = (2C)") PORT_CHAR('-')
-	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_EQUALS) PORT_NAME("~ ^ (2B)")
-	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_BACKSPACE) PORT_NAME("BS (31)") PORT_CHAR(8)
-	PORT_BIT(0xc000, IP_ACTIVE_HIGH, IPT_UNUSED)
-
-	PORT_START("K1")  // TAB Q..P @' [{ CLEAR RETURN
-	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_TAB) PORT_NAME("TAB (05)") PORT_CHAR(9)
-	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_Q) PORT_CHAR('q')
-	PORT_BIT(0x0004, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_W) PORT_CHAR('w')
-	PORT_BIT(0x0008, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_E) PORT_CHAR('e')
-	PORT_BIT(0x0010, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_R) PORT_CHAR('r')
-	PORT_BIT(0x0020, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_T) PORT_CHAR('t')
-	PORT_BIT(0x0040, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_Y) PORT_CHAR('y')
-	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_U) PORT_CHAR('u')
-	PORT_BIT(0x0100, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_I) PORT_CHAR('i')
-	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_O) PORT_CHAR('o')
-	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_P) PORT_CHAR('p')
-	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_TILDE) PORT_NAME("@ ' (2A)") PORT_CHAR('@')
-	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_OPENBRACE) PORT_NAME("[ { (36)") PORT_CHAR('[')
-	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F9) PORT_NAME("CLEAR (37)") PORT_CHAR(UCHAR_MAMEKEY(F9))
-	// The alpha RETURN is a plain typing key: the boot prompt and the monitor menus
-	// read the KEYPAD terminator (0x61), not this one, so char 13 lives there.
-	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER) PORT_NAME("RETURN (35)")
-	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_UNUSED)
-
-	PORT_START("K2")  // KB-MODE A..L ;+ *: ]}
-	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F11) PORT_NAME("KB MODE (02)") PORT_CHAR(UCHAR_MAMEKEY(F11))
-	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_A) PORT_CHAR('a')
-	PORT_BIT(0x0004, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_S) PORT_CHAR('s')
-	PORT_BIT(0x0008, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_D) PORT_CHAR('d')
-	PORT_BIT(0x0010, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F) PORT_CHAR('f')
-	PORT_BIT(0x0020, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_G) PORT_CHAR('g')
-	PORT_BIT(0x0040, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_H) PORT_CHAR('h')
-	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_J) PORT_CHAR('j')
-	PORT_BIT(0x0100, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_K) PORT_CHAR('k')
-	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_L) PORT_CHAR('l')
-	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_COLON) PORT_NAME("; + (2F)") PORT_CHAR(';')
-	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_QUOTE) PORT_NAME("* : (34)") PORT_CHAR(':')
-	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_CLOSEBRACE) PORT_NAME("] } (38)") PORT_CHAR(']')
-	PORT_BIT(0xe000, IP_ACTIVE_HIGH, IPT_UNUSED)
-
-	PORT_START("K3")  // SHIFT \ Z..M , . ? CONTROL SPACE
-	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_LSHIFT) PORT_CODE(KEYCODE_RSHIFT) PORT_NAME("SHIFT (6E/76)") PORT_CHAR(UCHAR_SHIFT_1)
-	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_BACKSLASH) PORT_CODE(KEYCODE_BACKSLASH2) PORT_NAME("\\ left-of-Z (0A)") PORT_CHAR('\\')
-	PORT_BIT(0x0004, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_Z) PORT_CHAR('z')
-	PORT_BIT(0x0008, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_X) PORT_CHAR('x')
-	PORT_BIT(0x0010, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_C) PORT_CHAR('c')
-	PORT_BIT(0x0020, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_V) PORT_CHAR('v')
-	PORT_BIT(0x0040, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_B) PORT_CHAR('b')
-	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_N) PORT_CHAR('n')
-	PORT_BIT(0x0100, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_M) PORT_CHAR('m')
-	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_COMMA) PORT_NAME(", (23)") PORT_CHAR(',')
-	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_STOP) PORT_NAME(". (2D)") PORT_CHAR('.')
-	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_SLASH) PORT_NAME("? (29)") PORT_CHAR('?')
-	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_LCONTROL) PORT_NAME("CONTROL (70/78)") PORT_CHAR(UCHAR_SHIFT_2)
-	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_SPACE) PORT_NAME("SPACE (12)") PORT_CHAR(' ')
-	// No LOCK key on this layout: no diagram cell carries 6F anywhere in the
-	// KEYTE1 tables (the ANK1427 WP variant has it; break code 77 stays handled).
-	PORT_BIT(0xc000, IP_ACTIVE_HIGH, IPT_UNUSED)
-
-	PORT_START("K4")  // F9/F1..F16/F8, EXIT (its cell = fn row2 pos 7), fn row2 keys
-	// (fn row2 names give the BASIC-variant keycaps as hints; the M40 KUSA02
-	// legends are unknown except EXIT)
-	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F1) PORT_NAME("F9/F1 (44)") PORT_CHAR(UCHAR_MAMEKEY(F1))
-	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F2) PORT_NAME("F10/F2 (46)") PORT_CHAR(UCHAR_MAMEKEY(F2))
-	PORT_BIT(0x0004, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F3) PORT_NAME("F11/F3 (63)") PORT_CHAR(UCHAR_MAMEKEY(F3))
-	PORT_BIT(0x0008, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F4) PORT_NAME("F12/F4 (5B)") PORT_CHAR(UCHAR_MAMEKEY(F4))
-	PORT_BIT(0x0010, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F5) PORT_NAME("F13/F5 (53)") PORT_CHAR(UCHAR_MAMEKEY(F5))
-	PORT_BIT(0x0020, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F6) PORT_NAME("F14/F6 (4B)") PORT_CHAR(UCHAR_MAMEKEY(F6))
-	PORT_BIT(0x0040, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F7) PORT_NAME("F15/F7 (56)") PORT_CHAR(UCHAR_MAMEKEY(F7))
-	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F8) PORT_NAME("F16/F8 (5A)") PORT_CHAR(UCHAR_MAMEKEY(F8))
-	PORT_BIT(0x0100, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_END) PORT_NAME("EXIT (3D)") PORT_CHAR(UCHAR_MAMEKEY(END))
-	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_RALT) PORT_NAME("\\ fn row2 (42)")
-	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F10) PORT_NAME("E^ (43)") PORT_CHAR(UCHAR_MAMEKEY(F10))
-	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F12) PORT_NAME("( (41)")
-	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_PRTSCR) PORT_NAME(") (47)")
-	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_INSERT) PORT_NAME("ERASE (48)") PORT_CHAR(UCHAR_MAMEKEY(INSERT))
-	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_SCRLOCK) PORT_NAME("LIST (54)")
-	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_PAUSE) PORT_NAME("FETCH (5C)")
-
-	PORT_START("K5")  // keypad; digit CHARs live here (menus read the keypad)
-	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ASTERISK) PORT_NAME("Keypad top-left (49)")
-	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_7_PAD) PORT_CHAR('7')
-	PORT_BIT(0x0004, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_8_PAD) PORT_CHAR('8')
-	PORT_BIT(0x0008, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_9_PAD) PORT_CHAR('9')
-	PORT_BIT(0x0010, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_MINUS_PAD) PORT_NAME("Keypad - (59)") PORT_CHAR(UCHAR_MAMEKEY(MINUS_PAD))
-	PORT_BIT(0x0020, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_4_PAD) PORT_CHAR('4')
-	PORT_BIT(0x0040, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_5_PAD) PORT_CHAR('5')
-	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_6_PAD) PORT_CHAR('6')
-	PORT_BIT(0x0100, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_DEL_PAD) PORT_NAME("Keypad . (62)") PORT_CHAR(UCHAR_MAMEKEY(DEL_PAD))
-	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_1_PAD) PORT_CHAR('1')
-	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_2_PAD) PORT_CHAR('2')
-	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_3_PAD) PORT_CHAR('3')
-	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_0_PAD) PORT_CHAR('0')
-	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_PLUS_PAD) PORT_NAME("Keypad 00 (68)")
-	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_NUMLOCK) PORT_NAME("Keypad 000 (65)")
-	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER_PAD) PORT_NAME("Keypad ENTER (61)") PORT_CHAR(13) PORT_CHAR(UCHAR_MAMEKEY(ENTER_PAD))
-
-	PORT_START("K6")  // SKIP, DEL LINE, top-right key, right 3x4 block
-	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_PGDN) PORT_NAME("SKIP tall (52)") PORT_CHAR(UCHAR_MAMEKEY(PGDN))
-	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_MENU) PORT_NAME("DEL LINE (3B)")
-	PORT_BIT(0x0004, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ESC) PORT_NAME("top-right key (39)")
-	PORT_BIT(0x0008, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_RCONTROL) PORT_NAME("RES (51)")
-	PORT_BIT(0x0010, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_HOME) PORT_NAME("|<- back-tab (4C)") PORT_CHAR(UCHAR_MAMEKEY(HOME))
-	PORT_BIT(0x0020, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_PGUP) PORT_NAME("->| tab (3A)") PORT_CHAR(UCHAR_MAMEKEY(PGUP))
-	PORT_BIT(0x0040, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_SLASH_PAD) PORT_NAME("AUTO# (5E)")
-	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_UP) PORT_NAME("Up (4E)") PORT_CHAR(UCHAR_MAMEKEY(UP))
-	PORT_BIT(0x0100, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_DOWN) PORT_NAME("Down (3C)") PORT_CHAR(UCHAR_MAMEKEY(DOWN))
-	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_LEFT) PORT_NAME("Left (4A)") PORT_CHAR(UCHAR_MAMEKEY(LEFT))
-	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_RIGHT) PORT_NAME("Right (3E)") PORT_CHAR(UCHAR_MAMEKEY(RIGHT))
-	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_LWIN) PORT_NAME("OLD (66)")
-	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_RWIN) PORT_NAME("RUN (64)")
-	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_LALT) PORT_NAME("DRAW (40)")
-	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_CAPSLOCK) PORT_NAME("PR ALL/NO PR (3F)")
-	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_UNUSED)
-INPUT_PORTS_END
 
 namespace {
 
@@ -1597,12 +164,12 @@ namespace {
 //**************************************************************************
 
 ROM_START( m40 )
-	ROM_REGION16_BE( 0x4000, "maincpu", 0 )
+	ROM_REGION16_BE( 0x4000, "cpu:uc042:maincpu", 0 )
 	ROM_LOAD( "m40rom-6.0.bin", 0x0000, 0x4000, CRC(8114ebec) SHA1(4e2c65b95718c77a87dbee0288f323bd1c8837a3) )
 ROM_END
 
 ROM_START( m44 )
-	ROM_REGION16_BE( 0x14000, "maincpu", 0 ) // 14 MAR. 86 REL B.1
+	ROM_REGION16_BE( 0x14000, "cpu:uc042:maincpu", 0 ) // 14 MAR. 86 REL B.1
 	ROM_LOAD16_BYTE( "pd30.128.c06", 0x0000, 0x4000, CRC(8155dc69) SHA1(ed65f842e2857ad10170c697d945745fd7d47f9c) )
 	ROM_LOAD16_BYTE( "pd29.128.a06", 0x0001, 0x4000, CRC(74d7de4b) SHA1(dd3a69ff29a2f1292f3a7db73bd2447bd664e54b) )
 
@@ -1614,4 +181,4 @@ ROM_END
 
 //    YEAR  NAME  PARENT  COMPAT  MACHINE  INPUT  CLASS      INIT        COMPANY     FULLNAME           FLAGS
 COMP( 1982, m40,  0,      0,      m40,     0,     m40_state, empty_init, "Olivetti", "M40 (L1)",        MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
-COMP( 1986, m44,  0,      0,      m40,     0,     m40_state, empty_init, "Olivetti", "Olivetti L1 M44", MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
+COMP( 1986, m44,  0,      0,      m44,     0,     m40_state, empty_init, "Olivetti", "Olivetti L1 M44", MACHINE_NOT_WORKING | MACHINE_NO_SOUND )
