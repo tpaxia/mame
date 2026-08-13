@@ -5,6 +5,7 @@
 #include "go280.h"
 
 #include "formats/imd_dsk.h"
+#include "formats/td0_dsk.h"
 
 class go280_upd765a_device;
 DECLARE_DEVICE_TYPE(GO280_UPD765A, go280_upd765a_device)
@@ -24,17 +25,40 @@ public:
 		map(0x1, 0x1).rw(FUNC(go280_upd765a_device::fifo_r), FUNC(go280_upd765a_device::fifo_w));
 	}
 
-	virtual void soft_reset() override
+	void reset_w(int state)
 	{
-		upd765_family_device::soft_reset();
-		for (floppy_info &fi : flopi)
+		bool const was_reset = !BIT(dor, 2);
+		upd765_family_device::reset_w(state);
+
+		if (was_reset && !state)
 		{
-			fi.pcn = 0;
-			fi.st0 = ST0_ABRT | fi.id;
-			fi.st0_filled = true;
+			// Reset release produces four completion statuses, one for each drive.
+			for (floppy_info &fi : flopi)
+			{
+				fi.pcn = 0;
+				fi.st0 = ST0_ABRT | fi.id;
+				fi.st0_filled = true;
+			}
+			irq = true;
+			check_irq();
 		}
-		irq = true;
-		check_irq();
+	}
+
+	bool write_gate() const
+	{
+		switch (cur_live.state)
+		{
+		case WRITE_SECTOR_DATA:
+		case WRITE_SECTOR_DATA_BYTE:
+		case WRITE_TRACK_PRE_SECTORS:
+		case WRITE_TRACK_PRE_SECTORS_BYTE:
+		case WRITE_TRACK_SECTOR:
+		case WRITE_TRACK_SECTOR_BYTE:
+		case WRITE_TRACK_POST_SECTORS:
+		case WRITE_TRACK_POST_SECTORS_BYTE:
+			return true;
+		}
+		return false;
 	}
 };
 
@@ -143,7 +167,7 @@ u8 olivetti_l1_go280_device::io_r(offs_t offset)
 			| ((m_fdc_latched || m_fdc_interrupt) ? 0x02 : 0);
 		break;
 	case 0xff: data = 0xe1; break;
-	case 0xed: data = 0xff; break;
+	case 0xed: data = 0xfe | (downcast<go280_upd765a_device &>(*m_fdc).write_gate() ? 0x01 : 0x00); break;
 	default: data = 0xff; break;
 	}
 	trace(TRACE_IO_R, reg, data);
@@ -182,7 +206,7 @@ void olivetti_l1_go280_device::io_w(offs_t offset, u8 data)
 		break;
 	case 0xe7:
 		m_interrupt_enable = BIT(data, 0);
-		m_fdc->reset_w(BIT(data, 1) ? 0 : 1);
+		downcast<go280_upd765a_device &>(*m_fdc).reset_w(BIT(data, 1) ? 0 : 1);
 		m_fdc->ready_w(false);
 		for (auto &connector : m_floppy)
 			if (floppy_image_device *const floppy = connector->get_device())
@@ -296,6 +320,7 @@ u16 olivetti_l1_go280_device::viack_r()
 void olivetti_l1_go280_device::floppy_formats(format_registration &fr)
 {
 	fr.add(FLOPPY_IMD_FORMAT);
+	fr.add(FLOPPY_TD0_FORMAT);
 }
 
 

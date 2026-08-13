@@ -6519,6 +6519,8 @@ if BUSES["OLIVETTI_L1"] then
 		MAME_DIR .. "src/devices/bus/olivetti_l1/go252.h",
 		MAME_DIR .. "src/devices/bus/olivetti_l1/go280.cpp",
 		MAME_DIR .. "src/devices/bus/olivetti_l1/go280.h",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/go363.cpp",
+		MAME_DIR .. "src/devices/bus/olivetti_l1/go363.h",
 		MAME_DIR .. "src/devices/bus/olivetti_l1/keyboard.cpp",
 		MAME_DIR .. "src/devices/bus/olivetti_l1/keyboard.h",
 		MAME_DIR .. "src/devices/bus/olivetti_l1/l1.cpp",

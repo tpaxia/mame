@@ -25,7 +25,20 @@ olivetti_l1_uc042_device::olivetti_l1_uc042_device(machine_config const &mconfig
 	, m_acia(*this, "acia")
 	, m_earom_nvram(*this, "earom")
 	, m_rom(*this, "maincpu")
+	, m_isl(*this, "ISL")
 {
+}
+
+static INPUT_PORTS_START(uc042)
+	PORT_START("ISL")
+	PORT_CONFNAME(0x02, 0x02, "Console IPL Switch")
+	PORT_CONFSETTING(0x02, "ISL1 - Hard Disk")
+	PORT_CONFSETTING(0x00, "ISL2 - Floppy Disk")
+INPUT_PORTS_END
+
+ioport_constructor olivetti_l1_uc042_device::device_input_ports() const
+{
+	return INPUT_PORTS_NAME(uc042);
 }
 
 void olivetti_l1_uc042_device::device_add_mconfig(machine_config &config)
@@ -336,7 +349,7 @@ void olivetti_l1_uc042_device::console_w(u8 data)
 u8 olivetti_l1_uc042_device::nmi_status_r()
 {
 	// bit 0 BBU-valid, bit 1 ISL, bit 4 timer OUT1, bit 6 READY and bit 7 NMI cause
-	return m_nmi_status | (m_timer_out1 ? 0x10 : 0x00);
+	return (m_nmi_status & ~0x02) | m_isl->read() | (m_timer_out1 ? 0x10 : 0x00);
 }
 
 void olivetti_l1_uc042_device::nmi_ack_w(u8 data)
@@ -528,6 +541,7 @@ void olivetti_l1_uc042_device::arb_w(offs_t offset, u8 data)
 	else if (reg >= 0x4 && reg <= 0x7)
 		m_arb_vieno = false;
 	arb_update();
+	update_vi();
 }
 
 TIMER_CALLBACK_MEMBER(olivetti_l1_uc042_device::arb_done)
