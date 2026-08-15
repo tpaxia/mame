@@ -138,6 +138,8 @@ protected:
 
 	void vi_w(int state) { bus().vi_w(m_select, state); }
 	void busreq_w(int state) { bus().busreq_w(m_select, state); }
+	bool physical_try_r(offs_t address, u8 &data) { return bus().memory_r(address, data); }
+	bool physical_try_w(offs_t address, u8 data) { return bus().memory_w(address, data); }
 	u8 physical_r(offs_t address) { return bus().physical_r(address); }
 	void physical_w(offs_t address, u8 data) { bus().physical_w(address, data); }
 
