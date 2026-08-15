@@ -48,7 +48,7 @@ public:
 	virtual void io_w(offs_t offset, u8 data) override;
 	virtual u16 viack_r() override;
 	virtual olivetti_l1_bus_device::interrupt_level vi_level() const override { return olivetti_l1_bus_device::interrupt_level::l2; }
-	virtual void bus_grant_w(int state) override { m_dmac->hack_w(state); }
+	virtual void bus_grant_w(int state) override;
 
 protected:
 	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
@@ -60,13 +60,17 @@ private:
 	void fdc_drq_w(int state);
 	void fdu_timer_out(int state);
 	void fdu_index_w(int state);
+	void fdu_head_load_w(int state);
 	void dma_hreq_w(int state);
 	void dma_eop_w(int state);
 	void dma_dack1_w(int state);
 	void dma_dack2_w(int state);
+	TIMER_CALLBACK_MEMBER(dma_channel1_request);
+	TIMER_CALLBACK_MEMBER(dma_channel1_clear);
 	u8 dma_fdc_r();
 	void dma_fdc_w(u8 data);
-	u32 dma_phys();
+	u32 dma_phys(u16 word_address, unsigned byte);
+	void dma_memory_fault();
 	u8 dma_memr(offs_t offset);
 	void dma_memw(offs_t offset, u8 data);
 	void update_vi();
@@ -93,10 +97,17 @@ private:
 	bool m_dma_flipflop = false;
 	bool m_fdc_drq = false;
 	bool m_fdc_index = false;
+	bool m_fdc_head_load = false;
 	bool m_dma_fdc_cycle = false;
+	bool m_dma_eop = false;
 	s8 m_dma_channel = -1;
+	std::array<u8, 4> m_dma_mode{};
+	std::array<u8, 2> m_dma_buffer{};
+	u8 m_dma_buffer_pos = 0;
 	u32 m_dma_byte = 0;
 	u32 m_last_dma_address = 0;
+	bool m_fumeo = false;
+	bool m_perro = false;
 };
 
 DECLARE_DEVICE_TYPE(OLIVETTI_L1_GO280, olivetti_l1_go280_device)

@@ -60,6 +60,13 @@ public:
 		}
 		return false;
 	}
+
+protected:
+	virtual void command_end(floppy_info &fi, bool data_completion) override
+	{
+		hdl_cb(0);
+		upd765_family_device::command_end(fi, data_completion);
+	}
 };
 
 DEFINE_DEVICE_TYPE(GO280_UPD765A, go280_upd765a_device, "go280_upd765a", "Olivetti GO280 uPD765A FDC")
@@ -84,10 +91,11 @@ olivetti_l1_go280_device::olivetti_l1_go280_device(machine_config const &mconfig
 void olivetti_l1_go280_device::device_add_mconfig(machine_config &config)
 {
 	GO280_UPD765A(config, m_fdc, 8_MHz_XTAL);
-	m_fdc->set_ready_line_connected(false);
+	m_fdc->set_ready_line_connected(true);
 	m_fdc->set_select_lines_connected(true);
 	m_fdc->intrq_wr_callback().set(FUNC(olivetti_l1_go280_device::fdc_intrq_w));
 	m_fdc->drq_wr_callback().set(FUNC(olivetti_l1_go280_device::fdc_drq_w));
+	m_fdc->hdl_wr_callback().set(FUNC(olivetti_l1_go280_device::fdu_head_load_w));
 	m_fdc->idx_wr_callback().set(FUNC(olivetti_l1_go280_device::fdu_index_w));
 	FLOPPY_CONNECTOR(config, "fdc:0", go280_floppies, "8dsdd", olivetti_l1_go280_device::floppy_formats);
 	FLOPPY_CONNECTOR(config, "fdc:1", go280_floppies, "8dsdd", olivetti_l1_go280_device::floppy_formats);
@@ -126,10 +134,17 @@ void olivetti_l1_go280_device::device_start()
 	save_item(NAME(m_dma_flipflop));
 	save_item(NAME(m_fdc_drq));
 	save_item(NAME(m_fdc_index));
+	save_item(NAME(m_fdc_head_load));
 	save_item(NAME(m_dma_fdc_cycle));
+	save_item(NAME(m_dma_eop));
 	save_item(NAME(m_dma_channel));
+	save_item(NAME(m_dma_mode));
+	save_item(NAME(m_dma_buffer));
+	save_item(NAME(m_dma_buffer_pos));
 	save_item(NAME(m_dma_byte));
 	save_item(NAME(m_last_dma_address));
+	save_item(NAME(m_fumeo));
+	save_item(NAME(m_perro));
 }
 
 
@@ -148,13 +163,23 @@ void olivetti_l1_go280_device::device_reset()
 	m_dma_flipflop = false;
 	m_fdc_drq = false;
 	m_fdc_index = false;
+	m_fdc_head_load = false;
 	m_dma_fdc_cycle = false;
+	m_dma_eop = false;
 	m_dma_channel = -1;
+	m_dma_mode.fill(0);
+	m_dma_buffer.fill(0);
+	m_dma_buffer_pos = 0;
 	m_dma_byte = 0;
 	m_last_dma_address = 0;
+	m_fumeo = false;
+	m_perro = false;
 	m_fdc->set_rate(500000);
-	m_fdc->ready_w(false);
+	m_fdc->set_ready_line_connected(true);
 	m_dmac->dreq1_w(0);
+	m_dmac->hack_w(1);
+	m_dmac->ready_w(1);
+	busreq_w(0);
 	update_vi();
 }
 
@@ -177,13 +202,18 @@ u8 olivetti_l1_go280_device::io_r(offs_t offset)
 	case 0x1f: data = m_fdc->fifo_r(); break;
 	case 0xe7:
 		// Reading VERFN presets the write-DMA sequencer.  SCRVO gates DRQ1;
-		// channel 1 supplies the memory address without transferring data.
+		// channel 1 fetches the first memory word for a disk write.  Disk reads
+		// begin with channel 2 filling the two board buffers.
+		m_dma_buffer_pos = 0;
+		m_dma_byte = 0;
 		m_dmac->dreq1_w(BIT(m_control, 6));
 		data = 0xff;
 		break;
 	case 0xf7:
 		data = ((m_timer_latched || m_timer_interrupt) ? 0x01 : 0)
-			| ((m_fdc_latched || m_fdc_interrupt) ? 0x02 : 0);
+			| ((m_fdc_latched || m_fdc_interrupt) ? 0x02 : 0)
+			| (m_perro ? 0x04 : 0)
+			| (m_fumeo ? 0x08 : 0);
 		break;
 	case 0xff: data = 0xe1; break;
 	case 0xed:
@@ -209,6 +239,8 @@ void olivetti_l1_go280_device::io_w(offs_t offset, u8 data)
 	{
 		if (reg == 0x58)
 			m_dma_flipflop = false;
+		else if (reg == 0x56)
+			m_dma_mode[data & 3] = data;
 		else if (reg == 0x44)
 		{
 			if (!m_dma_flipflop)
@@ -232,15 +264,28 @@ void olivetti_l1_go280_device::io_w(offs_t offset, u8 data)
 		m_fdc->fifo_w(data);
 		break;
 	case 0xe7:
+		{
+		bool const was_enabled = m_interrupt_enable;
 		m_control = data;
 		m_interrupt_enable = BIT(data, 0);
 		downcast<go280_upd765a_device &>(*m_fdc).reset_w(BIT(data, 1) ? 0 : 1);
-		m_fdc->ready_w(false);
+		bool const diagnostic = BIT(data, 4);
+		if (!BIT(data, 1))
+			m_fdc_head_load = false;
+		m_fdc->set_ready_line_connected(!diagnostic);
+		if (diagnostic)
+			m_fdc->ready_w(false);
+		m_timer->write_clk2(m_fdc_index && m_fdc_head_load);
 		for (auto &connector : m_floppy)
 			if (floppy_image_device *const floppy = connector->get_device())
+				// GO280 is configured for 1 MB FDU drives; their spindle motors
+				// run continuously, unlike the MOTO1/MOTO2-controlled MFDU case.
 				floppy->mon_w(0);
+		if (!was_enabled && m_interrupt_enable && (m_fdc_latched || m_timer_latched || m_fumeo || m_perro))
+			m_pending = true;
 		update_vi();
 		break;
+		}
 	case 0xef:
 		m_vector = data;
 		break;
@@ -250,6 +295,8 @@ void olivetti_l1_go280_device::io_w(offs_t offset, u8 data)
 	case 0xff:
 		m_fdc_latched = false;
 		m_timer_latched = false;
+		m_fumeo = false;
+		m_perro = false;
 		m_pending = false;
 		update_vi();
 		break;
@@ -262,8 +309,9 @@ void olivetti_l1_go280_device::fdc_intrq_w(int state)
 {
 	if (state && !m_fdc_interrupt)
 	{
-		m_pending = true;
 		m_fdc_latched = true;
+		if (m_interrupt_enable)
+			m_pending = true;
 	}
 	m_fdc_interrupt = bool(state);
 	trace(TRACE_FDC_INT, 0, state ? 1 : 0);
@@ -282,8 +330,9 @@ void olivetti_l1_go280_device::fdu_timer_out(int state)
 {
 	if (state && !m_timer_interrupt)
 	{
-		m_pending = true;
 		m_timer_latched = true;
+		if (m_interrupt_enable)
+			m_pending = true;
 	}
 	m_timer_interrupt = bool(state);
 	trace(TRACE_TIMER, 0, state ? 1 : 0);
@@ -294,30 +343,55 @@ void olivetti_l1_go280_device::fdu_timer_out(int state)
 void olivetti_l1_go280_device::fdu_index_w(int state)
 {
 	m_fdc_index = bool(state);
-	m_timer->write_clk2(state);
+	m_timer->write_clk2(state && m_fdc_head_load);
 	trace(TRACE_INDEX, 0, state ? 1 : 0);
+}
+
+
+void olivetti_l1_go280_device::fdu_head_load_w(int state)
+{
+	m_fdc_head_load = bool(state);
+	m_timer->write_clk2(m_fdc_index && m_fdc_head_load);
 }
 
 
 void olivetti_l1_go280_device::dma_hreq_w(int state)
 {
-	busreq_w(state);
+	// GO280 loops AM9517 HRQ back to HACK.  The gate array requests the
+	// system bus separately, and only for the channel-1 memory-word cycle.
 }
 
 
 void olivetti_l1_go280_device::dma_eop_w(int state)
 {
+	m_dma_eop = bool(state);
 	if (m_dma_fdc_cycle)
 		m_fdc->tc_w(state);
 }
 
 
+void olivetti_l1_go280_device::bus_grant_w(int state)
+{
+	if (m_dma_channel == 1 && state)
+		m_dmac->ready_w(1);
+}
+
+
 void olivetti_l1_go280_device::dma_dack1_w(int state)
 {
-	if (!state)
+	if (!state && m_dma_channel != 1)
+	{
 		m_dma_channel = 1;
+		machine().scheduler().synchronize(timer_expired_delegate(FUNC(olivetti_l1_go280_device::dma_channel1_clear), this));
+		m_dmac->ready_w(0);
+		busreq_w(1);
+	}
 	else if (m_dma_channel == 1)
+	{
 		m_dma_channel = -1;
+		busreq_w(0);
+		m_dmac->ready_w(1);
+	}
 }
 
 
@@ -326,6 +400,7 @@ void olivetti_l1_go280_device::dma_dack2_w(int state)
 	if (!state)
 	{
 		m_dma_channel = 2;
+		m_dmac->ready_w(1);
 		// A software request is sufficient to exercise the AM9517 registers,
 		// but only an FDC request enables the GO280 data-transfer gates.
 		m_dma_fdc_cycle = m_fdc_drq;
@@ -335,6 +410,18 @@ void olivetti_l1_go280_device::dma_dack2_w(int state)
 		m_dma_channel = -1;
 		m_dma_fdc_cycle = false;
 	}
+}
+
+
+TIMER_CALLBACK_MEMBER(olivetti_l1_go280_device::dma_channel1_request)
+{
+	m_dmac->dreq1_w(1);
+}
+
+
+TIMER_CALLBACK_MEMBER(olivetti_l1_go280_device::dma_channel1_clear)
+{
+	m_dmac->dreq1_w(0);
 }
 
 
@@ -351,20 +438,77 @@ void olivetti_l1_go280_device::dma_fdc_w(u8 data)
 }
 
 
-u32 olivetti_l1_go280_device::dma_phys()
+u32 olivetti_l1_go280_device::dma_phys(u16 word_address, unsigned byte)
 {
-	u32 const base = ((u32(m_dma_high) << 16) | m_dma_channel1) << 1;
-	m_last_dma_address = (base + m_dma_byte++) & 0xffffff;
+	u32 const base = ((u32(m_dma_high) << 16) | word_address) << 1;
+	m_last_dma_address = (base + byte) & 0xffffff;
 	return m_last_dma_address;
+}
+
+
+void olivetti_l1_go280_device::dma_memory_fault()
+{
+	m_fumeo = true;
+	if (m_interrupt_enable)
+		m_pending = true;
+	m_fdc->tc_w(1);
+	update_vi();
 }
 
 
 u8 olivetti_l1_go280_device::dma_memr(offs_t offset)
 {
-	if (m_dma_channel == 2 && m_dma_fdc_cycle)
+	if (m_dma_channel == 1)
 	{
-		u8 const data = physical_r(dma_phys());
-		trace(TRACE_DMA_R, 0, data);
+		u16 const word_address = offset;
+		bool const disk_write = BIT(m_control, 6);
+		for (unsigned byte = 0; byte < 2; byte++)
+		{
+			u32 const address = dma_phys(word_address, byte);
+			if (disk_write)
+			{
+				u8 data;
+				if (!physical_try_r(address, data))
+					dma_memory_fault();
+				else
+				{
+					m_dma_buffer[byte] = data;
+					trace(TRACE_DMA_R, 0, data);
+				}
+			}
+			else
+			{
+				if (!physical_try_w(address, m_dma_buffer[byte]))
+					dma_memory_fault();
+				else
+					trace(TRACE_DMA_W, 0, m_dma_buffer[byte]);
+			}
+		}
+
+		bool const decrement = BIT(m_dma_mode[1], 5);
+		if (decrement && word_address == 0x0000)
+			--m_dma_high;
+		else if (!decrement && word_address == 0xffff)
+			++m_dma_high;
+		m_dma_channel1 = decrement ? word_address - 1 : word_address + 1;
+		m_dma_buffer_pos = 0;
+		m_dma_byte += 2;
+		// REQ00/BAXXN cover this memory-word transaction, not the complete
+		// internal AM9517 channel-1 acknowledge interval.
+		busreq_w(0);
+		return 0xff;
+	}
+	else if (m_dma_channel == 2 && m_dma_fdc_cycle)
+	{
+		u8 const data = m_dma_buffer[m_dma_buffer_pos++];
+		if (m_dma_buffer_pos == 2)
+		{
+			m_dma_buffer_pos = 0;
+			// A write starts with a channel-1 prefetch, so terminal count
+			// suppresses the otherwise superfluous next-word request.
+			if (!m_dma_eop)
+				machine().scheduler().synchronize(timer_expired_delegate(FUNC(olivetti_l1_go280_device::dma_channel1_request), this));
+		}
 		return data;
 	}
 	return 0xff;
@@ -375,8 +519,13 @@ void olivetti_l1_go280_device::dma_memw(offs_t offset, u8 data)
 {
 	if (m_dma_channel == 2 && m_dma_fdc_cycle)
 	{
-		physical_w(dma_phys(), data);
-		trace(TRACE_DMA_W, 0, data);
+		m_dma_buffer[m_dma_buffer_pos++] = data;
+		if (m_dma_buffer_pos == 2)
+		{
+			m_dma_buffer_pos = 0;
+			// A read commits every complete word, including the final pair.
+			machine().scheduler().synchronize(timer_expired_delegate(FUNC(olivetti_l1_go280_device::dma_channel1_request), this));
+		}
 	}
 }
 
