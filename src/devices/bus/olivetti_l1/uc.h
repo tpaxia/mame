@@ -51,8 +51,8 @@ private:
 	void mem_map(address_map &map) ATTR_COLD { }
 	void io_map(address_map &map) ATTR_COLD;
 	void sio_map(address_map &map) ATTR_COLD;
-	u16 l1_io_r(offs_t offset, u16 mem_mask = ~0) { return bus().io_r(offset, mem_mask); }
-	void l1_io_w(offs_t offset, u16 data, u16 mem_mask = ~0) { bus().io_w(offset, data, mem_mask); }
+	u16 l1_io_r(offs_t offset, u16 mem_mask = ~0);
+	void l1_io_w(offs_t offset, u16 data, u16 mem_mask = ~0);
 
 	u16 mem_r(address_space &space, offs_t offset, u16 mem_mask);
 	void mem_w(address_space &space, offs_t offset, u16 data, u16 mem_mask);
@@ -103,6 +103,7 @@ private:
 	void debug_fdu(char const *event, u8 reg, u8 data);
 	void debug_diag_w(offs_t logical, offs_t physical, u16 data, u16 mem_mask);
 	void debug_pc_ctx(char const *event);
+	void debug_cpu_trace(bool ifetch1, bool translated, offs_t logical, offs_t physical, u16 opcode);
 
 	required_device<z8001_device> m_cpu;
 	required_device<z8010_device> m_mmu;
@@ -135,6 +136,12 @@ private:
 
 	std::FILE *m_vram_trace = nullptr;
 	std::FILE *m_fdu_trace = nullptr;
+	std::FILE *m_cpu_trace = nullptr;
+	bool m_cpu_trace_armed = false;
+	u32 m_cpu_trace_count = 0;
+	u32 m_cpu_trace_start = 0x003c0ce0;
+	u32 m_cpu_trace_prev_pc = 0xffffffff;
+	bool m_cpu_trace_bad_segment_zero = false;
 };
 
 DECLARE_DEVICE_TYPE(OLIVETTI_L1_UC042, olivetti_l1_uc042_device)

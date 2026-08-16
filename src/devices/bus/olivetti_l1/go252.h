@@ -55,7 +55,6 @@ private:
 	devcb_write8 m_crtc_write_cb;
 
 	std::unique_ptr<u8[]> m_vram;
-	bool m_vid_live = false;
 	u8 m_crtc_index = 0;
 	u8 m_crtc_max_ras = 16;
 	u8 m_kdc_ctrl = 0;

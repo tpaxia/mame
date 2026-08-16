@@ -79,6 +79,11 @@ void olivetti_l1_uc042_device::device_start()
 		m_vram_trace = std::fopen(path, "w");
 	if (char const *const path = std::getenv("M40_FDU_TRACE"); path && path[0])
 		m_fdu_trace = std::fopen(path, "w");
+	if (char const *const path = std::getenv("M40_CPU_TRACE"); path && path[0])
+		m_cpu_trace = std::fopen(path, "w");
+	if (char const *const start = std::getenv("M40_CPU_TRACE_START"); start && start[0])
+		m_cpu_trace_start = std::strtoul(start, nullptr, 16);
+	m_cpu_trace_bad_segment_zero = std::getenv("M40_CPU_TRACE_BAD_SEG0") != nullptr;
 
 	for (int const spacenum : { int(AS_PROGRAM), int(AS_DATA), int(z8001_device::AS_STACK) })
 	{
@@ -118,6 +123,9 @@ void olivetti_l1_uc042_device::device_reset()
 	m_kdc_status = 0;
 	m_suppress_enabled = true;
 	m_timer_pending = false;
+	m_cpu_trace_armed = false;
+	m_cpu_trace_count = 0;
+	m_cpu_trace_prev_pc = 0xffffffff;
 	m_timer_out1 = false;
 	m_viol_pc = 0xffffffff;
 	m_arb_req = 0;
@@ -235,10 +243,12 @@ u16 olivetti_l1_uc042_device::mem_r(address_space &space, offs_t offset, u16 mem
 {
 	offs_t address = offset << 1;
 	offs_t const logical = address;
+	bool const ifetch1 = space.spacenum() == AS_PROGRAM && m_cpu->is_ifetch1();
 	// SUP suppresses the violating transfer and subsequent data accesses through
 	// the end of the instruction.  A first-word fetch releases it in xlate().
 	if (!xlate(space.spacenum(), false, address))
 	{
+		debug_cpu_trace(ifetch1, false, logical, address, 0x8d07);
 		if (m_suppress_enabled)
 			m_viol_pc = m_cpu->pc();
 		return space.spacenum() == AS_PROGRAM ? 0x8d07 : 0xffff; // instruction violation becomes NOP
@@ -282,6 +292,13 @@ u16 olivetti_l1_uc042_device::mem_r(address_space &space, offs_t offset, u16 mem
 		}
 	}
 	u16 const data = physical_word_r(address, mem_mask);
+	debug_cpu_trace(ifetch1, true, logical, address, data);
+	if (m_cpu_trace && m_cpu->pc() >= 0x003c07a0 && m_cpu->pc() <= 0x003c07a4)
+	{
+		std::fprintf(m_cpu_trace, "ORIGIN pc=%08X space=%d log=%06X phys=%06X data=%04X mask=%04X\n",
+			unsigned(m_cpu->pc()), space.spacenum(), unsigned(logical), unsigned(address), data, mem_mask);
+		std::fflush(m_cpu_trace);
+	}
 	if (m_fdu_trace && space.spacenum() != AS_PROGRAM && m_cpu->state_int(Z8000_R2) == 0x1a00)
 	{
 		u32 const pc = m_cpu->pc();
@@ -366,6 +383,23 @@ void olivetti_l1_uc042_device::console_w(u8 data)
 	osd_printf_info("[M40 console] code = 0x%02X (%d)\n", data, data);
 }
 
+u16 olivetti_l1_uc042_device::l1_io_r(offs_t offset, u16 mem_mask)
+{
+	u16 const data = bus().io_r(offset, mem_mask);
+	if (m_fdu_trace && BIT(offset << 1, 12, 4) == 1)
+		std::fprintf(m_fdu_trace, "GO252 R pc=%08X reg=%02X data=%04X mask=%04X\n", unsigned(m_cpu->pc()),
+			unsigned((offset << 1) & 0xff), data, mem_mask);
+	return data;
+}
+
+void olivetti_l1_uc042_device::l1_io_w(offs_t offset, u16 data, u16 mem_mask)
+{
+	if (m_fdu_trace && BIT(offset << 1, 12, 4) == 1)
+		std::fprintf(m_fdu_trace, "GO252 W pc=%08X reg=%02X data=%04X mask=%04X\n", unsigned(m_cpu->pc()),
+			unsigned((offset << 1) & 0xff), data, mem_mask);
+	bus().io_w(offset, data, mem_mask);
+}
+
 u8 olivetti_l1_uc042_device::nmi_status_r()
 {
 	// bit 0 BBU-valid, bit 1 ISL, bit 4 timer OUT1, bit 6 READY and bit 7 NMI cause
@@ -399,12 +433,18 @@ u8 olivetti_l1_uc042_device::keyboard_status_r()
 {
 	// Overlay the GO252 byte-ready indications on the real 6850 status.
 	olivetti_l1_go252_device *const video = video_card();
-	return m_acia->status_r() | ((video && video->keyboard_data_available()) ? 0x05 : 0x00);
+	u8 const data = m_acia->status_r() | ((video && video->keyboard_data_available()) ? 0x05 : 0x00);
+	if (m_fdu_trace)
+		std::fprintf(m_fdu_trace, "KDC STATUS R pc=%08X data=%02X fifo=%d acia_irq=%d\n", unsigned(m_cpu->pc()), data,
+			video && video->keyboard_data_available(), m_acia_irq);
+	return data;
 }
 
 void olivetti_l1_uc042_device::keyboard_status_w(u8 data)
 {
 	m_kdc_status = data;
+	if (m_fdu_trace)
+		std::fprintf(m_fdu_trace, "KDC STATUS W pc=%08X data=%02X\n", unsigned(m_cpu->pc()), data);
 	m_acia->control_w(data);
 }
 
@@ -413,7 +453,11 @@ u8 olivetti_l1_uc042_device::keyboard_data_r()
 	// Keyboard bytes take precedence; otherwise preserve the 6850 loopback used
 	// by the UC3003 ACIA test.
 	olivetti_l1_go252_device *const video = video_card();
-	return (video && video->keyboard_data_available()) ? video->keyboard_data_r() : m_acia->data_r();
+	u8 const data = (video && video->keyboard_data_available()) ? video->keyboard_data_r() : m_acia->data_r();
+	if (m_fdu_trace)
+		std::fprintf(m_fdu_trace, "KDC DATA R pc=%08X data=%02X fifo=%d\n", unsigned(m_cpu->pc()), data,
+			video && video->keyboard_data_available());
+	return data;
 }
 
 void olivetti_l1_uc042_device::keyboard_data_w(u8 data)
@@ -422,6 +466,8 @@ void olivetti_l1_uc042_device::keyboard_data_w(u8 data)
 	// needs the transmitted byte for its diagnostic loopback.
 	if (olivetti_l1_go252_device *const video = video_card())
 		video->keyboard_data_w(data);
+	if (m_fdu_trace)
+		std::fprintf(m_fdu_trace, "KDC DATA W pc=%08X data=%02X\n", unsigned(m_cpu->pc()), data);
 	m_acia->data_w(data);
 }
 
@@ -640,6 +686,40 @@ void olivetti_l1_uc042_device::debug_pc_ctx(char const *event)
 		std::fprintf(m_fdu_trace, " r%d=%04X", reg, unsigned(m_cpu->state_int(Z8000_R0 + reg)));
 	std::fputc('\n', m_fdu_trace);
 	std::fflush(m_fdu_trace);
+}
+
+void olivetti_l1_uc042_device::debug_cpu_trace(bool ifetch1, bool translated, offs_t logical, offs_t physical, u16 opcode)
+{
+	if (!m_cpu_trace || !ifetch1)
+		return;
+
+	u32 const pc = m_cpu->pc();
+	if (!m_cpu_trace_armed)
+	{
+		bool const bad_segment_zero = (!(pc >> 16) && (pc & 0xffff) >= 0x4000)
+			|| (m_cpu->state_int(Z8000_R0) == 0xa000 && m_cpu->state_int(Z8000_R12) == 0x0004
+				&& m_cpu->state_int(Z8000_R13) == 0xa718);
+		if (pc != m_cpu_trace_start && !(m_cpu_trace_bad_segment_zero && bad_segment_zero))
+		{
+			m_cpu_trace_prev_pc = pc;
+			return;
+		}
+		m_cpu_trace_armed = true;
+		std::fprintf(m_cpu_trace, "ARM pc=%08X prev=%08X\n", pc, m_cpu_trace_prev_pc);
+	}
+	m_cpu_trace_prev_pc = pc;
+
+	if (m_cpu_trace_count++ >= 50000)
+		return;
+
+	std::fprintf(m_cpu_trace, "I %06u pc=%08X op=%04X fcw=%04X x=%c log=%06X phys=%06X",
+		m_cpu_trace_count, pc, opcode, unsigned(m_cpu->state_int(Z8000_FCW)), translated ? 'Y' : 'N',
+		unsigned(logical), unsigned(physical));
+	for (int reg = 0; reg < 16; reg++)
+		std::fprintf(m_cpu_trace, " r%d=%04X", reg, unsigned(m_cpu->state_int(Z8000_R0 + reg)));
+	std::fputc('\n', m_cpu_trace);
+	if ((m_cpu_trace_count & 0xff) == 0 || !translated || !(pc >> 16))
+		std::fflush(m_cpu_trace);
 }
 
 void olivetti_l1_uc042_device::crtc_trace_w(offs_t offset, u8 data)
