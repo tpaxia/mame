@@ -144,7 +144,6 @@ void olivetti_l1_go252_device::device_start()
 {
 	m_vram = std::make_unique<u8[]>(0x1000);
 	save_pointer(NAME(m_vram), 0x1000);
-	save_item(NAME(m_vid_live));
 	save_item(NAME(m_crtc_index));
 	save_item(NAME(m_crtc_max_ras));
 	save_item(NAME(m_kdc_ctrl));
@@ -164,7 +163,6 @@ void olivetti_l1_go252_device::device_start()
 
 void olivetti_l1_go252_device::device_reset()
 {
-	m_vid_live = false;
 	m_crtc_index = 0;
 	m_crtc_max_ras = 16;
 	m_kdc_ctrl = 0;
@@ -191,7 +189,10 @@ void olivetti_l1_go252_device::kdc_queue(u8 data)
 	m_kbd_fifo[m_kbd_head] = data;
 	m_kbd_head = (m_kbd_head + 1) & 0x0f;
 	m_kbd_count++;
-	m_kdc_pending = m_kbd_irq_mode;
+	// The BCOS mode written by the resident driver (0x16) uses bit 4 for
+	// keyboard receive; later diagnostic services use the explicit bit-7
+	// receive enable.
+	m_kdc_pending = BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode;
 	update_vi();
 }
 
@@ -204,7 +205,7 @@ u8 olivetti_l1_go252_device::keyboard_data_r()
 		m_kbd_tail = (m_kbd_tail + 1) & 0x0f;
 		m_kbd_count--;
 	}
-	m_kdc_pending = m_kbd_irq_mode && (m_kbd_count != 0);
+	m_kdc_pending = (BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode) && (m_kbd_count != 0);
 	update_vi();
 	return m_kdc_data;
 }
@@ -217,7 +218,7 @@ u8 olivetti_l1_go252_device::io_r(offs_t offset)
 	case 0x00:
 		if (m_kbd_count)
 			m_kdc_data_armed = true;
-		return 0x02 | (m_kbd_count ? (m_kbd_irq_mode ? 0x04 : 0x01) : 0x00);
+		return 0x02 | (m_kbd_count ? ((BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode) ? 0x04 : 0x01) : 0x00);
 
 	case 0x02:
 		if (m_kdc_data_armed && m_kbd_count)
@@ -231,8 +232,9 @@ u8 olivetti_l1_go252_device::io_r(offs_t offset)
 		return m_crtc->register_r();
 
 	case 0x80:
-		m_vid_live = !m_vid_live;
-		return m_vid_live ? 0x08 : 0x00;
+		// Bit 3 is the live video/retrace signal.  Firmware polls for an
+		// actual transition; reading the status register has no side effect.
+		return m_screen->vblank() ? 0x08 : 0x00;
 
 	case 0xfe:
 		return 0xfe;
@@ -318,7 +320,7 @@ void olivetti_l1_go252_device::io_w(offs_t offset, u8 data)
 
 void olivetti_l1_go252_device::update_vi()
 {
-	vi_w((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5));
+	vi_w((m_kdc_pending && (BIT(m_kdc_ctrl, 4) || BIT(m_kdc_ctrl, 7))) || BIT(m_kdc_ctrl, 5));
 }
 
 
