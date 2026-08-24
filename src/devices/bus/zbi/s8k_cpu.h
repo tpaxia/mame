@@ -64,11 +64,13 @@ protected:
 		{ m_maincpu->set_input_line(z8002_device::VI_LINE, state); }
 	virtual void card_nmi_w(int state) override
 		{ m_maincpu->set_input_line(z8002_device::NMI_LINE, state); }
+	virtual void card_memerr_w(int state) override;
 	virtual void card_busreq_w(int state) override
 		{ m_maincpu->set_input_line(z8002_device::BUSREQ_LINE, state); }
 
 	uint16_t nmiack_r();
 	uint16_t segtack_r();
+	void memory_error_control_w(bool enable);
 
 	void segt_interrupt(int state);
 
@@ -113,6 +115,8 @@ protected:
 	bool m_is_seg_user = false;
 
 	uint16_t m_nmi_code = 0;
+	bool m_memory_error_enabled = false;
+	bool m_memory_error_latched = false;
 	int m_normal_mode = 0;
 	int m_dma_on = 0;
 };
