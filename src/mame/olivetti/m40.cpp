@@ -38,7 +38,7 @@ void l1_ram_cards(device_slot_interface &device)
 
 void l1_first_ram_cards(device_slot_interface &device)
 {
-	device.option_add("auto", OLIVETTI_L1_RAM);
+	device.option_add_internal("auto", OLIVETTI_L1_RAM);
 	l1_ram_cards(device);
 }
 
@@ -47,6 +47,7 @@ void m40_l1_cards(device_slot_interface &device)
 	device.option_add("go252", OLIVETTI_L1_GO252);
 	device.option_add("go280", OLIVETTI_L1_GO280);
 	device.option_add("go363", OLIVETTI_L1_GO363);
+	device.option_add_internal("auto", OLIVETTI_L1_RAM);
 	l1_ram_cards(device);
 }
 
@@ -61,7 +62,6 @@ public:
 	m40_state(const machine_config &mconfig, device_type type, const char *tag)
 		: driver_device(mconfig, type, tag)
 		, m_l1bus(*this, "l1bus")
-		, m_uc042(*this, "cpu:uc042")
 	{ }
 
 	void m40(machine_config &config);
@@ -69,43 +69,10 @@ public:
 
 private:
 	required_device<olivetti_l1_bus_device> m_l1bus;
-	optional_device<olivetti_l1_uc042_device> m_uc042;
 	void     l1_backplane(machine_config &config, olivetti_l1_bus_device::chassis chassis);
-	void     configure_slot(olivetti_l1_slot_device &slot, bool governi);
-	void     go252_crtc_trace_w(offs_t offset, uint8_t data);
-	void     go280_trace_w(offs_t event, uint32_t data);
 };
 
 //**************************************************************************
-
-void m40_state::go252_crtc_trace_w(offs_t offset, uint8_t data)
-{
-	if (m_uc042)
-		m_uc042->crtc_trace_w(offset, data);
-}
-
-void m40_state::go280_trace_w(offs_t event, uint32_t data)
-{
-	if (m_uc042)
-		m_uc042->floppy_trace_w(event, data);
-}
-
-void m40_state::configure_slot(olivetti_l1_slot_device &slot, bool governi)
-{
-	if (governi)
-	{
-		slot.set_option_machine_config("go252", [this](device_t *device)
-		{
-			olivetti_l1_go252_device &card = downcast<olivetti_l1_go252_device &>(*device);
-			card.crtc_write_callback().set(*this, FUNC(m40_state::go252_crtc_trace_w));
-		});
-		slot.set_option_machine_config("go280", [this](device_t *device)
-		{
-			olivetti_l1_go280_device &card = downcast<olivetti_l1_go280_device &>(*device);
-			card.trace_callback().set(*this, FUNC(m40_state::go280_trace_w));
-		});
-	}
-}
 
 void m40_state::l1_backplane(machine_config &config, olivetti_l1_bus_device::chassis chassis)
 {
@@ -131,17 +98,20 @@ void m40_state::l1_backplane(machine_config &config, olivetti_l1_bus_device::cha
 			continue;
 		}
 
-		char const *const default_card = (select == 0) ? "auto" : (select == 1) ? "go252" : (select == 2) ? "go280" : nullptr;
+		char const *const default_card = (select == 0) ? "auto"
+			: (select == 1) ? "go252"
+			: (select == 2) ? "go280"
+			: (select == 3) ? "auto"
+			: nullptr;
 		auto const options = (select == 0) ? l1_first_ram_cards : m40_l1_cards;
-		olivetti_l1_slot_device &slot(OLIVETTI_L1_SLOT(config, slot_tags[position], m_l1bus, position, select, options, default_card));
-		configure_slot(slot, select != 0);
+		OLIVETTI_L1_SLOT(config, slot_tags[position], m_l1bus, position, select, options, default_card);
 		select++;
 	}
 
 	// MAME's root RAM device supplies the -ramsize option and backing allocation;
 	// only the RAM card responds to its physical address range on the L1 bus.
 	RAM(config, RAM_TAG).set_default_size("512K").set_default_value(0)
-		.set_extra_options("128K,256K,384K,640K,768K,896K,1024K");
+		.set_extra_options("256K,384K,640K,768K,896K,1024K,1536K,2048K");
 }
 
 void m40_state::m40(machine_config &config)

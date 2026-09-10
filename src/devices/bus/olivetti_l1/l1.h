@@ -163,6 +163,7 @@ protected:
 	virtual void bus_vi_w(int state) = 0;
 	virtual void bus_request_w(int state) = 0;
 	virtual bool local_vi_pending(olivetti_l1_bus_device::interrupt_level level) const = 0;
+	virtual bool vi_enabled(olivetti_l1_bus_device::interrupt_level level) const { return true; }
 	virtual u16 local_viack_r(olivetti_l1_bus_device::interrupt_level level) = 0;
 };
 

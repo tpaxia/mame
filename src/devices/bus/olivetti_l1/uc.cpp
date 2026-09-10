@@ -5,8 +5,8 @@
 #include "uc.h"
 
 #include "go252.h"
-#include "go280.h"
 
+#include <cstdio>
 #include <cstdlib>
 
 namespace {
@@ -74,16 +74,7 @@ void olivetti_l1_uc042_device::device_start()
 {
 	m_arb_timer = timer_alloc(FUNC(olivetti_l1_uc042_device::arb_done), this);
 	m_earom_nvram->set_base(m_earom, sizeof(m_earom));
-
-	if (char const *const path = std::getenv("M40_VRAM_TRACE"); path && path[0])
-		m_vram_trace = std::fopen(path, "w");
-	if (char const *const path = std::getenv("M40_FDU_TRACE"); path && path[0])
-		m_fdu_trace = std::fopen(path, "w");
-	if (char const *const path = std::getenv("M40_CPU_TRACE"); path && path[0])
-		m_cpu_trace = std::fopen(path, "w");
-	if (char const *const start = std::getenv("M40_CPU_TRACE_START"); start && start[0])
-		m_cpu_trace_start = std::strtoul(start, nullptr, 16);
-	m_cpu_trace_bad_segment_zero = std::getenv("M40_CPU_TRACE_BAD_SEG0") != nullptr;
+	m_bcos_history_path = std::getenv("BCOS_HISTORY");
 
 	for (int const spacenum : { int(AS_PROGRAM), int(AS_DATA), int(z8001_device::AS_STACK) })
 	{
@@ -123,9 +114,6 @@ void olivetti_l1_uc042_device::device_reset()
 	m_kdc_status = 0;
 	m_suppress_enabled = true;
 	m_timer_pending = false;
-	m_cpu_trace_armed = false;
-	m_cpu_trace_count = 0;
-	m_cpu_trace_prev_pc = 0xffffffff;
 	m_timer_out1 = false;
 	m_viol_pc = 0xffffffff;
 	m_arb_req = 0;
@@ -139,14 +127,6 @@ olivetti_l1_go252_device *olivetti_l1_uc042_device::video_card() const
 {
 	for (u8 select = 0; select < 16; select++)
 		if (auto *const card = dynamic_cast<olivetti_l1_go252_device *>(bus().get_card(select)))
-			return card;
-	return nullptr;
-}
-
-olivetti_l1_go280_device *olivetti_l1_uc042_device::floppy_card() const
-{
-	for (u8 select = 0; select < 16; select++)
-		if (auto *const card = dynamic_cast<olivetti_l1_go280_device *>(bus().get_card(select)))
 			return card;
 	return nullptr;
 }
@@ -196,18 +176,19 @@ u16 olivetti_l1_uc042_device::physical_word_r(offs_t address, u16 mem_mask)
 void olivetti_l1_uc042_device::physical_word_w(offs_t address, u16 data, u16 mem_mask)
 {
 	address &= 0xffffff;
+	// TEMP: identify writes to the two interrupt-save copies of R2.
+	if (m_bcos_history_path && !m_bcos_history_dumped && machine().time() >= attotime::from_seconds(68)
+		&& (address == 0x02262c || address == 0x0227e4))
+		osd_printf_info("BCOS_SAVE t=%.9f pc=%08X phys=%06X data=%04X mask=%04X\n",
+			machine().time().as_double(), unsigned(m_cpu->pc()), unsigned(address), data, mem_mask);
 	bool responded = true;
 	if (ACCESSING_BITS_8_15)
 	{
 		responded &= bus().memory_w(address, data >> 8);
-		if ((address & 0xff0000) == 0xff0000)
-			debug_vram_w(address & 0xffff, data >> 8, mem_mask);
 	}
 	if (ACCESSING_BITS_0_7)
 	{
 		responded &= bus().memory_w(address + 1, data);
-		if ((address & 0xff0000) == 0xff0000)
-			debug_vram_w((address + 1) & 0xffff, data, mem_mask);
 	}
 	if (!responded)
 		ready_fault();
@@ -234,21 +215,45 @@ bool olivetti_l1_uc042_device::xlate(int spacenum, bool write, offs_t &address)
 
 	if (!(m_mmu_mode & 0x80))
 		return true;
-	address &= 0x3fffff;
+	// Preserve SN6.  The Z8001 presents a 23-bit logical address (segments
+	// 0x00-0x7f); the Z8010 uses SN6 together with URS to decide whether it
+	// qualifies for the cycle.  Masking to 22 bits aliases upper segments onto
+	// 0x00-0x3f and can turn a harmless probe of an absent upper-range MMU into
+	// a violation against an unrelated lower-range descriptor.
+	address &= 0x7fffff;
 	bool const system = BIT(m_cpu->state_int(Z8000_FCW), 14);
 	return m_mmu->translate(address, write, system, false, status);
 }
 
 u16 olivetti_l1_uc042_device::mem_r(address_space &space, offs_t offset, u16 mem_mask)
 {
+	// TEMP: retain only the last 4096 IFETCH1 register sets and dump once when
+	// the scheduler's queue pointer changes segment. No emulated reads/writes.
+	if (m_bcos_history_path && !m_bcos_history_dumped && space.spacenum() == AS_PROGRAM
+		&& m_cpu->is_ifetch1() && machine().time() >= attotime::from_seconds(68))
+	{
+		std::string line = util::string_format("t=%.9f pc=%08X fcw=%04X", machine().time().as_double(),
+			unsigned(m_cpu->pc()), unsigned(m_cpu->state_int(Z8000_FCW)));
+		for (int r = 0; r < 16; r++)
+			line += util::string_format(" r%d=%04X", r, unsigned(m_cpu->state_int(Z8000_R0 + r)));
+		m_bcos_history[m_bcos_history_pos++ % m_bcos_history.size()] = std::move(line);
+		if (m_cpu->pc() == 0x00020912 && m_cpu->state_int(Z8000_R2) != 0)
+		{
+			if (std::FILE *const out = std::fopen(m_bcos_history_path, "w"))
+			{
+				unsigned const count = std::min<unsigned>(m_bcos_history_pos, m_bcos_history.size());
+				for (unsigned i = m_bcos_history_pos - count; i < m_bcos_history_pos; i++)
+					std::fprintf(out, "%s\n", m_bcos_history[i % m_bcos_history.size()].c_str());
+				std::fclose(out);
+			}
+			m_bcos_history_dumped = true;
+		}
+	}
 	offs_t address = offset << 1;
-	offs_t const logical = address;
-	bool const ifetch1 = space.spacenum() == AS_PROGRAM && m_cpu->is_ifetch1();
 	// SUP suppresses the violating transfer and subsequent data accesses through
 	// the end of the instruction.  A first-word fetch releases it in xlate().
 	if (!xlate(space.spacenum(), false, address))
 	{
-		debug_cpu_trace(ifetch1, false, logical, address, 0x8d07);
 		if (m_suppress_enabled)
 			m_viol_pc = m_cpu->pc();
 		return space.spacenum() == AS_PROGRAM ? 0x8d07 : 0xffff; // instruction violation becomes NOP
@@ -256,66 +261,12 @@ u16 olivetti_l1_uc042_device::mem_r(address_space &space, offs_t offset, u16 mem
 	if (m_viol_pc == m_cpu->pc() && space.spacenum() != AS_PROGRAM)
 		return 0xffff;
 
-	if (space.spacenum() == AS_PROGRAM)
-	{
-		static u32 last_pc = 0xffffffff;
-		u32 const pc = m_cpu->pc();
-		if (pc != last_pc)
-		{
-			last_pc = pc;
-			switch (pc)
-			{
-			case 0x00027fde: debug_pc_ctx("7fde-entry"); break;
-			case 0x00027fe8: debug_pc_ctx("7fe8-fatal"); break;
-			case 0x00028002: debug_pc_ctx("8002-return"); break;
-			case 0x0002a800: debug_pc_ctx("a800-call"); break;
-			case 0x0002a92a: debug_pc_ctx("a92a-call"); break;
-			case 0x0002b668: debug_pc_ctx("b668-call"); break;
-			case 0x00044586: debug_pc_ctx("4-4586-call"); break;
-			case 0x0021018c: debug_pc_ctx("rv-setup"); break;
-			case 0x002102b4: debug_pc_ctx("rv-fill"); break;
-			case 0x002102ce: debug_pc_ctx("rv-march1"); break;
-			case 0x00210366: debug_pc_ctx("rv-mismatch-a"); break;
-			case 0x0021038a: debug_pc_ctx("rv-errprint"); break;
-			case 0x00210304: debug_pc_ctx("uc-0304-gate"); break;
-			case 0x00210330: debug_pc_ctx("uc-dispatch"); break;
-			case 0x00210358: debug_pc_ctx("uc-t1-entry"); break;
-			case 0x002106dc: debug_pc_ctx("uc-invalid-test"); break;
-			case 0x00210720: debug_pc_ctx("uc-next-test"); break;
-			case 0x00213576: debug_pc_ctx("uc-trap-body"); break;
-			case 0x002134f6: debug_pc_ctx("uc-trap-handler"); break;
-			case 0x00210ea2: debug_pc_ctx("uc-error"); break;
-			case 0x00210180: debug_pc_ctx("uc-0180-back"); break;
-			case 0x00215bc6: debug_pc_ctx("fdu-compare"); break;
-			case 0x00215c72: debug_pc_ctx("fdu-compare-mismatch"); break;
-			}
-		}
-	}
-	u16 const data = physical_word_r(address, mem_mask);
-	debug_cpu_trace(ifetch1, true, logical, address, data);
-	if (m_cpu_trace && m_cpu->pc() >= 0x003c07a0 && m_cpu->pc() <= 0x003c07a4)
-	{
-		std::fprintf(m_cpu_trace, "ORIGIN pc=%08X space=%d log=%06X phys=%06X data=%04X mask=%04X\n",
-			unsigned(m_cpu->pc()), space.spacenum(), unsigned(logical), unsigned(address), data, mem_mask);
-		std::fflush(m_cpu_trace);
-	}
-	if (m_fdu_trace && space.spacenum() != AS_PROGRAM && m_cpu->state_int(Z8000_R2) == 0x1a00)
-	{
-		u32 const pc = m_cpu->pc();
-		if (pc >= 0x00215c50 && pc <= 0x00215c70)
-		{
-			std::fprintf(m_fdu_trace, "CMPR pc=%08X space=%d log=%06X phys=%06X data=%04X mask=%04X\n",
-				unsigned(pc), space.spacenum(), unsigned(logical), unsigned(address), data, mem_mask);
-			std::fflush(m_fdu_trace);
-		}
-	}
-	return data;
+	return physical_word_r(address, mem_mask);
 }
 
 void olivetti_l1_uc042_device::mem_w(address_space &space, offs_t offset, u16 data, u16 mem_mask)
 {
 	offs_t address = offset << 1;
-	offs_t const logical = address;
 	bool valid = xlate(space.spacenum(), true, address);
 	if (!valid && !m_suppress_enabled)
 	{
@@ -327,31 +278,13 @@ void olivetti_l1_uc042_device::mem_w(address_space &space, offs_t offset, u16 da
 	else if (m_viol_pc == m_cpu->pc())
 		valid = false;
 	if (valid)
-	{
-		debug_diag_w(logical, address, data, mem_mask);
-		if (m_fdu_trace && address >= 0x071ff4 && address < 0x072014)
-		{
-			std::fprintf(m_fdu_trace, "SRCW pc=%08X space=%d log=%06X phys=%06X data=%04X mask=%04X\n",
-				unsigned(m_cpu->pc()), space.spacenum(), unsigned(logical), unsigned(address), data, mem_mask);
-			std::fflush(m_fdu_trace);
-		}
 		physical_word_w(address, data, mem_mask);
-	}
 }
 
 u8 olivetti_l1_uc042_device::mmu_r(offs_t offset)
 {
 	if (!BIT(offset, 0))
-	{
-		u8 const reg = offset >> 8;
-		u8 const data = m_mmu->read(reg);
-		if (m_fdu_trace && (reg == 0x0b || reg == 0x01 || reg == 0x20 || reg == 0x0f || reg == 0x05))
-		{
-			std::fprintf(m_fdu_trace, "MMU R pc=%08X off=%04X reg=%02X data=%02X\n", unsigned(m_cpu->pc()), unsigned(offset), reg, data);
-			std::fflush(m_fdu_trace);
-		}
-		return data;
-	}
+		return m_mmu->read(offset >> 8);
 	return 0xff;
 }
 
@@ -360,11 +293,6 @@ void olivetti_l1_uc042_device::mmu_w(offs_t offset, u8 data)
 	if (!BIT(offset, 0))
 	{
 		u8 const reg = offset >> 8;
-		if (m_fdu_trace && (reg == 0x0b || reg == 0x01 || reg == 0x20 || reg == 0x0f || reg == 0x05))
-		{
-			std::fprintf(m_fdu_trace, "MMU W pc=%08X off=%04X reg=%02X data=%02X\n", unsigned(m_cpu->pc()), unsigned(offset), reg, data);
-			std::fflush(m_fdu_trace);
-		}
 		m_mmu->write(reg, data);
 		if (reg == 0x00)
 		{
@@ -378,25 +306,13 @@ void olivetti_l1_uc042_device::mmu_w(offs_t offset, u8 data)
 	}
 }
 
-void olivetti_l1_uc042_device::console_w(u8 data)
-{
-	osd_printf_info("[M40 console] code = 0x%02X (%d)\n", data, data);
-}
-
 u16 olivetti_l1_uc042_device::l1_io_r(offs_t offset, u16 mem_mask)
 {
-	u16 const data = bus().io_r(offset, mem_mask);
-	if (m_fdu_trace && BIT(offset << 1, 12, 4) == 1)
-		std::fprintf(m_fdu_trace, "GO252 R pc=%08X reg=%02X data=%04X mask=%04X\n", unsigned(m_cpu->pc()),
-			unsigned((offset << 1) & 0xff), data, mem_mask);
-	return data;
+	return bus().io_r(offset, mem_mask);
 }
 
 void olivetti_l1_uc042_device::l1_io_w(offs_t offset, u16 data, u16 mem_mask)
 {
-	if (m_fdu_trace && BIT(offset << 1, 12, 4) == 1)
-		std::fprintf(m_fdu_trace, "GO252 W pc=%08X reg=%02X data=%04X mask=%04X\n", unsigned(m_cpu->pc()),
-			unsigned((offset << 1) & 0xff), data, mem_mask);
 	bus().io_w(offset, data, mem_mask);
 }
 
@@ -434,17 +350,12 @@ u8 olivetti_l1_uc042_device::keyboard_status_r()
 	// Overlay the GO252 byte-ready indications on the real 6850 status.
 	olivetti_l1_go252_device *const video = video_card();
 	u8 const data = m_acia->status_r() | ((video && video->keyboard_data_available()) ? 0x05 : 0x00);
-	if (m_fdu_trace)
-		std::fprintf(m_fdu_trace, "KDC STATUS R pc=%08X data=%02X fifo=%d acia_irq=%d\n", unsigned(m_cpu->pc()), data,
-			video && video->keyboard_data_available(), m_acia_irq);
 	return data;
 }
 
 void olivetti_l1_uc042_device::keyboard_status_w(u8 data)
 {
 	m_kdc_status = data;
-	if (m_fdu_trace)
-		std::fprintf(m_fdu_trace, "KDC STATUS W pc=%08X data=%02X\n", unsigned(m_cpu->pc()), data);
 	m_acia->control_w(data);
 }
 
@@ -454,9 +365,6 @@ u8 olivetti_l1_uc042_device::keyboard_data_r()
 	// by the UC3003 ACIA test.
 	olivetti_l1_go252_device *const video = video_card();
 	u8 const data = (video && video->keyboard_data_available()) ? video->keyboard_data_r() : m_acia->data_r();
-	if (m_fdu_trace)
-		std::fprintf(m_fdu_trace, "KDC DATA R pc=%08X data=%02X fifo=%d\n", unsigned(m_cpu->pc()), data,
-			video && video->keyboard_data_available());
 	return data;
 }
 
@@ -466,8 +374,6 @@ void olivetti_l1_uc042_device::keyboard_data_w(u8 data)
 	// needs the transmitted byte for its diagnostic loopback.
 	if (olivetti_l1_go252_device *const video = video_card())
 		video->keyboard_data_w(data);
-	if (m_fdu_trace)
-		std::fprintf(m_fdu_trace, "KDC DATA W pc=%08X data=%02X\n", unsigned(m_cpu->pc()), data);
 	m_acia->data_w(data);
 }
 
@@ -483,20 +389,22 @@ void olivetti_l1_uc042_device::diagnostic_lamps_w(offs_t offset, u8 data)
 void olivetti_l1_uc042_device::io_map(address_map &map)
 {
 	map.unmap_value_high();
+	// L1 I/O uses the high nibble for board select and the low byte for
+	// registers; bits 11-8 are not decoded. BCOS uses F084/F08C for VIENO.
 	map(0x0000, 0xffff).rw(FUNC(olivetti_l1_uc042_device::l1_io_r), FUNC(olivetti_l1_uc042_device::l1_io_w));
-	map(0xff20, 0xff21).rw(FUNC(olivetti_l1_uc042_device::keyboard_status_r), FUNC(olivetti_l1_uc042_device::keyboard_status_w)).umask16(0xff00);
-	map(0xff22, 0xff23).rw(FUNC(olivetti_l1_uc042_device::keyboard_data_r), FUNC(olivetti_l1_uc042_device::keyboard_data_w)).umask16(0xff00);
-	map(0xff41, 0xff41).rw(FUNC(olivetti_l1_uc042_device::nmi_status_r), FUNC(olivetti_l1_uc042_device::nmi_ack_w));
-	map(0xff11, 0xff11).w(FUNC(olivetti_l1_uc042_device::masto_clear_w));
-	map(0xff19, 0xff19).w(FUNC(olivetti_l1_uc042_device::masto_set_w));
-	map(0xffb1, 0xffb1).r(FUNC(olivetti_l1_uc042_device::masto_r));
-	map(0xff60, 0xff6f).rw(FUNC(olivetti_l1_uc042_device::diagnostic_lamps_r), FUNC(olivetti_l1_uc042_device::diagnostic_lamps_w));
-	map(0xff80, 0xff8f).rw(FUNC(olivetti_l1_uc042_device::arb_r), FUNC(olivetti_l1_uc042_device::arb_w));
-	map(0xff00, 0xff00).r(FUNC(olivetti_l1_uc042_device::suppression_disable_r));
-	map(0xff01, 0xff01).w(FUNC(olivetti_l1_uc042_device::timer_vector_w));
-	map(0xffa0, 0xffa0).rw(FUNC(olivetti_l1_uc042_device::config_r), FUNC(olivetti_l1_uc042_device::acia_vector_w));
-	map(0xffc0, 0xffc7).rw(FUNC(olivetti_l1_uc042_device::pit_r), FUNC(olivetti_l1_uc042_device::pit_w));
-	map(0xffe0, 0xffe0).w(FUNC(olivetti_l1_uc042_device::console_w));
+	map(0xf020, 0xf021).mirror(0x0f00).rw(FUNC(olivetti_l1_uc042_device::keyboard_status_r), FUNC(olivetti_l1_uc042_device::keyboard_status_w)).umask16(0xff00);
+	map(0xf022, 0xf023).mirror(0x0f00).rw(FUNC(olivetti_l1_uc042_device::keyboard_data_r), FUNC(olivetti_l1_uc042_device::keyboard_data_w)).umask16(0xff00);
+	map(0xf041, 0xf041).mirror(0x0f00).rw(FUNC(olivetti_l1_uc042_device::nmi_status_r), FUNC(olivetti_l1_uc042_device::nmi_ack_w));
+	map(0xf011, 0xf011).mirror(0x0f00).w(FUNC(olivetti_l1_uc042_device::masto_clear_w));
+	map(0xf019, 0xf019).mirror(0x0f00).w(FUNC(olivetti_l1_uc042_device::masto_set_w));
+	map(0xf0b1, 0xf0b1).mirror(0x0f00).r(FUNC(olivetti_l1_uc042_device::masto_r));
+	map(0xf060, 0xf06f).mirror(0x0f00).rw(FUNC(olivetti_l1_uc042_device::diagnostic_lamps_r), FUNC(olivetti_l1_uc042_device::diagnostic_lamps_w));
+	map(0xf080, 0xf08f).mirror(0x0f00).rw(FUNC(olivetti_l1_uc042_device::arb_r), FUNC(olivetti_l1_uc042_device::arb_w));
+	map(0xf000, 0xf000).mirror(0x0f00).r(FUNC(olivetti_l1_uc042_device::suppression_disable_r));
+	map(0xf001, 0xf001).mirror(0x0f00).w(FUNC(olivetti_l1_uc042_device::timer_vector_w));
+	map(0xf0a0, 0xf0a0).mirror(0x0f00).rw(FUNC(olivetti_l1_uc042_device::config_r), FUNC(olivetti_l1_uc042_device::acia_vector_w));
+	map(0xf0c0, 0xf0c7).mirror(0x0f00).rw(FUNC(olivetti_l1_uc042_device::pit_r), FUNC(olivetti_l1_uc042_device::pit_w));
+	map(0xf0e0, 0xf0e1).mirror(0x0f00).nopw().umask16(0xff00); // console output device not emulated
 }
 
 void olivetti_l1_uc042_device::sio_map(address_map &map)
@@ -563,14 +471,14 @@ u16 olivetti_l1_uc042_device::vi_ack_r()
 	return bus().viack_r();
 }
 
-u8 olivetti_l1_uc042_device::arb_r(offs_t offset)
+u16 olivetti_l1_uc042_device::arb_r(offs_t offset)
 {
-	u8 const reg = offset & 0x0f;
-	if (reg == 1)
+	if (offset == 0)
 	{
-		u8 const high = (BIT(m_arb_grant, 0) ? 0x80 : 0) | (BIT(m_arb_grant, 1) ? 0x40 : 0)
-			| (BIT(m_arb_grant, 2) ? 0x20 : 0) | (BIT(m_arb_grant, 3) ? 0x10 : 0);
-		return high | (m_arb_grant ? 0 : 0x07) | ((m_arb_vieno || m_arb_grant) ? 0x08 : 0);
+		// Request readback is independent of the NV2-NV4 delivery masks.
+		u8 const high = (BIT(m_arb_req, 0) ? 0x80 : 0) | (BIT(m_arb_req, 1) ? 0x40 : 0)
+			| (BIT(m_arb_req, 2) ? 0x20 : 0) | (BIT(m_arb_req, 3) ? 0x10 : 0);
+		return high | (m_arb_req ? 0 : 0x07) | ((m_arb_vieno || m_arb_grant) ? 0x08 : 0);
 	}
 	return 0;
 }
@@ -579,28 +487,38 @@ void olivetti_l1_uc042_device::arb_update()
 {
 	u8 grant = 0;
 	for (int channel = 0; channel < 4; channel++)
-		if (BIT(m_arb_req, channel) && m_arb_rel >= channel)
+		if (BIT(m_arb_req, channel) && (!channel || BIT(m_arb_rel, channel - 1)))
 			grant |= 1 << channel;
 	m_arb_grant = grant;
 	if (grant)
 		m_arb_timer->adjust(attotime::from_usec(50));
+	else
+	{
+		m_arb_timer->adjust(attotime::never);
+		m_cpu->set_input_line(z8001_device::NVI_LINE, CLEAR_LINE);
+	}
 }
 
-void olivetti_l1_uc042_device::arb_w(offs_t offset, u8 data)
+void olivetti_l1_uc042_device::arb_w(offs_t offset, u16 data, u16 mem_mask)
 {
-	u8 const reg = offset & 0x0f;
+	// One address strobe per bus cycle, including word OUT at odd ports.
+	// A pair of byte handlers would incorrectly strobe both adjacent registers.
+	u8 const reg = (offset << 1) | ((mem_mask == 0xffff) ? BIT(m_cpu->io_address(), 0) : !ACCESSING_BITS_8_15);
 	if (reg <= 0x3)
 	{
+		// Acknowledging a request drops that channel's request/grant only.  The
+		// release mask is a programmed latch; BCOS relies on it remaining set
+		// when it issues the next dispatcher request while the arbiter is idle.
 		m_arb_req &= ~(1 << reg);
-		if (!m_arb_req)
-			m_arb_rel = 0;
 	}
 	else if (reg >= 0x8 && reg <= 0xb)
 	{
 		m_arb_req |= 1 << (reg - 8);
 	}
-	else if ((reg & 0x7) >= 0x5)
-		m_arb_rel = std::max<u8>(m_arb_rel, (reg & 0x7) - 4);
+	else if (reg >= 0x5 && reg <= 0x7)
+		m_arb_rel &= ~(1 << (reg - 5));
+	else if (reg >= 0xd)
+		m_arb_rel |= 1 << (reg - 0xd);
 
 	if (reg >= 0xc)
 		m_arb_vieno = true;
@@ -622,134 +540,6 @@ u16 olivetti_l1_uc042_device::nviack_r()
 	// corresponding per-channel arbiter acknowledgement.
 	m_cpu->set_input_line(z8001_device::NVI_LINE, CLEAR_LINE);
 	return 0;
-}
-
-void olivetti_l1_uc042_device::debug_vram_w(offs_t address, u8 data, u16 mem_mask)
-{
-	if (!m_vram_trace)
-		return;
-	std::fprintf(m_vram_trace, "VRAM pc=%08X off=%04X data=%02X mask=%04X\n", unsigned(m_cpu->pc()), unsigned(address & 0xffff), data, mem_mask);
-	if (m_cpu->pc() == 0x00031156)
-	{
-		std::fprintf(m_vram_trace, "VRAMCTX pc=00031156");
-		for (int reg = 0; reg < 16; reg++)
-			std::fprintf(m_vram_trace, " r%d=%04X", reg, unsigned(m_cpu->state_int(Z8000_R0 + reg)));
-		std::fputc('\n', m_vram_trace);
-	}
-	std::fflush(m_vram_trace);
-}
-
-void olivetti_l1_uc042_device::debug_crtc_w(u8 reg, u8 data)
-{
-	if (m_vram_trace)
-	{
-		std::fprintf(m_vram_trace, "CRTC pc=%08X reg=%02X data=%02X\n", unsigned(m_cpu->pc()), reg, data);
-		std::fflush(m_vram_trace);
-	}
-}
-
-void olivetti_l1_uc042_device::debug_fdu(char const *event, u8 reg, u8 data)
-{
-	olivetti_l1_go280_device *const floppy = floppy_card();
-	if (m_fdu_trace && floppy)
-	{
-		std::fprintf(m_fdu_trace,
-			"FDU %s pc=%08X reg=%02X data=%02X pending=%d ien=%d intmo_lat=%d timer=%d intoo_lat=%d fdc=%d vec=%02X dma_hi=%02X dma_ch1=%04X dma_byte=%06X\n",
-			event, unsigned(m_cpu->pc()), reg, data, floppy->pending(), floppy->interrupt_enabled(),
-			floppy->timer_latched(), floppy->timer_interrupt(), floppy->fdc_latched(), floppy->fdc_interrupt(),
-			floppy->vector(), floppy->dma_high(), floppy->dma_channel1(), unsigned(floppy->dma_byte()));
-		std::fflush(m_fdu_trace);
-	}
-}
-
-void olivetti_l1_uc042_device::debug_diag_w(offs_t logical, offs_t physical, u16 data, u16 mem_mask)
-{
-	if (m_fdu_trace && logical >= 0x04a480 && logical <= 0x04a4bf)
-		std::fprintf(m_fdu_trace, "DIAGW pc=%08X log=%06X phys=%06X data=%04X mask=%04X\n", unsigned(m_cpu->pc()), unsigned(logical), unsigned(physical), data, mem_mask);
-	if (m_fdu_trace && logical >= 0x048f40 && logical <= 0x048f80)
-	{
-		std::fprintf(m_fdu_trace, "ERRBUF pc=%08X log=%06X phys=%06X data=%04X mask=%04X", unsigned(m_cpu->pc()), unsigned(logical), unsigned(physical), data, mem_mask);
-		for (int reg = 0; reg < 16; reg++)
-			std::fprintf(m_fdu_trace, " r%d=%04X", reg, unsigned(m_cpu->state_int(Z8000_R0 + reg)));
-		std::fputc('\n', m_fdu_trace);
-	}
-	if (m_fdu_trace)
-		std::fflush(m_fdu_trace);
-}
-
-void olivetti_l1_uc042_device::debug_pc_ctx(char const *event)
-{
-	if (!m_fdu_trace)
-		return;
-	std::fprintf(m_fdu_trace, "PCCTX %s pc=%08X", event, unsigned(m_cpu->pc()));
-	for (int reg = 0; reg < 16; reg++)
-		std::fprintf(m_fdu_trace, " r%d=%04X", reg, unsigned(m_cpu->state_int(Z8000_R0 + reg)));
-	std::fputc('\n', m_fdu_trace);
-	std::fflush(m_fdu_trace);
-}
-
-void olivetti_l1_uc042_device::debug_cpu_trace(bool ifetch1, bool translated, offs_t logical, offs_t physical, u16 opcode)
-{
-	if (!m_cpu_trace || !ifetch1)
-		return;
-
-	u32 const pc = m_cpu->pc();
-	if (!m_cpu_trace_armed)
-	{
-		bool const bad_segment_zero = (!(pc >> 16) && (pc & 0xffff) >= 0x4000)
-			|| (m_cpu->state_int(Z8000_R0) == 0xa000 && m_cpu->state_int(Z8000_R12) == 0x0004
-				&& m_cpu->state_int(Z8000_R13) == 0xa718);
-		if (pc != m_cpu_trace_start && !(m_cpu_trace_bad_segment_zero && bad_segment_zero))
-		{
-			m_cpu_trace_prev_pc = pc;
-			return;
-		}
-		m_cpu_trace_armed = true;
-		std::fprintf(m_cpu_trace, "ARM pc=%08X prev=%08X\n", pc, m_cpu_trace_prev_pc);
-	}
-	m_cpu_trace_prev_pc = pc;
-
-	if (m_cpu_trace_count++ >= 50000)
-		return;
-
-	std::fprintf(m_cpu_trace, "I %06u pc=%08X op=%04X fcw=%04X x=%c log=%06X phys=%06X",
-		m_cpu_trace_count, pc, opcode, unsigned(m_cpu->state_int(Z8000_FCW)), translated ? 'Y' : 'N',
-		unsigned(logical), unsigned(physical));
-	for (int reg = 0; reg < 16; reg++)
-		std::fprintf(m_cpu_trace, " r%d=%04X", reg, unsigned(m_cpu->state_int(Z8000_R0 + reg)));
-	std::fputc('\n', m_cpu_trace);
-	if ((m_cpu_trace_count & 0xff) == 0 || !translated || !(pc >> 16))
-		std::fflush(m_cpu_trace);
-}
-
-void olivetti_l1_uc042_device::crtc_trace_w(offs_t offset, u8 data)
-{
-	debug_crtc_w(offset, data);
-}
-
-void olivetti_l1_uc042_device::floppy_trace_w(offs_t event, u32 data)
-{
-	static char const *const names[] = { "R", "W", "FDCINT", "TIMER", "VIACK", "INDEX", "DMAW", "DMAR" };
-	u8 const reg = data >> 8;
-	u8 const value = data;
-	if (event < std::size(names)
-		&& event != olivetti_l1_go280_device::TRACE_INDEX
-		&& event != olivetti_l1_go280_device::TRACE_DMA_W
-		&& event != olivetti_l1_go280_device::TRACE_DMA_R)
-		debug_fdu(names[event], reg, value);
-
-	if ((event == olivetti_l1_go280_device::TRACE_DMA_W || event == olivetti_l1_go280_device::TRACE_DMA_R) && m_fdu_trace)
-	{
-		olivetti_l1_go280_device *const floppy = floppy_card();
-		u32 const position = (floppy->dma_byte() - 1) & 0xffffff;
-		if (position < 0x20 || !(position & 0xff))
-		{
-			std::fprintf(m_fdu_trace, "%s pc=%08X pos=%06X phys=%06X data=%02X dma_hi=%02X dma_ch1=%04X\n",
-				names[event], unsigned(m_cpu->pc()), unsigned(position), unsigned(floppy->last_dma_address()), value,
-				floppy->dma_high(), floppy->dma_channel1());
-			std::fflush(m_fdu_trace);
-		}
-	}
 }
 
 DEFINE_DEVICE_TYPE(OLIVETTI_L1_UC042, olivetti_l1_uc042_device, "olivetti_l1_uc042", "Olivetti UC042 central unit")

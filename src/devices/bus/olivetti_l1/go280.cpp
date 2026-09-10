@@ -83,7 +83,6 @@ olivetti_l1_go280_device::olivetti_l1_go280_device(machine_config const &mconfig
 	, m_floppy(*this, "fdc:%u", 0U)
 	, m_timer(*this, "timer")
 	, m_dmac(*this, "dmac")
-	, m_trace_cb(*this)
 {
 }
 
@@ -130,8 +129,6 @@ void olivetti_l1_go280_device::device_start()
 	save_item(NAME(m_vector));
 	save_item(NAME(m_control));
 	save_item(NAME(m_dma_high));
-	save_item(NAME(m_dma_channel1));
-	save_item(NAME(m_dma_flipflop));
 	save_item(NAME(m_fdc_drq));
 	save_item(NAME(m_fdc_index));
 	save_item(NAME(m_fdc_head_load));
@@ -141,8 +138,6 @@ void olivetti_l1_go280_device::device_start()
 	save_item(NAME(m_dma_mode));
 	save_item(NAME(m_dma_buffer));
 	save_item(NAME(m_dma_buffer_pos));
-	save_item(NAME(m_dma_byte));
-	save_item(NAME(m_last_dma_address));
 	save_item(NAME(m_fumeo));
 	save_item(NAME(m_perro));
 }
@@ -159,8 +154,6 @@ void olivetti_l1_go280_device::device_reset()
 	m_vector = 0;
 	m_control = 0;
 	m_dma_high = 0;
-	m_dma_channel1 = 0;
-	m_dma_flipflop = false;
 	m_fdc_drq = false;
 	m_fdc_index = false;
 	m_fdc_head_load = false;
@@ -170,8 +163,6 @@ void olivetti_l1_go280_device::device_reset()
 	m_dma_mode.fill(0);
 	m_dma_buffer.fill(0);
 	m_dma_buffer_pos = 0;
-	m_dma_byte = 0;
-	m_last_dma_address = 0;
 	m_fumeo = false;
 	m_perro = false;
 	m_fdc->set_rate(500000);
@@ -198,6 +189,12 @@ u8 olivetti_l1_go280_device::io_r(offs_t offset)
 	}
 	else switch (reg)
 	{
+	case 0x00:
+		// The resident block-transfer helper polls the low nibble here and
+		// proceeds when it reads 8.  This board-ready handshake is visible in
+		// ROM at 7F:1CA6 even though the functional register table starts at 1D.
+		data = 0x08;
+		break;
 	case 0x1d: data = m_fdc->msr_r(); break;
 	case 0x1f: data = m_fdc->fifo_r(); break;
 	case 0xe7:
@@ -205,7 +202,6 @@ u8 olivetti_l1_go280_device::io_r(offs_t offset)
 		// channel 1 fetches the first memory word for a disk write.  Disk reads
 		// begin with channel 2 filling the two board buffers.
 		m_dma_buffer_pos = 0;
-		m_dma_byte = 0;
 		m_dmac->dreq1_w(BIT(m_control, 6));
 		data = 0xff;
 		break;
@@ -227,7 +223,6 @@ u8 olivetti_l1_go280_device::io_r(offs_t offset)
 		break;
 	default: data = 0xff; break;
 	}
-	trace(TRACE_IO_R, reg, data);
 	return data;
 }
 
@@ -237,21 +232,8 @@ void olivetti_l1_go280_device::io_w(offs_t offset, u8 data)
 	u8 const reg = offset & 0xff;
 	if (reg >= 0x40 && reg <= 0x5e && !BIT(reg, 0))
 	{
-		if (reg == 0x58)
-			m_dma_flipflop = false;
-		else if (reg == 0x56)
+		if (reg == 0x56)
 			m_dma_mode[data & 3] = data;
-		else if (reg == 0x44)
-		{
-			if (!m_dma_flipflop)
-				m_dma_channel1 = (m_dma_channel1 & 0xff00) | data;
-			else
-			{
-				m_dma_channel1 = (m_dma_channel1 & 0x00ff) | (u16(data) << 8);
-				m_dma_byte = 0;
-			}
-			m_dma_flipflop = !m_dma_flipflop;
-		}
 		m_dmac->write((reg >> 1) & 0x0f, data);
 	}
 	else if (reg >= 0x99 && reg <= 0x9f && BIT(reg, 0))
@@ -269,19 +251,20 @@ void olivetti_l1_go280_device::io_w(offs_t offset, u8 data)
 		m_control = data;
 		m_interrupt_enable = BIT(data, 0);
 		downcast<go280_upd765a_device &>(*m_fdc).reset_w(BIT(data, 1) ? 0 : 1);
-		bool const diagnostic = BIT(data, 4);
 		if (!BIT(data, 1))
 			m_fdc_head_load = false;
-		m_fdc->set_ready_line_connected(!diagnostic);
-		if (diagnostic)
-			m_fdc->ready_w(false);
+		// Normal FDU wiring (G10=0111) reads READY from the selected drive.
+		// CONTR bit 4 is also used by normal software: treating it as a
+		// global READY override invents attention interrupts for absent units.
+		// The board diagnostic-test wiring/DIAG0 override is not modelled.
 		m_timer->write_clk2(m_fdc_index && m_fdc_head_load);
 		for (auto &connector : m_floppy)
 			if (floppy_image_device *const floppy = connector->get_device())
 				// GO280 is configured for 1 MB FDU drives; their spindle motors
 				// run continuously, unlike the MOTO1/MOTO2-controlled MFDU case.
 				floppy->mon_w(0);
-		if (!was_enabled && m_interrupt_enable && (m_fdc_latched || m_timer_latched || m_fumeo || m_perro))
+		// Do not replay source pulses that have already ended and been drained.
+		if (!was_enabled && m_interrupt_enable && (m_fdc_interrupt || m_timer_interrupt || m_fumeo || m_perro))
 			m_pending = true;
 		update_vi();
 		break;
@@ -301,7 +284,6 @@ void olivetti_l1_go280_device::io_w(offs_t offset, u8 data)
 		update_vi();
 		break;
 	}
-	trace(TRACE_IO_W, reg, data);
 }
 
 
@@ -314,7 +296,6 @@ void olivetti_l1_go280_device::fdc_intrq_w(int state)
 			m_pending = true;
 	}
 	m_fdc_interrupt = bool(state);
-	trace(TRACE_FDC_INT, 0, state ? 1 : 0);
 	update_vi();
 }
 
@@ -335,7 +316,6 @@ void olivetti_l1_go280_device::fdu_timer_out(int state)
 			m_pending = true;
 	}
 	m_timer_interrupt = bool(state);
-	trace(TRACE_TIMER, 0, state ? 1 : 0);
 	update_vi();
 }
 
@@ -344,7 +324,6 @@ void olivetti_l1_go280_device::fdu_index_w(int state)
 {
 	m_fdc_index = bool(state);
 	m_timer->write_clk2(state && m_fdc_head_load);
-	trace(TRACE_INDEX, 0, state ? 1 : 0);
 }
 
 
@@ -441,8 +420,7 @@ void olivetti_l1_go280_device::dma_fdc_w(u8 data)
 u32 olivetti_l1_go280_device::dma_phys(u16 word_address, unsigned byte)
 {
 	u32 const base = ((u32(m_dma_high) << 16) | word_address) << 1;
-	m_last_dma_address = (base + byte) & 0xffffff;
-	return m_last_dma_address;
+	return (base + byte) & 0xffffff;
 }
 
 
@@ -473,15 +451,12 @@ u8 olivetti_l1_go280_device::dma_memr(offs_t offset)
 				else
 				{
 					m_dma_buffer[byte] = data;
-					trace(TRACE_DMA_R, 0, data);
 				}
 			}
 			else
 			{
 				if (!physical_try_w(address, m_dma_buffer[byte]))
 					dma_memory_fault();
-				else
-					trace(TRACE_DMA_W, 0, m_dma_buffer[byte]);
 			}
 		}
 
@@ -490,9 +465,7 @@ u8 olivetti_l1_go280_device::dma_memr(offs_t offset)
 			--m_dma_high;
 		else if (!decrement && word_address == 0xffff)
 			++m_dma_high;
-		m_dma_channel1 = decrement ? word_address - 1 : word_address + 1;
 		m_dma_buffer_pos = 0;
-		m_dma_byte += 2;
 		// REQ00/BAXXN cover this memory-word transaction, not the complete
 		// internal AM9517 channel-1 acknowledge interval.
 		busreq_w(0);
@@ -539,7 +512,6 @@ void olivetti_l1_go280_device::update_vi()
 u16 olivetti_l1_go280_device::viack_r()
 {
 	m_pending = false;
-	trace(TRACE_VI_ACK, 0, m_vector);
 	update_vi();
 	return m_vector;
 }

@@ -2,6 +2,8 @@
 // copyright-holders: Salvatore Paxia
 
 #include "emu.h"
+
+#include "emuopts.h"
 #include "l1.h"
 
 olivetti_l1_slot_device::olivetti_l1_slot_device(machine_config const &mconfig, char const *tag, device_t *owner, u32 clock)
@@ -40,35 +42,99 @@ void olivetti_l1_bus_device::device_start()
 
 	validate_layout();
 
-	u32 base = 0x010000;
-	u32 backing_offset = 0;
-	unsigned ram_cards = 0;
-	bool const explicit_ram = std::any_of(m_chain.begin(), m_chain.end(),
-		[](device_olivetti_l1_card_interface const *card) { return card->is_ram() && card->ram_capacity(); });
+	struct automatic_board
+	{
+		u32 capacity;
+		char const *name;
+	};
+	std::array<automatic_board, 2> population =
+	{{
+		{ 0, nullptr },
+		{ 0, nullptr }
+	}};
+	switch (m_ram->size())
+	{
+	case  256 * 1024: population[0] = {  256 * 1024, "ME027-32 256 KB" }; break;
+	case  384 * 1024: population[0] = {  384 * 1024, "ME027-32 384 KB" }; break;
+	case  512 * 1024: population[0] = {  512 * 1024, "ME027-32 512 KB" }; break;
+	case  640 * 1024: population = {{ { 384 * 1024, "ME027-32 384 KB" }, { 256 * 1024, "ME027-32 256 KB" } }}; break;
+	case  768 * 1024: population = {{ { 512 * 1024, "ME027-32 512 KB" }, { 256 * 1024, "ME027-32 256 KB" } }}; break;
+	case  896 * 1024: population = {{ { 512 * 1024, "ME027-32 512 KB" }, { 384 * 1024, "ME027-32 384 KB" } }}; break;
+	case 1024 * 1024: population[0] = { 1024 * 1024, "RA57/C 1 MB" }; break;
+	case 1536 * 1024: population[0] = { 1536 * 1024, "RA57/B 1.5 MB" }; break;
+	case 2048 * 1024: population[0] = { 2048 * 1024, "RA57/A 2 MB" }; break;
+	default:
+		throw emu_fatalerror("M40 RAM size %u KB cannot be built from supported ME027-32/RA57 card populations",
+			m_ram->size() / 1024);
+	}
 
-	for (device_olivetti_l1_card_interface *const card : m_chain)
-		if (card->is_ram() && (!explicit_ram || card->ram_capacity()))
-			ram_cards++;
+	std::vector<device_olivetti_l1_card_interface *> automatic_cards;
+	std::vector<device_olivetti_l1_card_interface *> real_cards;
+	bool explicit_ram_card = false;
+	auto const ram_option = machine().options().get_entry(OPTION_RAMSIZE);
+	bool const ram_size_supplied = ram_option && ram_option->priority() > OPTION_PRIORITY_DEFAULT
+		&& machine().options().ram_size() && machine().options().ram_size()[0];
 
 	for (device_olivetti_l1_card_interface *const card : m_chain)
 	{
 		if (!card->is_ram())
 			continue;
 		u32 const capacity = card->ram_capacity();
-		if (explicit_ram && !capacity)
+		if (!capacity)
 		{
-			card->configure_ram(base, backing_offset, 0);
+			automatic_cards.push_back(card);
 			continue;
 		}
-		u32 const size = capacity ? capacity : m_ram->size();
-		if (size > 0x01000000 - base)
-			throw emu_fatalerror("Olivetti L1 RAM population exceeds the 24-bit physical address space at position %u", card->position() + 1);
-		card->configure_ram(base, backing_offset, size);
-		base += size;
-		backing_offset += size;
+
+		real_cards.push_back(card);
+		device_t const *const owner = card->device().owner();
+		if (owner)
+		{
+			char const *tag = owner->tag();
+			if (tag[0] == ':')
+				tag++;
+			auto const slot_option = machine().options().get_entry(tag);
+			explicit_ram_card |= slot_option && slot_option->priority() > OPTION_PRIORITY_DEFAULT;
+		}
 	}
-	if (!ram_cards)
-		throw emu_fatalerror("Olivetti L1 chassis has no RAM board");
+	if (ram_size_supplied && explicit_ram_card)
+		throw emu_fatalerror("-ramsize cannot be combined with explicit ME027-32/RA57 slot selections");
+
+	u32 base = 0x010000;
+	if (explicit_ram_card)
+	{
+		u8 const first_ram_position = (m_chassis == chassis::m30_m34) ? 0 : 1;
+		if (real_cards.empty() || real_cards.front()->position() != first_ram_position)
+			throw emu_fatalerror("Explicit RAM population must begin in physical position %u", first_ram_position + 1);
+		for (device_olivetti_l1_card_interface *const card : real_cards)
+		{
+			u32 const capacity = card->ram_capacity();
+			if (capacity > 0x01000000 - base)
+				throw emu_fatalerror("Olivetti L1 RAM population exceeds the 24-bit physical address space at position %u", card->position() + 1);
+			card->configure_ram(base, 0, capacity);
+			osd_printf_verbose("Olivetti L1 RAM: position %u, %s, physical %06X-%06X\n",
+				card->position() + 1, card->device().name(), base, base + capacity - 1);
+			base += capacity;
+		}
+	}
+	else
+	{
+		if (automatic_cards.size() < (population[1].capacity ? 2U : 1U))
+			throw emu_fatalerror("Olivetti L1 chassis lacks slots for the automatic RAM-card population");
+		u32 backing_offset = 0;
+		for (unsigned index = 0; index < automatic_cards.size(); index++)
+		{
+			u32 const capacity = (index < population.size()) ? population[index].capacity : 0;
+			automatic_cards[index]->configure_ram(base, backing_offset, capacity);
+			if (capacity)
+			{
+				osd_printf_verbose("Olivetti L1 RAM: position %u, automatic %s, physical %06X-%06X\n",
+					automatic_cards[index]->position() + 1, population[index].name, base, base + capacity - 1);
+				base += capacity;
+				backing_offset += capacity;
+			}
+		}
+	}
 
 	save_item(NAME(m_vi_state));
 	save_item(NAME(m_busreq_state));
@@ -212,13 +278,17 @@ void olivetti_l1_bus_device::update_vi()
 
 bool olivetti_l1_bus_device::vi_pending() const
 {
-	if (m_vi_state)
-		return true;
 	if (!m_cpu)
 		return false;
-	return m_cpu->local_vi_pending(interrupt_level::l1a)
-		|| m_cpu->local_vi_pending(interrupt_level::l1b)
-		|| m_cpu->local_vi_pending(interrupt_level::l2);
+	// VIENO gates level 2 as a whole, including governi, not just the UC timer.
+	// Keep requests latched at their source while masked; level 1 is unaffected.
+	for (device_olivetti_l1_card_interface *const card : m_chain)
+		if (BIT(m_vi_state, card->select()) && m_cpu->vi_enabled(card->vi_level()))
+			return true;
+	for (interrupt_level const level : { interrupt_level::l1a, interrupt_level::l1b, interrupt_level::l2 })
+		if (m_cpu->vi_enabled(level) && m_cpu->local_vi_pending(level))
+			return true;
+	return false;
 }
 
 void olivetti_l1_bus_device::update_busreq()
@@ -309,6 +379,8 @@ u16 olivetti_l1_bus_device::viack_r()
 
 	for (interrupt_level const level : { interrupt_level::l1a, interrupt_level::l1b, interrupt_level::l2 })
 	{
+		if (m_cpu && !m_cpu->vi_enabled(level))
+			continue;
 		if (level == interrupt_level::l1b)
 		{
 			for (auto card = m_chain.rbegin(); card != m_chain.rend(); ++card)
