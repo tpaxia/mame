@@ -113,7 +113,6 @@ olivetti_l1_go252_device::olivetti_l1_go252_device(machine_config const &mconfig
 	, m_palette(*this, "palette")
 	, m_screen(*this, "screen")
 	, m_keyboard(*this, "keyboard")
-	, m_crtc_write_cb(*this)
 {
 }
 
@@ -142,6 +141,7 @@ void olivetti_l1_go252_device::device_add_mconfig(machine_config &config)
 
 void olivetti_l1_go252_device::device_start()
 {
+	m_kbd_boot_timer = timer_alloc(FUNC(olivetti_l1_go252_device::kbd_boot_announce), this);
 	m_vram = std::make_unique<u8[]>(0x1000);
 	save_pointer(NAME(m_vram), 0x1000);
 	save_item(NAME(m_crtc_index));
@@ -155,9 +155,9 @@ void olivetti_l1_go252_device::device_start()
 	save_item(NAME(m_kbd_head));
 	save_item(NAME(m_kbd_tail));
 	save_item(NAME(m_kbd_count));
-	save_item(NAME(m_kbd_init_step));
-	save_item(NAME(m_kbd_probe_step));
 	save_item(NAME(m_kbd_irq_mode));
+	save_item(NAME(m_kbd_ident_reply));
+	save_item(NAME(m_kbd_poll_status));
 }
 
 
@@ -173,15 +173,36 @@ void olivetti_l1_go252_device::device_reset()
 	m_kbd_head = 0;
 	m_kbd_tail = 0;
 	m_kbd_count = 0;
-	m_kbd_init_step = 0;
-	m_kbd_probe_step = 0;
 	m_kbd_irq_mode = false;
+	m_kbd_ident_reply = false;
+	m_kbd_poll_status = false;
 	std::fill(std::begin(m_kbd_fifo), std::end(m_kbd_fifo), 0);
+	// The recovered 8049 firmware announces completion of its power-on ROM/RAM
+	// test with FC and repeats it until command 00 starts the foreground scanner.
+	m_kbd_fifo[0] = 0xfc;
+	m_kbd_head = 1;
+	m_kbd_count = 1;
+	m_kbd_boot_timer->adjust(attotime::from_msec(20), 0, attotime::from_msec(20));
 	update_vi();
 }
 
 
+TIMER_CALLBACK_MEMBER(olivetti_l1_go252_device::kbd_boot_announce)
+{
+	// The hardware has a one-byte transmit holding register rather than a FIFO:
+	// retain at most one unconsumed announcement in the HLE queue.
+	if (!m_kbd_irq_mode && !m_kbd_count)
+		kdc_queue_internal(0xfc, true);
+}
+
+
 void olivetti_l1_go252_device::kdc_queue(u8 data)
+{
+	kdc_queue_internal(data, true);
+}
+
+
+void olivetti_l1_go252_device::kdc_queue_internal(u8 data, bool interrupt)
 {
 	if (m_kbd_count == std::size(m_kbd_fifo))
 		return;
@@ -192,7 +213,7 @@ void olivetti_l1_go252_device::kdc_queue(u8 data)
 	// The BCOS mode written by the resident driver (0x16) uses bit 4 for
 	// keyboard receive; later diagnostic services use the explicit bit-7
 	// receive enable.
-	m_kdc_pending = BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode;
+	m_kdc_pending = interrupt && (BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode);
 	update_vi();
 }
 
@@ -205,7 +226,9 @@ u8 olivetti_l1_go252_device::keyboard_data_r()
 		m_kbd_tail = (m_kbd_tail + 1) & 0x0f;
 		m_kbd_count--;
 	}
-	m_kdc_pending = (BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode) && (m_kbd_count != 0);
+	m_kdc_pending = !m_kbd_ident_reply && (BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode) && (m_kbd_count != 0);
+	if (!m_kbd_count)
+		m_kbd_ident_reply = false;
 	update_vi();
 	return m_kdc_data;
 }
@@ -218,7 +241,7 @@ u8 olivetti_l1_go252_device::io_r(offs_t offset)
 	case 0x00:
 		if (m_kbd_count)
 			m_kdc_data_armed = true;
-		return 0x02 | (m_kbd_count ? ((BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode) ? 0x04 : 0x01) : 0x00);
+		return 0x02 | (m_kbd_count ? (m_kbd_poll_status ? 0x01 : ((BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode) ? 0x04 : 0x01)) : 0x00);
 
 	case 0x02:
 		if (m_kdc_data_armed && m_kbd_count)
@@ -252,6 +275,10 @@ void olivetti_l1_go252_device::io_w(offs_t offset, u8 data)
 	case 0x00:
 		m_kdc_ctrl = data;
 		m_kdc_data_armed = false;
+		// Data can have been queued while receive interrupts were disabled (most
+		// notably the firmware's startup FC).  Enabling RX must expose it now.
+		if (!m_kbd_ident_reply && m_kbd_count && (BIT(m_kdc_ctrl, 4) || BIT(m_kdc_ctrl, 7) || m_kbd_irq_mode))
+			m_kdc_pending = true;
 		update_vi();
 		break;
 
@@ -259,38 +286,34 @@ void olivetti_l1_go252_device::io_w(offs_t offset, u8 data)
 	{
 		m_kdc_data = data;
 		m_kdc_data_armed = false;
-		// The diagnostic environment selects the interrupting keyboard path with
-		// 00 01 02.  KEYTE1 later repeats identification after its longer
-		// initialization sequence.  Older software uses 01 02 and polls status
-		// bit 0; it does not expect identification bytes or a keyboard VI.
-		static constexpr u8 init_sequence[] = { 0x06, 0x08, 0x0a, 0x0c, 0x10 };
-		bool identify = false;
-		if (m_kbd_probe_step == 2 && data == 0x02)
-		{
-			identify = true;
-			m_kbd_probe_step = 0;
-		}
-		else if ((m_kbd_probe_step == 0 && data == 0x00) || (m_kbd_probe_step == 1 && data == 0x01))
-			m_kbd_probe_step++;
-		else
-			m_kbd_probe_step = (data == 0x00) ? 1 : 0;
-
-		if (m_kbd_init_step == std::size(init_sequence))
-		{
-			if (data == 0x02)
-				identify = true;
-			m_kbd_init_step = (data == init_sequence[0]) ? 1 : 0;
-		}
-		else if (data == init_sequence[m_kbd_init_step])
-			m_kbd_init_step++;
-		else
-			m_kbd_init_step = (data == init_sequence[0]) ? 1 : 0;
-
-		if (identify)
+		// The recovered 8049 firmware accepts independent commands 00-10.
+		// Command 00 completes its startup handshake, 01 reports the ROM/RAM
+		// self-test result, and 02 reports FB followed by the sampled keyboard
+		// configuration.  The remaining commands only affect MCU-local scan,
+		// indicator and beeper state, none of which changes the byte-level HLE.
+		//
+		// Gardini talks to the keyboard before command 00 and polls status bit 0;
+		// the diagnostic and resident drivers issue 00 and use keyboard VI.
+		if (data == 0x00)
 		{
 			m_kbd_irq_mode = true;
-			kdc_queue(0xfb);
-			kdc_queue(0xf1);
+			m_kbd_poll_status = false;
+			m_kbd_boot_timer->adjust(attotime::never);
+		}
+		else if (data == 0x01 || data == 0x02)
+		{
+			bool const polled = !m_kbd_irq_mode;
+			m_kbd_ident_reply = polled;
+			m_kbd_poll_status = polled;
+			if (data == 0x01)
+			{
+				kdc_queue_internal(0xfa, !polled);
+			}
+			else
+			{
+				kdc_queue_internal(0xfb, !polled);
+				kdc_queue_internal(0xf1, !polled);
+			}
 		}
 		update_vi();
 		break;
@@ -309,7 +332,6 @@ void olivetti_l1_go252_device::io_w(offs_t offset, u8 data)
 		if (m_crtc_index == 0x09)
 			m_crtc_max_ras = data & 0x1f;
 		m_crtc->register_w(data);
-		m_crtc_write_cb(m_crtc_index, data);
 		break;
 
 	case 0x6a:

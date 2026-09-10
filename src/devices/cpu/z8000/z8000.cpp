@@ -238,12 +238,14 @@ void z8002_device::WRMEM_L(memory_access<23, 1, 0, ENDIANNESS_BIG>::specific &sp
 
 uint8_t z8002_device::RDPORT_B(int mode, uint16_t addr)
 {
+	m_io_address = addr;
 	memory_access<16, 1, 0, ENDIANNESS_BIG>::specific &space = (mode == 0) ? m_io : m_sio;
 	return space.read_byte(addr);
 }
 
 uint16_t z8002_device::RDPORT_W(int mode, uint16_t addr)
 {
+	m_io_address = addr;
 	memory_access<16, 1, 0, ENDIANNESS_BIG>::specific &space = (mode == 0) ? m_io : m_sio;
 	if (BIT(addr, 0))
 		return swapendian_int16(space.read_word(addr & ~1, 0xffff));
@@ -253,6 +255,7 @@ uint16_t z8002_device::RDPORT_W(int mode, uint16_t addr)
 
 void z8002_device::WRPORT_B(int mode, uint16_t addr, uint8_t value)
 {
+	m_io_address = addr;
 	memory_access<16, 1, 0, ENDIANNESS_BIG>::specific &space = (mode == 0) ? m_io : m_sio;
 	uint16_t value16 = value | (value << 8);
 	space.write_word(addr & ~1, value16, BIT(addr, 0) ? 0x00ff : 0xff00);
@@ -260,6 +263,7 @@ void z8002_device::WRPORT_B(int mode, uint16_t addr, uint8_t value)
 
 void z8002_device::WRPORT_W(int mode, uint16_t addr, uint16_t value)
 {
+	m_io_address = addr;
 	memory_access<16, 1, 0, ENDIANNESS_BIG>::specific &space = (mode == 0) ? m_io : m_sio;
 	if (BIT(addr, 0))
 		space.write_word(addr & ~1, swapendian_int16(value), 0xffff);
@@ -557,6 +561,7 @@ void z8002_device::register_save_state()
 	save_item(NAME(m_regs.Q));
 	save_item(NAME(m_nmi_state));
 	save_item(NAME(m_irq_state));
+	save_item(NAME(m_io_address));
 	save_item(NAME(m_busreq_state));
 	save_item(NAME(m_busack_state));
 	save_item(NAME(m_mi));

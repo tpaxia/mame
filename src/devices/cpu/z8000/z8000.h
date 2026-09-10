@@ -62,6 +62,9 @@ protected:
 	static constexpr uint8_t Z8000_RESET   = 0x01;  /* reset flag  */
 
 public:
+	// Original I/O bus address, before the memory interface aligns a word.
+	u16 io_address() const { return m_io_address; }
+
 	/* CPU status codes */
 	enum
 	{
@@ -173,6 +176,7 @@ protected:
 	} m_regs;             /* registers */
 	int m_nmi_state;      /* NMI line state */
 	int m_irq_state[3];   /* IRQ line states (NVI, VI, SEGT) */
+	u16 m_io_address = 0;
 	int m_busreq_state;   /* bus request pin state */
 	int m_busack_state;   /* bus acknowledge pin state */
 	int m_mi;

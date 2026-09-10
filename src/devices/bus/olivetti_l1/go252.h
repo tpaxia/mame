@@ -19,7 +19,6 @@ class olivetti_l1_go252_device : public device_t, public device_olivetti_l1_card
 public:
 	olivetti_l1_go252_device(machine_config const &mconfig, char const *tag, device_t *owner, u32 clock = 0);
 
-	auto crtc_write_callback() { return m_crtc_write_cb.bind(); }
 
 	bool keyboard_data_available() const { return m_kbd_count != 0; }
 	u8 keyboard_data_r();
@@ -42,7 +41,9 @@ protected:
 	virtual void device_reset() override ATTR_COLD;
 
 private:
+	TIMER_CALLBACK_MEMBER(kbd_boot_announce);
 	void kdc_queue(u8 data);
+	void kdc_queue_internal(u8 data, bool interrupt);
 	void update_vi();
 	void palette_init(palette_device &palette) ATTR_COLD;
 	MC6845_UPDATE_ROW(crtc_update_row);
@@ -51,8 +52,7 @@ private:
 	required_device<palette_device> m_palette;
 	required_device<screen_device> m_screen;
 	required_device<olivetti_l1_keyboard_device> m_keyboard;
-
-	devcb_write8 m_crtc_write_cb;
+	emu_timer *m_kbd_boot_timer = nullptr;
 
 	std::unique_ptr<u8[]> m_vram;
 	u8 m_crtc_index = 0;
@@ -66,9 +66,9 @@ private:
 	u8 m_kbd_head = 0;
 	u8 m_kbd_tail = 0;
 	u8 m_kbd_count = 0;
-	u8 m_kbd_init_step = 0;
-	u8 m_kbd_probe_step = 0;
 	bool m_kbd_irq_mode = false;
+	bool m_kbd_ident_reply = false;
+	bool m_kbd_poll_status = false;
 };
 
 DECLARE_DEVICE_TYPE(OLIVETTI_L1_GO252, olivetti_l1_go252_device)

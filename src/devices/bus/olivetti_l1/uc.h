@@ -14,18 +14,12 @@
 #include "machine/pit8253.h"
 #include "machine/z8010.h"
 
-#include <cstdio>
-
 class olivetti_l1_go252_device;
-class olivetti_l1_go280_device;
 
 class olivetti_l1_uc042_device : public device_t, public device_olivetti_l1_cpu_card_interface
 {
 public:
 	olivetti_l1_uc042_device(machine_config const &mconfig, char const *tag, device_t *owner, u32 clock = 0);
-
-	void crtc_trace_w(offs_t offset, u8 data);
-	void floppy_trace_w(offs_t event, u32 data);
 
 	virtual u8 io_r(offs_t offset) override { return 0xff; }
 
@@ -43,10 +37,13 @@ private:
 	virtual void bus_vi_w(int state) override { update_vi(); }
 	virtual void bus_request_w(int state) override { m_cpu->set_input_line(INPUT_LINE_HALT, state ? ASSERT_LINE : CLEAR_LINE); }
 	virtual bool local_vi_pending(olivetti_l1_bus_device::interrupt_level level) const override;
+	virtual bool vi_enabled(olivetti_l1_bus_device::interrupt_level level) const override
+	{
+		return level != olivetti_l1_bus_device::interrupt_level::l2 || m_arb_vieno;
+	}
 	virtual u16 local_viack_r(olivetti_l1_bus_device::interrupt_level level) override;
 
 	olivetti_l1_go252_device *video_card() const;
-	olivetti_l1_go280_device *floppy_card() const;
 
 	void mem_map(address_map &map) ATTR_COLD { }
 	void io_map(address_map &map) ATTR_COLD;
@@ -66,7 +63,6 @@ private:
 	u16 segtack_r();
 	u16 nmiack_r();
 
-	void console_w(u8 data);
 	u8 nmi_status_r();
 	void nmi_ack_w(u8 data);
 	u8 config_r();
@@ -85,8 +81,8 @@ private:
 	u16 vi_ack_r();
 	u16 nviack_r();
 
-	u8 arb_r(offs_t offset);
-	void arb_w(offs_t offset, u8 data);
+	u16 arb_r(offs_t offset);
+	void arb_w(offs_t offset, u16 data, u16 mem_mask = ~0);
 	void arb_update();
 	TIMER_CALLBACK_MEMBER(arb_done);
 
@@ -97,13 +93,6 @@ private:
 	void diagnostic_lamps_w(offs_t offset, u8 data);
 	void timer_vector_w(u8 data) { m_timer_vector = data; }
 	void acia_vector_w(u8 data) { m_acia_vector = data; }
-
-	void debug_vram_w(offs_t address, u8 data, u16 mem_mask);
-	void debug_crtc_w(u8 reg, u8 data);
-	void debug_fdu(char const *event, u8 reg, u8 data);
-	void debug_diag_w(offs_t logical, offs_t physical, u16 data, u16 mem_mask);
-	void debug_pc_ctx(char const *event);
-	void debug_cpu_trace(bool ifetch1, bool translated, offs_t logical, offs_t physical, u16 opcode);
 
 	required_device<z8001_device> m_cpu;
 	required_device<z8010_device> m_mmu;
@@ -130,18 +119,15 @@ private:
 	emu_timer *m_arb_timer = nullptr;
 	u8 m_arb_req = 0;
 	u8 m_arb_grant = 0;
-	u8 m_arb_rel = 0;
+	u8 m_arb_rel = 0; // NV2-NV4 enable latches
 	bool m_arb_vieno = false;
 	bool m_masto = true;
 
-	std::FILE *m_vram_trace = nullptr;
-	std::FILE *m_fdu_trace = nullptr;
-	std::FILE *m_cpu_trace = nullptr;
-	bool m_cpu_trace_armed = false;
-	u32 m_cpu_trace_count = 0;
-	u32 m_cpu_trace_start = 0x003c0ce0;
-	u32 m_cpu_trace_prev_pc = 0xffffffff;
-	bool m_cpu_trace_bad_segment_zero = false;
+	// TEMP BCOS probe; tracked in re/BCOS_DEBUG_LEDGER.md. Not emulated state.
+	std::array<std::string, 4096> m_bcos_history;
+	u32 m_bcos_history_pos = 0;
+	bool m_bcos_history_dumped = false;
+	char const *m_bcos_history_path = nullptr;
 };
 
 DECLARE_DEVICE_TYPE(OLIVETTI_L1_UC042, olivetti_l1_uc042_device)
