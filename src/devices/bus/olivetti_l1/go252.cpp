@@ -241,6 +241,13 @@ u8 olivetti_l1_go252_device::io_r(offs_t offset)
 	case 0x00:
 		if (m_kbd_count)
 			m_kdc_data_armed = true;
+		// In RX-interrupt mode a normal byte sets RDRF (bit 0). Bit 2 is
+		// a status-change event: BCOS IKYB treats it as a keyboard reset,
+		// so asserting it for each byte restarts the initialization handshake.
+		// Keep the IRQ indication (bit 7) with RDRF until data is consumed;
+		// 1KYB otherwise mistakes the received event for transmit completion.
+		if (m_kbd_count && BIT(m_kdc_ctrl, 7))
+			return 0x83;
 		return 0x02 | (m_kbd_count ? (m_kbd_poll_status ? 0x01 : ((BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode) ? 0x04 : 0x01)) : 0x00);
 
 	case 0x02:
