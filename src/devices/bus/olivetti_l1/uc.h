@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders: Salvatore Paxia
+// copyright-holders:Salvatore Paxia
 
 #ifndef MAME_BUS_OLIVETTI_L1_UC_H
 #define MAME_BUS_OLIVETTI_L1_UC_H
