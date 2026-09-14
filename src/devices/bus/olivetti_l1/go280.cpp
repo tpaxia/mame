@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders: Salvatore Paxia
+// copyright-holders:Salvatore Paxia
 
 #include "emu.h"
 #include "go280.h"
@@ -96,10 +96,13 @@ void olivetti_l1_go280_device::device_add_mconfig(machine_config &config)
 	m_fdc->drq_wr_callback().set(FUNC(olivetti_l1_go280_device::fdc_drq_w));
 	m_fdc->hdl_wr_callback().set(FUNC(olivetti_l1_go280_device::fdu_head_load_w));
 	m_fdc->idx_wr_callback().set(FUNC(olivetti_l1_go280_device::fdu_index_w));
-	FLOPPY_CONNECTOR(config, "fdc:0", go280_floppies, "8dsdd", olivetti_l1_go280_device::floppy_formats);
+	// Provisional BCOS-facing image order: FD1, FD2, FD3, FD4 select
+	// controller units 1, 2, 3, 0.  Keep the electrical unit tags unchanged.
+	// Populate all four so default image instance numbering remains stable.
 	FLOPPY_CONNECTOR(config, "fdc:1", go280_floppies, "8dsdd", olivetti_l1_go280_device::floppy_formats);
-	FLOPPY_CONNECTOR(config, "fdc:2", go280_floppies, nullptr, olivetti_l1_go280_device::floppy_formats);
-	FLOPPY_CONNECTOR(config, "fdc:3", go280_floppies, nullptr, olivetti_l1_go280_device::floppy_formats);
+	FLOPPY_CONNECTOR(config, "fdc:2", go280_floppies, "8dsdd", olivetti_l1_go280_device::floppy_formats);
+	FLOPPY_CONNECTOR(config, "fdc:3", go280_floppies, "8dsdd", olivetti_l1_go280_device::floppy_formats);
+	FLOPPY_CONNECTOR(config, "fdc:0", go280_floppies, "8dsdd", olivetti_l1_go280_device::floppy_formats);
 
 	AM9517A(config, m_dmac, 8_MHz_XTAL / 2);
 	m_dmac->out_hreq_callback().set(FUNC(olivetti_l1_go280_device::dma_hreq_w));

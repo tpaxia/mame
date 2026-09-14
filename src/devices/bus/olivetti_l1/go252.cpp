@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders: Salvatore Paxia
+// copyright-holders:Salvatore Paxia
 
 #include "emu.h"
 #include "go252.h"
@@ -296,8 +296,9 @@ void olivetti_l1_go252_device::io_w(offs_t offset, u8 data)
 		// The recovered 8049 firmware accepts independent commands 00-10.
 		// Command 00 completes its startup handshake, 01 reports the ROM/RAM
 		// self-test result, and 02 reports FB followed by the sampled keyboard
-		// configuration.  The remaining commands only affect MCU-local scan,
-		// indicator and beeper state, none of which changes the byte-level HLE.
+		// configuration. Forward indicator commands to the keyboard outputs;
+		// MCU-local scan modes and beeper timing remain unimplemented.
+		m_keyboard->command_w(data);
 		//
 		// Gardini talks to the keyboard before command 00 and polls status bit 0;
 		// the diagnostic and resident drivers issue 00 and use keyboard VI.
@@ -306,6 +307,9 @@ void olivetti_l1_go252_device::io_w(offs_t offset, u8 data)
 			m_kbd_irq_mode = true;
 			m_kbd_poll_status = false;
 			m_kbd_boot_timer->adjust(attotime::never);
+			// Firmware reports non-default contacts after startup, and later
+			// sends another FD/status pair whenever a key switch changes.
+			m_keyboard->report_key_switches(true);
 		}
 		else if (data == 0x01 || data == 0x02)
 		{

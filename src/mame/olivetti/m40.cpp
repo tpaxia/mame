@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders: Salvatore Paxia
+// copyright-holders:Salvatore Paxia
 /***************************************************************************
 
     Olivetti M40 (L1 line)
@@ -21,6 +21,8 @@
 #include "bus/olivetti_l1/uc.h"
 
 #include "machine/ram.h"
+
+#include "m40.lh"
 
 namespace {
 
@@ -119,6 +121,7 @@ void m40_state::m40(machine_config &config)
 	// M40 and M44 use the fourteen-position INO74 layout: CPU in position 1,
 	// first RAM module in position 2.
 	l1_backplane(config, olivetti_l1_bus_device::chassis::m40_m44);
+	config.set_default_layout(layout_m40);
 }
 
 void m40_state::m44(machine_config &config)
