@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<!-- license:CC0-1.0 -->
+<!-- copyright-holders:Salvatore Paxia -->
+<mamelayout version="2">
+	<element name="panel">
+		<rect><color red="0.08" green="0.08" blue="0.08" /></rect>
+	</element>
+	<element name="ipl">
+		<text state="0" string="FLOPPY">
+			<color red="0.4" green="1.0" blue="0.4" />
+		</text>
+		<text state="1" string="HD">
+			<color red="0.4" green="1.0" blue="0.4" />
+		</text>
+	</element>
+	<element name="switch1">
+		<text state="1" string="K1: LEFT" />
+		<text state="2" string="K1: RIGHT" />
+		<text state="3" string="K1: NORMAL" />
+	</element>
+	<element name="switch2">
+		<text state="1" string="K2: RIGHT" />
+		<text state="2" string="K2: LEFT" />
+		<text state="3" string="K2: NORMAL" />
+	</element>
+	<element name="switch3">
+		<text state="1" string="K3: RIGHT" />
+		<text state="2" string="K3: LEFT" />
+		<text state="3" string="K3: NORMAL" />
+	</element>
+	<element name="led">
+		<disk state="0"><color red="0.12" green="0.16" blue="0.12" /></disk>
+		<disk state="1"><color red="0.35" green="1.0" blue="0.35" /></disk>
+	</element>
+	<element name="ready_label"><text string="READY" /></element>
+	<element name="l1_label"><text string="L1" /></element>
+	<element name="l2_label"><text string="L2" /></element>
+	<element name="shift_label"><text string="SHIFT" /></element>
+	<view name="Screen with IPL, key switches and keyboard LEDs">
+		<screen index="0">
+			<bounds x="0" y="0" width="640" height="480" />
+		</screen>
+		<element ref="panel">
+			<bounds x="0" y="480" width="640" height="56" />
+		</element>
+		<!-- Raw bit 1, shifted to states 0/1; independent of the default value. -->
+		<element ref="ipl" inputtag=":cpu:uc042:ISL" inputmask="0x02" inputraw="yes" clickthrough="yes">
+			<bounds x="8" y="488" width="240" height="16" />
+		</element>
+		<element ref="switch1" inputtag=":slot3:go252:keyboard:KEYSWITCHES" inputmask="0x03" inputraw="yes" clickthrough="yes">
+			<bounds x="258" y="488" width="118" height="16" />
+		</element>
+		<element ref="switch2" inputtag=":slot3:go252:keyboard:KEYSWITCHES" inputmask="0x0c" inputraw="yes" clickthrough="yes">
+			<bounds x="386" y="488" width="118" height="16" />
+		</element>
+		<element ref="switch3" inputtag=":slot3:go252:keyboard:KEYSWITCHES" inputmask="0x30" inputraw="yes" clickthrough="yes">
+			<bounds x="514" y="488" width="118" height="16" />
+		</element>
+		<!-- LEDs are host-commanded outputs, not clickable mode switches. -->
+		<element name="m40_kbd_led0" ref="led"><bounds x="36" y="516" width="10" height="10" /></element>
+		<element ref="ready_label"><bounds x="50" y="512" width="65" height="16" /></element>
+		<element name="m40_kbd_led1" ref="led"><bounds x="164" y="516" width="10" height="10" /></element>
+		<element ref="l1_label"><bounds x="178" y="512" width="50" height="16" /></element>
+		<element name="m40_kbd_led2" ref="led"><bounds x="268" y="516" width="10" height="10" /></element>
+		<element ref="l2_label"><bounds x="282" y="512" width="90" height="16" /></element>
+		<element name="m40_kbd_led3" ref="led"><bounds x="408" y="516" width="10" height="10" /></element>
+		<element ref="shift_label"><bounds x="422" y="512" width="65" height="16" /></element>
+		<!-- Fifth firmware output retained internally; lamp identity unverified. -->
+	</view>
+</mamelayout>

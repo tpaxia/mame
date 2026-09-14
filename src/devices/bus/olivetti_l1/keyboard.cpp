@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders: Salvatore Paxia
+// copyright-holders:Salvatore Paxia
 
 #include "emu.h"
 #include "keyboard.h"
@@ -14,6 +14,23 @@
 // carry the M40 legend and scancode; a trailing '?' marks a hypothesis awaiting
 // the KEYTE1 TEST 3 read-off.
 INPUT_PORTS_START( olivetti_l1_keyboard )
+	// Numbered by KEYTE1 display field, not an assumed physical/function order.
+	// 8049 firmware reports BUS=00 contacts as FD followed by (P2 | C0).
+	PORT_START("KEYSWITCHES")
+	PORT_CONFNAME(0x03, 0x03, "Key switch 1") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(olivetti_l1_keyboard_device::key_switch_changed), 0)
+	PORT_CONFSETTING(0x03, "Normal")
+	PORT_CONFSETTING(0x01, "Left")
+	PORT_CONFSETTING(0x02, "Right")
+	PORT_CONFNAME(0x0c, 0x0c, "Key switch 2") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(olivetti_l1_keyboard_device::key_switch_changed), 0)
+	PORT_CONFSETTING(0x0c, "Normal")
+	PORT_CONFSETTING(0x08, "Left")
+	PORT_CONFSETTING(0x04, "Right")
+	PORT_CONFNAME(0x30, 0x30, "Key switch 3") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(olivetti_l1_keyboard_device::key_switch_changed), 0)
+	PORT_CONFSETTING(0x30, "Normal")
+	PORT_CONFSETTING(0x20, "Left")
+	PORT_CONFSETTING(0x10, "Right")
+	PORT_BIT(0xc0, IP_ACTIVE_LOW, IPT_UNUSED)
+
 	PORT_START("K0")  // DEL 1..0 -= ~^ BS (digit chars live on the keypad)
 	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_DEL) PORT_NAME("DEL (06)") PORT_CHAR(UCHAR_MAMEKEY(DEL))
 	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_1) PORT_NAME("1 ! (01)")
@@ -48,7 +65,7 @@ INPUT_PORTS_START( olivetti_l1_keyboard )
 	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F9) PORT_NAME("CLEAR (37)") PORT_CHAR(UCHAR_MAMEKEY(F9))
 	// The alpha RETURN is a plain typing key: the boot prompt and the monitor menus
 	// read the KEYPAD terminator (0x61), not this one, so char 13 lives there.
-	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER) PORT_NAME("RETURN (35)") PORT_CONDITION("K3", 0x1000, EQUALS, 0)
+	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER) PORT_NAME("RETURN (35)")
 	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_UNUSED)
 
 	PORT_START("K2")  // KB-MODE A..L ;+ *: ]}
@@ -96,11 +113,12 @@ INPUT_PORTS_START( olivetti_l1_keyboard )
 	PORT_BIT(0x0010, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F5) PORT_NAME("F13/F5 (53)") PORT_CHAR(UCHAR_MAMEKEY(F5))
 	PORT_BIT(0x0020, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F6) PORT_NAME("F14/F6 (4B)") PORT_CHAR(UCHAR_MAMEKEY(F6))
 	PORT_BIT(0x0040, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F7) PORT_NAME("F15/F7 (56)") PORT_CHAR(UCHAR_MAMEKEY(F7))
-	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F8) PORT_NAME("F16/F8 (5A)") PORT_CHAR(UCHAR_MAMEKEY(F8))
+	// Host F12 avoids the macOS Control+F8 shortcut; retain the ANK code.
+	PORT_BIT(0x0080, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F12) PORT_NAME("F16/F8 (5A)") PORT_CHAR(UCHAR_MAMEKEY(F8))
 	PORT_BIT(0x0100, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_END) PORT_NAME("EXIT (3D)") PORT_CHAR(UCHAR_MAMEKEY(END))
 	PORT_BIT(0x0200, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_RALT) PORT_NAME("\\ fn row2 (42)")
 	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F10) PORT_NAME("E^ (43)") PORT_CHAR(UCHAR_MAMEKEY(F10))
-	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F12) PORT_NAME("( (41)")
+	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F8) PORT_NAME("( (41)")
 	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_PRTSCR) PORT_NAME(") (47)")
 	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_INSERT) PORT_NAME("ERASE (48)") PORT_CHAR(UCHAR_MAMEKEY(INSERT))
 	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_SCRLOCK) PORT_NAME("LIST (54)")
@@ -122,9 +140,7 @@ INPUT_PORTS_START( olivetti_l1_keyboard )
 	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_0_PAD) PORT_CHAR('0')
 	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_PLUS_PAD) PORT_NAME("Keypad 00 (68)")
 	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_NUMLOCK) PORT_NAME("Keypad 000 (65)")
-	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER_PAD) PORT_NAME("Keypad ENTER (61)") PORT_CHAR(13) PORT_CHAR(UCHAR_MAMEKEY(ENTER_PAD)) PORT_CONDITION("K3", 0x1000, EQUALS, 0)
-	// Temporary host-keyboard convenience for machines without a keypad.
-	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER) PORT_CODE(KEYCODE_ENTER_PAD) PORT_NAME("Keypad ENTER (Ctrl+Enter) (61)") PORT_CHAR(13) PORT_CHAR(UCHAR_MAMEKEY(ENTER_PAD)) PORT_CONDITION("K3", 0x1000, NOTEQUALS, 0)
+	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER_PAD) PORT_NAME("Keypad ENTER (61)") PORT_CHAR(13) PORT_CHAR(UCHAR_MAMEKEY(ENTER_PAD))
 
 	PORT_START("K6")  // SKIP, DEL LINE, top-right key, right 3x4 block
 	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_PGDN) PORT_NAME("SKIP tall (52)") PORT_CHAR(UCHAR_MAMEKEY(PGDN))
@@ -150,6 +166,8 @@ olivetti_l1_keyboard_device::olivetti_l1_keyboard_device(const machine_config &m
 	: device_t(mconfig, OLIVETTI_L1_KEYBOARD, tag, owner, clock)
 	, device_matrix_keyboard_interface(mconfig, *this, "K0", "K1", "K2", "K3", "K4", "K5", "K6")
 	, m_data_cb(*this)
+	, m_key_switches(*this, "KEYSWITCHES")
+	, m_leds(*this, "m40_kbd_led%u", 0U)
 {
 }
 
@@ -164,9 +182,40 @@ void olivetti_l1_keyboard_device::device_start()
 {
 }
 
+void olivetti_l1_keyboard_device::command_w(uint8_t data)
+{
+	// 8049 commands 05-0c and 0f-10 control five P1 outputs. KEYTE1's
+	// LED sequence identifies READY, L1, L2 and SHIFT; the fifth is unnamed.
+	// P1.4-2 are active low, P1.1-0 active high: odd commands light the
+	// indicator and the following even command extinguishes it.
+	if (data >= 0x05 && data <= 0x0c)
+		m_leds[(data - 0x05) / 2] = BIT(data, 0);
+	else if (data == 0x0f || data == 0x10)
+		m_leds[4] = BIT(data, 0);
+}
+
+void olivetti_l1_keyboard_device::report_key_switches(bool initial)
+{
+	u8 const status = m_key_switches->read() | 0xc0;
+	// Firmware initializes its previous sample to FF, so all-normal at
+	// startup produces no report. A later return to Normal does report FF.
+	if (initial && status == 0xff)
+		return;
+	m_data_cb(0xfd);
+	m_data_cb(status);
+}
+
+INPUT_CHANGED_MEMBER(olivetti_l1_keyboard_device::key_switch_changed)
+{
+	report_key_switches();
+}
+
 
 void olivetti_l1_keyboard_device::device_reset()
 {
+	// Firmware INIT writes P1=dc: all five indicators off.
+	for (auto &led : m_leds)
+		led = 0;
 	reset_key_state();
 	start_processing(attotime::from_hz(120 * 7)); // 120 complete matrix scans per second
 }
