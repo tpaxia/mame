@@ -71,9 +71,9 @@ void olivetti_l1_bus_device::device_start()
 	std::vector<device_olivetti_l1_card_interface *> automatic_cards;
 	std::vector<device_olivetti_l1_card_interface *> real_cards;
 	bool explicit_ram_card = false;
-	auto const ram_option = machine().options().get_entry(OPTION_RAMSIZE);
-	bool const ram_size_supplied = ram_option && ram_option->priority() > OPTION_PRIORITY_DEFAULT
-		&& machine().options().ram_size() && machine().options().ram_size()[0];
+	auto const ram_option = machine().options().find_slot_option(m_ram->slot_name());
+	bool const ram_size_supplied = ram_option && ram_option->specified()
+		&& !ram_option->value().empty();
 
 	for (device_olivetti_l1_card_interface *const card : m_chain)
 	{
@@ -98,7 +98,7 @@ void olivetti_l1_bus_device::device_start()
 		}
 	}
 	if (ram_size_supplied && explicit_ram_card)
-		throw emu_fatalerror("-ramsize cannot be combined with explicit ME027-32/RA57 slot selections");
+		throw emu_fatalerror("-ram cannot be combined with explicit ME027-32/RA57 slot selections");
 
 	u32 base = 0x010000;
 	if (explicit_ram_card)
