@@ -6,7 +6,7 @@
 
     The machine is assembled on an L1 backplane.  The M40 configuration uses
     a UC042 central unit, RAM board, GO252 video/keyboard governo and GO280
-    floppy governo.  The resident
+    floppy governo, with an optional GO363 hard-disk governo.  The resident
     autodiagnostic ROM is release 6.0.
 
 ***************************************************************************/
@@ -16,6 +16,7 @@
 #include "bus/olivetti_l1/l1.h"
 #include "bus/olivetti_l1/go252.h"
 #include "bus/olivetti_l1/go280.h"
+#include "bus/olivetti_l1/go363.h"
 #include "bus/olivetti_l1/ram.h"
 #include "bus/olivetti_l1/uc.h"
 
@@ -47,6 +48,7 @@ void m40_l1_cards(device_slot_interface &device)
 {
 	device.option_add("go252", OLIVETTI_L1_GO252);
 	device.option_add("go280", OLIVETTI_L1_GO280);
+	device.option_add("go363", OLIVETTI_L1_GO363);
 	device.option_add_internal("auto", OLIVETTI_L1_RAM);
 	l1_ram_cards(device);
 }
