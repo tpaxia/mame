@@ -30,6 +30,7 @@ private:
 
 	devcb_write8 m_data_cb;
 	required_ioport m_key_switches;
+	required_ioport m_host_alt;
 	output_finder<5> m_leds;
 };
 
