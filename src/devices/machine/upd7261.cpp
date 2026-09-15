@@ -188,8 +188,20 @@ void upd7261_device::device_reset()
 
 void upd7261_device::map(address_map &map)
 {
-	map(0x0, 0x0).rw(FUNC(upd7261_device::data_r), FUNC(upd7261_device::data_w));
-	map(0x1, 0x1).rw(FUNC(upd7261_device::status_r), FUNC(upd7261_device::command_w));
+	map(0x0, 0x1).rw(FUNC(upd7261_device::read), FUNC(upd7261_device::write));
+}
+
+u8 upd7261_device::read(offs_t offset)
+{
+	return BIT(offset, 0) ? status_r() : data_r();
+}
+
+void upd7261_device::write(offs_t offset, u8 data)
+{
+	if (BIT(offset, 0))
+		command_w(data);
+	else
+		data_w(data);
 }
 
 void upd7261_device::set_dreq(int state)
