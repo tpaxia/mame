@@ -122,12 +122,6 @@ private:
 	u8 m_arb_rel = 0; // NV2-NV4 enable latches
 	bool m_arb_vieno = false;
 	bool m_masto = true;
-
-	// TEMP BCOS probe; tracked in re/BCOS_DEBUG_LEDGER.md. Not emulated state.
-	std::array<std::string, 4096> m_bcos_history;
-	u32 m_bcos_history_pos = 0;
-	bool m_bcos_history_dumped = false;
-	char const *m_bcos_history_path = nullptr;
 };
 
 DECLARE_DEVICE_TYPE(OLIVETTI_L1_UC042, olivetti_l1_uc042_device)
