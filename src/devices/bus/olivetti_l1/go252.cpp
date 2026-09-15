@@ -210,10 +210,7 @@ void olivetti_l1_go252_device::kdc_queue_internal(u8 data, bool interrupt)
 	m_kbd_fifo[m_kbd_head] = data;
 	m_kbd_head = (m_kbd_head + 1) & 0x0f;
 	m_kbd_count++;
-	// The BCOS mode written by the resident driver (0x16) uses bit 4 for
-	// keyboard receive; later diagnostic services use the explicit bit-7
-	// receive enable.
-	m_kdc_pending = interrupt && (BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode);
+	m_kdc_pending = interrupt && m_kbd_irq_mode;
 	update_vi();
 }
 
@@ -226,7 +223,7 @@ u8 olivetti_l1_go252_device::keyboard_data_r()
 		m_kbd_tail = (m_kbd_tail + 1) & 0x0f;
 		m_kbd_count--;
 	}
-	m_kdc_pending = !m_kbd_ident_reply && (BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode) && (m_kbd_count != 0);
+	m_kdc_pending = !m_kbd_ident_reply && m_kbd_irq_mode && (m_kbd_count != 0);
 	if (!m_kbd_count)
 		m_kbd_ident_reply = false;
 	update_vi();
@@ -248,7 +245,7 @@ u8 olivetti_l1_go252_device::io_r(offs_t offset)
 		// 1KYB otherwise mistakes the received event for transmit completion.
 		if (m_kbd_count && BIT(m_kdc_ctrl, 7))
 			return 0x83;
-		return 0x02 | (m_kbd_count ? (m_kbd_poll_status ? 0x01 : ((BIT(m_kdc_ctrl, 4) || m_kbd_irq_mode) ? 0x04 : 0x01)) : 0x00);
+		return 0x02 | (m_kbd_count ? (m_kbd_poll_status ? 0x01 : (m_kbd_irq_mode ? 0x04 : 0x01)) : 0x00);
 
 	case 0x02:
 		if (m_kdc_data_armed && m_kbd_count)
@@ -284,7 +281,7 @@ void olivetti_l1_go252_device::io_w(offs_t offset, u8 data)
 		m_kdc_data_armed = false;
 		// Data can have been queued while receive interrupts were disabled (most
 		// notably the firmware's startup FC).  Enabling RX must expose it now.
-		if (!m_kbd_ident_reply && m_kbd_count && (BIT(m_kdc_ctrl, 4) || BIT(m_kdc_ctrl, 7) || m_kbd_irq_mode))
+		if (!m_kbd_ident_reply && m_kbd_count && (BIT(m_kdc_ctrl, 7) || m_kbd_irq_mode))
 			m_kdc_pending = true;
 		update_vi();
 		break;
@@ -353,7 +350,7 @@ void olivetti_l1_go252_device::io_w(offs_t offset, u8 data)
 
 void olivetti_l1_go252_device::update_vi()
 {
-	vi_w((m_kdc_pending && (BIT(m_kdc_ctrl, 4) || BIT(m_kdc_ctrl, 7))) || BIT(m_kdc_ctrl, 5));
+	vi_w((m_kdc_pending && BIT(m_kdc_ctrl, 7)) || BIT(m_kdc_ctrl, 5));
 }
 
 
