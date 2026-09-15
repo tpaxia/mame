@@ -6,9 +6,6 @@
 
 #include "go252.h"
 
-#include <cstdio>
-#include <cstdlib>
-
 namespace {
 
 constexpr offs_t EAROM_BASE = 0xe000;
@@ -74,7 +71,6 @@ void olivetti_l1_uc042_device::device_start()
 {
 	m_arb_timer = timer_alloc(FUNC(olivetti_l1_uc042_device::arb_done), this);
 	m_earom_nvram->set_base(m_earom, sizeof(m_earom));
-	m_bcos_history_path = std::getenv("BCOS_HISTORY");
 
 	for (int const spacenum : { int(AS_PROGRAM), int(AS_DATA), int(z8001_device::AS_STACK) })
 	{
@@ -176,11 +172,6 @@ u16 olivetti_l1_uc042_device::physical_word_r(offs_t address, u16 mem_mask)
 void olivetti_l1_uc042_device::physical_word_w(offs_t address, u16 data, u16 mem_mask)
 {
 	address &= 0xffffff;
-	// TEMP: identify writes to the two interrupt-save copies of R2.
-	if (m_bcos_history_path && !m_bcos_history_dumped && machine().time() >= attotime::from_seconds(68)
-		&& (address == 0x02262c || address == 0x0227e4))
-		osd_printf_info("BCOS_SAVE t=%.9f pc=%08X phys=%06X data=%04X mask=%04X\n",
-			machine().time().as_double(), unsigned(m_cpu->pc()), unsigned(address), data, mem_mask);
 	bool responded = true;
 	if (ACCESSING_BITS_8_15)
 	{
@@ -227,28 +218,6 @@ bool olivetti_l1_uc042_device::xlate(int spacenum, bool write, offs_t &address)
 
 u16 olivetti_l1_uc042_device::mem_r(address_space &space, offs_t offset, u16 mem_mask)
 {
-	// TEMP: retain only the last 4096 IFETCH1 register sets and dump once when
-	// the scheduler's queue pointer changes segment. No emulated reads/writes.
-	if (m_bcos_history_path && !m_bcos_history_dumped && space.spacenum() == AS_PROGRAM
-		&& m_cpu->is_ifetch1() && machine().time() >= attotime::from_seconds(68))
-	{
-		std::string line = util::string_format("t=%.9f pc=%08X fcw=%04X", machine().time().as_double(),
-			unsigned(m_cpu->pc()), unsigned(m_cpu->state_int(Z8000_FCW)));
-		for (int r = 0; r < 16; r++)
-			line += util::string_format(" r%d=%04X", r, unsigned(m_cpu->state_int(Z8000_R0 + r)));
-		m_bcos_history[m_bcos_history_pos++ % m_bcos_history.size()] = std::move(line);
-		if (m_cpu->pc() == 0x00020912 && m_cpu->state_int(Z8000_R2) != 0)
-		{
-			if (std::FILE *const out = std::fopen(m_bcos_history_path, "w"))
-			{
-				unsigned const count = std::min<unsigned>(m_bcos_history_pos, m_bcos_history.size());
-				for (unsigned i = m_bcos_history_pos - count; i < m_bcos_history_pos; i++)
-					std::fprintf(out, "%s\n", m_bcos_history[i % m_bcos_history.size()].c_str());
-				std::fclose(out);
-			}
-			m_bcos_history_dumped = true;
-		}
-	}
 	offs_t address = offset << 1;
 	// SUP suppresses the violating transfer and subsequent data accesses through
 	// the end of the instruction.  A first-word fetch releases it in xlate().
