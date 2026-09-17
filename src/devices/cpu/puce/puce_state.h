@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders:Salvatore Paxia
+// copyright-holders: Salvatore Paxia
 #ifndef MAME_CPU_PUCE_PUCE_STATE_H
 #define MAME_CPU_PUCE_PUCE_STATE_H
 

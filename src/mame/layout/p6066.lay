@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <!--
 license:CC0-1.0
-copyright-holders:Salvatore Paxia
+copyright-holders: Salvatore Paxia
 -->
 <mamelayout version="2">
 <element name="case"><rect><color red="0.12" green="0.15" blue="0.16"/></rect></element>

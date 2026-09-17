@@ -1,3 +1,5 @@
+<!-- copyright-holders: Salvatore Paxia -->
+
 # GOINO/CONDY console increment
 
 The `p6066` machine now executes the reference CAROM from reset through its

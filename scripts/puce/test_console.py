@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # license:BSD-3-Clause
-# copyright-holders:Salvatore Paxia
+# copyright-holders: Salvatore Paxia
 """ROM-free tests of the live GOINO/CONDY transaction state."""
 from pathlib import Path
 import subprocess

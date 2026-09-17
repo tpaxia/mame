@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders:Salvatore Paxia
+// copyright-holders: Salvatore Paxia
 
 // Initial, deliberately partial CPU19/PUCE disassembler.
 // Source: Olivetti CPU19 Tabella Microistruzioni, publication 801.30.1,

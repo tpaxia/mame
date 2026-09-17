@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # license:BSD-3-Clause
-# copyright-holders:Salvatore Paxia
+# copyright-holders: Salvatore Paxia
 """Compile and test the actual PUCE disassembler without a full MAME build.
 
 No ROM files are required. Expected strings are transcribed instruction

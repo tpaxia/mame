@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders:Salvatore Paxia
+// copyright-holders: Salvatore Paxia
 #ifndef MAME_MACHINE_P6066_GOINO_STATE_H
 #define MAME_MACHINE_P6066_GOINO_STATE_H
 #pragma once

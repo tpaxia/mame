@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders:Salvatore Paxia
+// copyright-holders: Salvatore Paxia
 #include "emu.h"
 #include "p6066_goino.h"
 

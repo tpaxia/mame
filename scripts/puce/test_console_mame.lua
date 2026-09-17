@@ -1,5 +1,5 @@
 -- license:BSD-3-Clause
--- copyright-holders:Salvatore Paxia
+-- copyright-holders: Salvatore Paxia
 -- Integration fixture: original CAROM, then synthetic PUCE in RAM, then reset.
 -- See docs/p6066/console.md. No original ROM is modified.
 local machine = manager.machine

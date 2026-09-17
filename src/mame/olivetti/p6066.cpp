@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders:Salvatore Paxia
+// copyright-holders: Salvatore Paxia
 
 // Development-only P6066 CPU bring-up configuration.
 // The merged reference CAROM is verified as an analysis input, but physical

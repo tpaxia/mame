@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders:Salvatore Paxia
+// copyright-holders: Salvatore Paxia
 
 // CPU19 bring-up: register operations and basic byte memory transfers.
 // Timing is provisional (one fetch + one execute scheduling quantum).

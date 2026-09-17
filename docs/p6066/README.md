@@ -1,3 +1,5 @@
+<!-- copyright-holders: Salvatore Paxia -->
+
 # P6066 bring-up branch
 
 Work started 2026-09-17 on branch `P6066`, based on upstream master

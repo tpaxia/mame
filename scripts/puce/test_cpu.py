@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # license:BSD-3-Clause
-# copyright-holders:Salvatore Paxia
+# copyright-holders: Salvatore Paxia
 """Test live PUCE state and optionally the reference CAROM (not distributed)."""
 import argparse
 import hashlib
