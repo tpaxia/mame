@@ -1104,6 +1104,15 @@ if opt_tool(CPUS, "IE15") then
 end
 
 --------------------------------------------------
+-- Olivetti CPU19 (PUCE1/PUCE2), disassembler-only bring-up
+--------------------------------------------------
+
+if opt_tool(CPUS, "PUCE") then
+	table.insert(disasm_files, MAME_DIR .. "src/devices/cpu/puce/pucedasm.cpp")
+	table.insert(disasm_files, MAME_DIR .. "src/devices/cpu/puce/pucedasm.h")
+end
+
+--------------------------------------------------
 -- Intel MCS-40
 --@src/devices/cpu/mcs40/mcs40.h,CPUS["MCS40"] = true
 --------------------------------------------------

@@ -158,6 +158,7 @@ using util::BIT;
 #include "cpu/pps4/pps4dasm.h"
 #include "cpu/pps41/pps41d.h"
 #include "cpu/psx/psxdasm.h"
+#include "cpu/puce/pucedasm.h"
 #include "cpu/rii/riidasm.h"
 #include "cpu/romp/rompdasm.h"
 #include "cpu/rsp/rsp_dasm.h"
@@ -614,6 +615,7 @@ static const dasm_table_entry dasm_table[] =
 	{ "prime64r",        be, -1, []() -> util::disasm_interface * { return new prime64r_disassembler; } },
 	{ "prime64v",        be, -1, []() -> util::disasm_interface * { return new prime64v_disassembler; } },
 	{ "psxcpu",          le,  0, []() -> util::disasm_interface * { return new psxcpu_disassembler; } },
+	{ "puce",            be, -1, []() -> util::disasm_interface * { return new puce_disassembler; } },
 	{ "r65c02",          le,  0, []() -> util::disasm_interface * { return new r65c02_disassembler; } },
 	{ "r65c19",          le,  0, []() -> util::disasm_interface * { return new r65c19_disassembler; } },
 	{ "r800",            le,  0, []() -> util::disasm_interface * { return new r800_disassembler; } },
