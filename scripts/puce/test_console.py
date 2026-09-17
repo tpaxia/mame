@@ -8,7 +8,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 TEST = r'''
-#include "machine/p6066_goino_state.h"
+#include "bus/p6066/goino_state.h"
 #include <cassert>
 #include <iostream>
 int main()

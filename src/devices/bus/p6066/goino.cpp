@@ -1,12 +1,13 @@
 // license:BSD-3-Clause
 // copyright-holders: Salvatore Paxia
 #include "emu.h"
-#include "p6066_goino.h"
+#include "goino.h"
 
 DEFINE_DEVICE_TYPE(P6066_GOINO, p6066_goino_device, "p6066_goino", "Olivetti P6066 GOINO/CONDY (partial)")
 
 p6066_goino_device::p6066_goino_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
 	: device_t(mconfig, P6066_GOINO, tag, owner, clock)
+	, device_p6066_card_interface(mconfig, *this)
 	, m_lamps(*this, "console_lamp%u", 0U)
 	, m_selected(*this, "console_selected")
 	, m_strobes(*this, "console_strobes")
@@ -42,7 +43,7 @@ void p6066_goino_device::update_outputs()
 
 
 // GOINO direct selection is masked outside level 4 (manual PDF pp.8,16).
-// No external controllers/interrupt owners exist in this development machine.
+// The backplane routes interrupt-owned inputs to the servicing controller.
 // Undriven inputs use logical zero; see docs/p6066/reset-inputs.md for evidence
 // and the outstanding PUCE pull-up/CPU-name jumper verification.
 u16 p6066_goino_device::name_type_r(offs_t level)
@@ -68,7 +69,7 @@ void p6066_goino_device::select_w(u8 data)
 void p6066_goino_device::data_w(offs_t level, u16 data)
 {
 	if (!m_state.data(data, level))
-		fatalerror("GOINO bring-up: unsupported output %04X at level %u\n", data, unsigned(level));
+		fatalerror("GOINO bring-up: unsupported output %04X at level %u (%s)\n", data, unsigned(level), machine().describe_context());
 	update_outputs();
 }
 

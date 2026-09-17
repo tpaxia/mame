@@ -27,10 +27,31 @@ int main(int argc, char **argv)
     assert(c.pc() == 0x8089 && c.l[1] == 0x8001 && c.level == 4);
     assert(c.execute_register(0xbd10)); assert(c.pc() == 0x8001);
     c.l[13] = 0x56ff; assert(c.enter_level(2)); c.advance();
-    assert(c.pc() == 0 && c.l[13] == 0x5600);
+    assert(c.pc() == 0x8200 && c.l[13] == 0x5600);
     c.l[12] = 0x78ff; assert(c.enter_level(1)); c.advance();
-    assert(c.pc() == 0 && c.l[12] == 0x7800);
+    assert(c.pc() == 0x8100 && c.l[12] == 0x7800);
     c.leave_level(); assert(c.level == 2); c.leave_level(); assert(c.level == 3);
+    // UC020 L03: independent reset and interrupt-page selectors, not B12/B13.
+    for (unsigned reset : {0x8000U, 0xc000U})
+        for (unsigned base : {0x8000U, 0xc000U}) {
+            puce_state q; q.reset_base=reset; q.interrupt_base=base; q.reset();
+            assert(q.pc()==reset); q.l[0]=0x4567;
+            assert(q.execute_register(0xbd00) && q.pc()==0x4567);
+            q.l[13]=0x55ff; assert(q.enter_level(2));
+            assert(q.pc()==(base|0x2ff)); q.advance();
+            assert(q.pc()==(base|0x200) && q.l[13]==0x5500);
+            q.l[12]=0xaa0c; assert(q.enter_level(1));
+            assert(q.pc()==(base|0x10c)); q.advance();
+            assert(q.execute_register(0x0110));
+            assert(q.pc()==(base|0x110) && q.l[12]==0xaa10);
+            q.di=0; assert(q.execute_register(0x62fe));
+            assert(q.pc()==(base|0x1fe)); q.advance(); q.advance();
+            assert(q.pc()==(base|0x100) && q.l[12]==0xaa00);
+            assert(q.indirect(12)==0); // ordinary short data addresses stay low
+            q.leave_level(); assert(q.pc()==(base|0x200));
+            q.leave_level(); assert(q.pc()==0x4567);
+        }
+
     c.l[11] = 0xabcd; c.l[12] = 0xabcd;
     assert(c.indirect(11) == 0xabcd && c.indirect(12) == 0xcd);
     c.set_pc(0x9fff); c.advance(); assert(c.execute_register(0x0123));

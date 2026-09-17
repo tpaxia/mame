@@ -19,7 +19,7 @@ the complete architecture, evidence references and acceptance gates.
 The `P6066` branch is published at https://github.com/tpaxia/mame/tree/P6066.
 `origin` is the tpaxia fork; `upstream` is mamedev/mame.
 
-This is an early M0/M1 increment, **not a bootable P6066**.
+CAROM and the disk-to-firmware loader handoff pass; **operating-system startup remains incomplete**.
 
 * Added `puce_device` and the `p6066` development machine. The CPU executes
   a documented subset of register/logic/branch operations and direct/indexed
@@ -29,7 +29,7 @@ This is an early M0/M1 increment, **not a bootable P6066**.
   level 1/2 addressing. Reset selects level 3 at word 8000; fetch advances
   the selected counter before execution. COM0/COM1 currently model internal
   context selection and ECORN release. COM3 asserts ECORN persistently;
-  external interrupt circuitry and controller reset fan-out remain absent.
+  the bus now distributes controller reset and arbitrates external requests.
 * The live architectural state is shared with standalone tests. It is not
   a separate reference emulator. Counter boundaries, register aliasing, flags,
   byte ordering and unsupported operations have focused regression checks.
@@ -38,7 +38,13 @@ This is an early M0/M1 increment, **not a bootable P6066**.
   then enumerates memory and reaches floppy selection E0. With no controller,
   firmware displays timeout lamps 8084 and loops at 80B6. See
   [bootstrap boundary and evidence limits](bootstrap-boundary.md).
-  No entry-point bypass is required; no disk has been read.
+  No entry-point bypass is required. With FLODI and archive disk 121 attached,
+  the first 22-sector command now completes; its 2,816 bytes match the original
+  image in guest RAM. An injected media CRC error produces the expected status.
+  See [FLODI evidence and test](flodi-evidence.md). With the documented ME006
+  board installed, all four disk-121 load blocks (23,424 bytes) match RAM and
+  CAROM transfers to level 3 at word 1000 after 206 sector reads. See
+  [ME006 bootstrap acceptance](me006-bootstrap.md).
 * Added a functional console panel, live lamp outputs, a 222-by-7-dot display
   renderer and a restart control. A synthetic PUCE integration fixture verifies
   display output and restart. See [console details and tests](console.md).
@@ -55,18 +61,21 @@ This is an early M0/M1 increment, **not a bootable P6066**.
   are documented in [reset-inputs.md](reset-inputs.md).
 * ROM inventory tooling records hashes. No ROM bytes are distributed here.
 
-The machine uses a provisional lower 64KB RAM map and the merged 4KB CAROM
-reference at word 8000. Physical ROM mapping/revision and RAM-board population
+The default removable boards provide lower 64KB RAM, 28KB visible ME006 RAM
+at words 8800–BFFF, and the merged 4KB CAROM reference at word 8000. See [backplane configuration](backplane.md) for slot
+options, board replacement and validation. Physical ROM mapping/revision and RAM-board population
 remain unresolved. Two scheduling quanta per instruction and a 1MHz device
 clock are placeholders, **not hardware timing**. Only established reset
 state is changed on reset; remaining registers start at deterministic zero
 on initial construction, with no claim that hardware clears them.
 
-Bus slots, memory boards, DMA, external interrupt requests/arbitration,
-console button/keyboard input, FLODI and GISA2 are not implemented. GOINO/CONDY
+Bus slots, separate memory boards and functional external interrupt arbitration
+are implemented. FLODI's first read-command gate passes; controller writes,
+DMA, console button/keyboard input and GISA2 are not implemented. GOINO/CONDY
 only implements the direct output subset described in the console notes. Save items include execution phase and
 architectural state, but save/restore integration remains untested. No complete
-hardware-conformance or disk-bootstrap gate has passed.
+hardware-conformance or ESE-startup gate has passed. The disk-to-firmware
+loader gate passes; execution subsequently stops on unsupported GOINO F400.
 
 ## Sources for this increment
 

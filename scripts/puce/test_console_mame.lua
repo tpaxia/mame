@@ -4,7 +4,7 @@
 -- See docs/p6066/console.md. No original ROM is modified.
 local machine = manager.machine
 local cpu = machine.devices[":maincpu"]
-local console = machine.devices[":console"]
+local console = machine.devices[":bus:console:goino"]
 local screen = machine.screens[":screen"]
 local function out(name) return console:output(name):get() end
 local function check_cold()
@@ -12,8 +12,8 @@ local function check_cold()
     assert(cpu.state["IR"].value == 0x00b6 and (cpu.state["PC"].value == 0x80b6 or cpu.state["PC"].value == 0x80b7), "Expected firmware timeout loop")
     assert(cpu.state["ECORN"].value == 0, "Timeout COM3 did not assert controller reset")
     assert(cpu.state["LEVEL"].value == 4 and cpu.state["L1"].value == 0x8226, "Bootstrap handler not installed")
-    assert(cpu.state["INVALID"].value == 30, "Unexpected memory enumeration faults")
-    assert(machine.devices[":"]:output("floppy_selects"):get() == 1, "Bootstrap did not select controller E0")
+    assert(cpu.state["INVALID"].value == (machine.devices[":bus:microcode:me006"] and 16 or 30), "Unexpected memory enumeration faults")
+    assert(machine.devices[":bus"]:output("floppy_selects"):get() == 1, "Bootstrap did not select controller E0")
     local space = cpu.spaces["program"]
     assert(space:read_u16(2) == 0x4000 and space:read_u16(3) == 0x1000, "Bootstrap parameters")
     assert((space:read_u16(7) >> 8) == 0x80, "RAM extent byte")

@@ -5809,15 +5809,3 @@ if MACHINES["AT_SSRT"] then
 		MAME_DIR .. "src/devices/machine/at_ssrt.h",
 	}
 end
-
---------------------------------------------------
--- Olivetti P6066 integrated console
---@src/devices/machine/p6066_goino.h,MACHINES["P6066_GOINO"] = true
---------------------------------------------------
-if MACHINES["P6066_GOINO"] then
-    files {
-        MAME_DIR .. "src/devices/machine/p6066_goino.cpp",
-        MAME_DIR .. "src/devices/machine/p6066_goino.h",
-        MAME_DIR .. "src/devices/machine/p6066_goino_state.h",
-    }
-end

@@ -3,13 +3,19 @@
 #ifndef MAME_MACHINE_P6066_GOINO_H
 #define MAME_MACHINE_P6066_GOINO_H
 #pragma once
-#include "p6066_goino_state.h"
+#include "goino_state.h"
+#include "p6066.h"
 #include "screen.h"
 
-class p6066_goino_device : public device_t
+class p6066_goino_device : public device_t, public device_p6066_card_interface
 {
 public:
 	p6066_goino_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
+	virtual void select(u8 name) override { select_w(name); }
+	virtual bool direct_selected() const override { return m_state.selected; }
+	virtual u16 name_type(unsigned level) override { return name_type_r(level); }
+	virtual u8 input_data(unsigned level) override { return input_data_r(level); }
+	virtual void output_data(unsigned level, u16 data) override { data_w(level,data); }
 	u16 name_type_r(offs_t level);
 	u8 input_data_r(offs_t level);
 	void select_w(u8 data);

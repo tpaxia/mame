@@ -35,32 +35,32 @@ copyright-holders: Salvatore Paxia
 <screen index="0"><bounds x="6" y="13" width="88" height="2.775"/></screen>
 <element ref="key" ><bounds x="5" y="23" width="16" height="5"/></element>
 <element ref="label0" ><bounds x="5.5" y="23.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="console:console_lamp8" ><bounds x="7" y="26" width="12" height="1"/></element>
+<element ref="lamp" name="bus:console:goino:console_lamp8" ><bounds x="7" y="26" width="12" height="1"/></element>
 <element ref="key" ><bounds x="23" y="23" width="16" height="5"/></element>
 <element ref="label1" ><bounds x="23.5" y="23.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="console:console_lamp14" ><bounds x="25" y="26" width="12" height="1"/></element>
+<element ref="lamp" name="bus:console:goino:console_lamp14" ><bounds x="25" y="26" width="12" height="1"/></element>
 <element ref="key" ><bounds x="41" y="23" width="16" height="5"/></element>
 <element ref="label2" ><bounds x="41.5" y="23.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="console:console_lamp12" ><bounds x="43" y="26" width="12" height="1"/></element>
+<element ref="lamp" name="bus:console:goino:console_lamp12" ><bounds x="43" y="26" width="12" height="1"/></element>
 <element ref="key" ><bounds x="59" y="23" width="16" height="5"/></element>
 <element ref="label3" ><bounds x="59.5" y="23.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="console:console_lamp10" ><bounds x="61" y="26" width="12" height="1"/></element>
+<element ref="lamp" name="bus:console:goino:console_lamp10" ><bounds x="61" y="26" width="12" height="1"/></element>
 <element ref="key" ><bounds x="23" y="30" width="16" height="5"/></element>
 <element ref="label4" ><bounds x="23.5" y="30.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="console:console_lamp15" ><bounds x="25" y="33" width="12" height="1"/></element>
+<element ref="lamp" name="bus:console:goino:console_lamp15" ><bounds x="25" y="33" width="12" height="1"/></element>
 <element ref="key" ><bounds x="41" y="30" width="16" height="5"/></element>
 <element ref="label5" ><bounds x="41.5" y="30.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="console:console_lamp11" ><bounds x="43" y="33" width="12" height="1"/></element>
+<element ref="lamp" name="bus:console:goino:console_lamp11" ><bounds x="43" y="33" width="12" height="1"/></element>
 <element ref="key" ><bounds x="59" y="30" width="16" height="5"/></element>
 <element ref="label6" ><bounds x="59.5" y="30.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="console:console_lamp13" ><bounds x="61" y="33" width="12" height="1"/></element>
-<element ref="status" name="console:console_lamp7" ><bounds x="81" y="23.0" width="1.4" height="1.4"/></element>
+<element ref="lamp" name="bus:console:goino:console_lamp13" ><bounds x="61" y="33" width="12" height="1"/></element>
+<element ref="status" name="bus:console:goino:console_lamp7" ><bounds x="81" y="23.0" width="1.4" height="1.4"/></element>
 <element ref="ledtext0" ><bounds x="84" y="23.0" width="9" height="1.4"/></element>
-<element ref="status" name="console:console_lamp6" ><bounds x="81" y="26.2" width="1.4" height="1.4"/></element>
+<element ref="status" name="bus:console:goino:console_lamp6" ><bounds x="81" y="26.2" width="1.4" height="1.4"/></element>
 <element ref="ledtext1" ><bounds x="84" y="26.2" width="9" height="1.4"/></element>
-<element ref="status" name="console:console_lamp5" ><bounds x="81" y="29.4" width="1.4" height="1.4"/></element>
+<element ref="status" name="bus:console:goino:console_lamp5" ><bounds x="81" y="29.4" width="1.4" height="1.4"/></element>
 <element ref="ledtext2" ><bounds x="84" y="29.4" width="9" height="1.4"/></element>
-<element ref="status" name="console:console_lamp4" ><bounds x="81" y="32.6" width="1.4" height="1.4"/></element>
+<element ref="status" name="bus:console:goino:console_lamp4" ><bounds x="81" y="32.6" width="1.4" height="1.4"/></element>
 <element ref="ledtext3" ><bounds x="84" y="32.6" width="9" height="1.4"/></element>
 <element ref="key" inputtag="PANEL" inputmask="0x01"><bounds x="5" y="30" width="16" height="5"/></element>
 <element ref="restart" ><bounds x="6" y="31.5" width="14" height="1.7"/></element>

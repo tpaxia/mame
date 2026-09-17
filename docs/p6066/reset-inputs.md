@@ -3,9 +3,9 @@
 # COM3 and initial input-bus checks
 
 Cold CAROM now executes COM3 at word 802C and the input checks at 802D–8035.
-That increment stopped before executing ADDA A3,B2 (`9632`) at word **8039**, with next PC
-803A. [Arithmetic support](arithmetic.md) subsequently advances the current
-stop to MLIP/804E. Neither checkpoint completes self-test.
+Historical checkpoints stopped at ADDA/8039 and then MLIP/804E. The current
+implementation reaches [disk firmware entry](me006-bootstrap.md); the reset
+electrical evidence limitations below remain relevant.
 
 ## CPU behavior
 
@@ -14,8 +14,8 @@ execution level unchanged. The line remains asserted across following
 instructions. COM0 releases ECORN when exiting a level; COM0 at level 4 does
 nothing, as documented. ECORN is saved as CPU state, exported to the debugger,
 and emitted through a callback on transitions and restoration. The current
-machine exposes the raw line as the `ecorn` output; there are no external
-controller boards attached to receive it yet. Initial machine reset asserts
+machine exposes the raw line as the `ecorn` output and distributes it through
+the backplane to installed cards. Initial machine reset asserts
 the line as a development initialization choice; its detailed hardware reset
 sequencing remains to be verified.
 
@@ -35,10 +35,10 @@ That increment brought decoder coverage to 56 reference cases plus exhaustive wo
 
 ## Current bus model and its limits
 
-This development machine has no external controller boards or interrupt
-owners. GOINO's direct selection is masked outside level 4. Consequently the
-level-3 CAROM checks currently sample **undriven** name/type/data buses, modelled
-as logical zero. This is a functional default, not a fabricated response from
+The backplane now supports controller boards and latched interrupt ownership.
+GOINO's direct selection is masked outside level 4. In the cold level-3 CAROM
+checks, with no interrupt owner driving them, the name/type/data buses are
+modelled as logical zero. This is a functional default, not a fabricated response from
 a floppy or serial controller, and not a full electrical bus simulation.
 
 The GOINO manual explicitly describes an undriven name bus reading as 00.
@@ -51,15 +51,13 @@ failure branches have been added.
 
 Selected level-4 GOINO input remains unsupported and reports an error. Do not
 use the current zero defaults as a substitute for selected-device responses,
-interrupt ownership, acknowledgement, or bus arbitration. Input callbacks
-must be routed through the future bus implementation as controllers are added.
+interrupt ownership, acknowledgement, or bus arbitration. Input callbacks now route through the backplane to the appropriate owner.
 
 COM3 does not call MAME's device reset on GOINO/CONDY. The available console
 block diagram separates selection and local display/lamp storage, and does
 not establish that ECORN clears these buffers. We preserve the console
-latches rather than inventing that connection. The lamp register remains
-FFFF through this increment. Full controller reset fan-out and card-specific
-side effects remain future work.
+latches rather than inventing that connection. The historical lamp register remained FFFF at that checkpoint. Controller
+reset fan-out is implemented; unverified card-specific latch effects remain open.
 
 ## Evidence
 
@@ -84,6 +82,6 @@ the same cold path. All three PASS markers must be present; Lua assertions
 alone do not guarantee a nonzero MAME exit status. Save/load re-drive is
 implemented but its integration test remains outstanding.
 
-ADD/SOT arithmetic is now implemented and tested. The next CPU work is the
-word-memory operations later in CAROM. The physical bus
-verification and controller implementations remain separate open gates.
+Arithmetic, word-memory operations and the FLODI loader path now pass their
+respective tests. Physical bus verification, selected GOINO input, and remaining
+controller functions are separate open gates.

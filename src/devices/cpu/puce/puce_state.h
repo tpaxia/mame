@@ -16,6 +16,10 @@ struct puce_state
 	std::uint8_t di = 0;
 	std::uint8_t level = 3;
 	bool ecorn = false; // active-low external controller reset
+	// CPU19M, 801.30.1 (03) p.3.12: UC020 L03 has separate reset
+	// and level-1/2 page selectors. These are configuration, not registers.
+	std::uint16_t reset_base = 0x8000;
+	std::uint16_t interrupt_base = 0x8000;
 	std::uint8_t active = 0x18; // base + reset's level 3 context
 
 	std::uint8_t a(unsigned r) const { return l[r] & 0xff; }
@@ -23,7 +27,7 @@ struct puce_state
 	void set_a(unsigned r, std::uint8_t v) { l[r] = (l[r] & 0xff00) | v; }
 	void set_b(unsigned r, std::uint8_t v) { l[r] = (l[r] & 0x00ff) | (std::uint16_t(v) << 8); }
 	unsigned pc_register() const { return level == 4 ? 0 : level == 3 ? 1 : level == 2 ? 13 : 12; }
-	std::uint16_t pc() const { return level >= 3 ? l[pc_register()] : a(pc_register()); }
+	std::uint16_t pc() const { return level >= 3 ? l[pc_register()] : interrupt_base | (std::uint16_t(level) << 8) | a(pc_register()); }
 	void set_pc(std::uint16_t v)
 	{
 		if (level >= 3) l[pc_register()] = v;
@@ -34,7 +38,7 @@ struct puce_state
 
 	// RESE establishes the level-3 entry. Other scratchpad/DI reset values
 	// remain unverified: preserve them on reset rather than fabricate clearing.
-	void reset() { l[1] = 0x8000; level = 3; active = 0x18; ecorn = false; }
+	void reset() { l[1] = reset_base; level = 3; active = 0x18; ecorn = false; }
 	bool enter_level(unsigned next)
 	{
 		if (next < 1 || next >= level) return false;

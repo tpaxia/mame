@@ -6608,3 +6608,20 @@ if (BUSES["ZBI"]~=null) then
 		MAME_DIR .. "src/devices/bus/zbi/s8k_smdc.h",
 	}
 end
+
+-- Olivetti P6066 backplane and boards
+--@src/devices/bus/p6066/p6066.h,BUSES["P6066"] = true
+if BUSES["P6066"] then
+    files {
+        MAME_DIR .. "src/devices/bus/p6066/p6066.cpp",
+        MAME_DIR .. "src/devices/bus/p6066/p6066.h",
+        MAME_DIR .. "src/devices/bus/p6066/arbiter.h",
+        MAME_DIR .. "src/devices/bus/p6066/flodi.cpp",
+        MAME_DIR .. "src/devices/bus/p6066/flodi.h",
+        MAME_DIR .. "src/devices/bus/p6066/memory.cpp",
+        MAME_DIR .. "src/devices/bus/p6066/memory.h",
+        MAME_DIR .. "src/devices/bus/p6066/goino.cpp",
+        MAME_DIR .. "src/devices/bus/p6066/goino.h",
+        MAME_DIR .. "src/devices/bus/p6066/goino_state.h",
+    }
+end

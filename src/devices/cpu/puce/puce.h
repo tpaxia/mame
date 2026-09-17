@@ -17,8 +17,20 @@ public:
 	auto ecorn_cb() { return m_ecorn_cb.bind(); }
 	auto name_type_cb() { return m_name_type_cb.bind(); }
 	auto input_data_cb() { return m_input_data_cb.bind(); }
+	auto irq_request_cb() { return m_irq_request_cb.bind(); }
+	auto irq_ack_cb() { return m_irq_ack_cb.bind(); }
+	auto irq_end_cb() { return m_irq_end_cb.bind(); }
+	auto command_cb() { return m_command_cb.bind(); }
+	auto strobe_cb() { return m_strobe_cb.bind(); }
+	auto control_cb() { return m_control_cb.bind(); }
+	auto service_console_cb() { return m_service_console_cb.bind(); }
 	auto stopped_cb() { return m_stopped_cb.bind(); }
-	void invalid_memory_access() { m_invalid_pending = true; ++m_invalid_cycles; }
+	void invalid_memory_access() { if (m_core.level != 4) fatalerror("PUCE invalid memory cycle during interrupt service is not implemented"); m_invalid_pending = true; ++m_invalid_cycles; }
+	void set_address_selectors(bool reset_c000, bool interrupts_c000)
+	{
+		m_core.reset_base = reset_c000 ? 0xc000 : 0x8000;
+		m_core.interrupt_base = interrupts_c000 ? 0xc000 : 0x8000;
+	}
 	void set_hold_on_unsupported(bool hold) { m_hold_on_unsupported = hold; }
 
 protected:
@@ -42,6 +54,9 @@ private:
 	devcb_write_line m_ecorn_cb;
 	devcb_read16 m_name_type_cb;
 	devcb_read8 m_input_data_cb;
+	devcb_read8 m_irq_request_cb;
+	devcb_write8 m_irq_ack_cb, m_irq_end_cb, m_command_cb, m_strobe_cb, m_control_cb;
+	devcb_write16 m_service_console_cb;
 	void update_ecorn();
 	bool m_hold_on_unsupported = false;
 	bool m_stopped = false;

@@ -4,9 +4,10 @@
 
 The `p6066` machine now runs original CAROM from reset through CPU and
 memory checks and memory enumeration, then selects floppy controller E0.
-Because that controller is not attached, CAROM emits timeout lamp word
+With that controller removed (`-bus:floppy ""`), CAROM emits timeout lamp word
 `8084` and loops at `80B6`. This is firmware behavior, not an emulator
-unsupported-instruction stop. See [bootstrap details](bootstrap-boundary.md).
+unsupported-instruction stop. With FLODI installed, the first-read test retains
+the startup lamp word FFFF. See [FLODI results](flodi-evidence.md).
 
 ## Implemented path
 
@@ -82,7 +83,7 @@ shifting, display serial/multiplex timing and protection circuitry. Lamp
 publication at complete words is a presentation approximation. Vertical dot
 orientation and blink polarity remain provisional pending schematic checks.
 The device uses deterministic reset values without claiming verified physical
-reset behavior. Interrupt-owned GOINO selection and bus arbitration are absent;
+reset behavior. Bus arbitration is implemented, but interrupt-owned GOINO selection remains absent;
 the direct level-4 callback must not be treated as their implementation.
 Save items cover partial transfers and outputs, but save/load integration has
 not yet been tested. Sound is still flagged unemulated.
@@ -109,7 +110,7 @@ python3 scripts/puce/test_byte_memory.py
 Full integration with the reference CAROM:
 
 ```sh
-./p6066 p6066 -rompath /path/to/roms -video none -sound none -nothrottle -skip_gameinfo -seconds_to_run 20 -autoboot_delay 7 -autoboot_script scripts/puce/test_console_mame.lua -snapview Console -snapname console-cold -snapshot_directory /path/to/results
+./p6066 p6066 -bus:floppy "" -rompath /path/to/roms -video none -sound none -nothrottle -skip_gameinfo -seconds_to_run 20 -autoboot_delay 7 -autoboot_script scripts/puce/test_console_mame.lua -snapview Console -snapname console-cold -snapshot_directory /path/to/results
 ```
 
 The Lua test must print **three PASS lines**, with no Lua assertion errors:
@@ -130,3 +131,12 @@ Implement the floppy controller and external interrupt ownership so CAROM
 can read a boot sector. See [bootstrap-boundary.md](bootstrap-boundary.md).
 The invalid-address model and provisional idle inputs require further
 hardware confirmation; console input, DMA and bus arbitration remain open.
+
+## Disk firmware entry checkpoint
+
+With ME006 installed, original CAROM loads disk 121 and enters firmware at
+word 1000, level 3. The saved functional panel has all lamps off at this
+checkpoint; see `analysis/mame-p6066/bootstrap-validation/installed.png` in the
+parent project. The earlier first-read checkpoint remains FFFF. No synthetic
+lamp pattern is applied for either snapshot. [Bootstrap validation](me006-bootstrap.md)
+describes the observer and the subsequent unsupported F400 console command.
