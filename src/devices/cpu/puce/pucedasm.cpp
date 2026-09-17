@@ -3,7 +3,7 @@
 
 // Initial, deliberately partial CPU19/PUCE disassembler.
 // Source: Olivetti CPU19 Tabella Microistruzioni, publication 801.30.1,
-// printed pages 2.100, 2.105, 2.107 and supplement 2.109 (V2 PDF pp.4,9,11,14).
+// V2 PDF pp.2-4,9-11,14 (including the branch and command tables).
 // Decode memory words, not the transformed RO register contents. ALFA and
 // RESE are hardware-generated pseudo-instructions, not memory opcodes.
 // Untranscribed encodings remain DW; this does not imply a hardware trap.
@@ -17,6 +17,18 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 	const unsigned x = (op >> 4) & 15;
 	const unsigned y = op & 15;
 
+	if ((op & 0xe000) == 0)
+	{
+		// Full-width counter target; level 1/2 uses only the low byte.
+		util::stream_format(stream, "SAI %04X", ((pc + 1) & 0xe000) | (op & 0x1fff));
+		return 1 | SUPPORTED;
+	}
+	if ((op & 0xf000) == 0x6000)
+	{
+		const unsigned condition = (op >> 8) & 15;
+		util::stream_format(stream, "SAD%u D%u,C%02X", condition & 1, condition >> 1, op & 255);
+		return 1 | SUPPORTED;
+	}
 	if ((op & 0xf000) == 0x5000 || (op & 0xf000) == 0x7000)
 	{
 		const char reg = (op & 0x2000) ? 'A' : 'B';
@@ -36,7 +48,7 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 			util::stream_format(stream, "%s C%02X", (op & 0x0100) ? "SEDI" : "REDI", op & 255);
 		return 1 | SUPPORTED;
 	}
-	if ((op & 0xff0f) == 0xbd00)
+	if ((op & 0xff0f) == 0xbd00 && x != 2)
 	{
 		util::stream_format(stream, "COM%u", x);
 		return 1 | SUPPORTED;
@@ -45,6 +57,9 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 	const char *mnemonic = nullptr;
 	switch (op >> 8)
 	{
+	case 0x97: mnemonic = "AND"; break;
+	case 0xa7: mnemonic = "ANDA"; break;
+	case 0xb7: mnemonic = "ANDB"; break;
 	case 0xe6: mnemonic = "OR";   break;
 	case 0xf6: mnemonic = "ORA";  break;
 	case 0x87: mnemonic = "ORB";  break;

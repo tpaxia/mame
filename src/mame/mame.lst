@@ -36609,6 +36609,9 @@ m240
 @source:olivetti/olivpc1.cpp
 olivpc1
 
+@source:olivetti/p6066.cpp
+p6066
+
 @source:olympia/dday.cpp
 dday
 ddayc

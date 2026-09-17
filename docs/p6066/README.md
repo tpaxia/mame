@@ -14,26 +14,42 @@ the complete architecture, evidence references and acceptance gates.
 
 ## Current state
 
-This is the first M0/M1 development increment, **not a runnable P6066**.
+The `P6066` branch is published at https://github.com/tpaxia/mame/tree/P6066.
+`origin` is the tpaxia fork; `upstream` is mamedev/mame.
 
-* Added a partial PUCE disassembler and `unidasm -arch puce` integration.
-* Uses 16-bit words and word-addressed PCs; upstream merged ROM files are
-  read big-endian by unidasm. This does not determine physical chip interleave.
-* Decodes the visually checked CRTA/CRTB, INCD0/INCD1, SEDI/REDI/NOP,
-  OR/XOR families, SAB, selected shifts/rotates, SEI/SEIM/SEIP and COM forms.
-* Untranscribed words display as `DW xxxx`, preserving their value and length.
-  This is incomplete coverage, not a claim that those opcodes trap in hardware.
-* RESE and ALFA are not invented as memory instructions from their internal RO
-  values. They belong in the future CPU execution sequencer.
-* Added a ROM-free test that compiles the actual MAME disassembler and checks
-  40 independent examples plus fetch/length invariants over all 65,536 words.
-* Added reproducible local-source inventory tooling. No ROM bytes are added
-  to this branch.
+This is an early M0/M1 increment, **not a bootable P6066**.
 
-CPU execution, bus slots, memory boards, DMA, interrupt logic, GOINO, FLODI
-and GISA2 are not implemented yet. None of the CAROM or bootstrap gates has
-been passed. The partial disassembler must be extended before treating an
-entire ROM listing as decoded code.
+* Added `puce_device` and the `p6066` development machine. The CPU executes
+  a documented subset of register/logic/branch operations and basic AMI/MAI
+  byte transfers. Unsupported operations stop with a diagnostic.
+* Scratchpad-backed counters implement full-width level 3/4 and short
+  level 1/2 addressing. Reset selects level 3 at word 8000; fetch advances
+  the selected counter before execution. COM0/COM1 currently model internal
+  context changes only; external ECORN and interrupt circuitry remain absent.
+* The live architectural state is shared with standalone tests. It is not
+  a separate reference emulator. Counter boundaries, register aliasing, flags,
+  byte ordering and unsupported operations have focused regression checks.
+* The reference CAROM cold path reaches its first external-channel operation,
+  ESE at word 808B. An isolated entry at 8003 runs the first register self-test
+  block to COM3 at 802C in 196,731 instructions. This bypasses console setup
+  for that test only and does not establish a complete CAROM self-test.
+* The partial disassembler has 44 reference examples and exhaustive single-word
+  fetch/length checks. Branch and AND decoding is added; COM2 is left `DW`
+  because the documented command table omits it. Many executable instructions
+  still display `DW` until their disassembler entries are transcribed.
+* ROM inventory tooling records hashes. No ROM bytes are distributed here.
+
+The machine uses a provisional lower 64KB RAM map and the merged 4KB CAROM
+reference at word 8000. Physical ROM mapping/revision and RAM-board population
+remain unresolved. Two scheduling quanta per instruction and a 1MHz device
+clock are placeholders, **not hardware timing**. Only established reset
+state is changed on reset; remaining registers start at deterministic zero
+on initial construction, with no claim that hardware clears them.
+
+Bus slots, memory boards, DMA, external interrupt requests/arbitration, GOINO,
+FLODI and GISA2 are not implemented. Save items include execution phase and
+architectural state, but save/restore integration remains untested. No complete
+CAROM or bootstrap gate has passed.
 
 ## Sources for this increment
 
@@ -41,6 +57,9 @@ Olivetti CPU19 *Tabella Microistruzioni*, publication 801.30.1:
 
 | V2 PDF page | Printed page | Implemented evidence |
 |---|---|---|
+| 2–3 | 2.098–2.099 | Byte transfers, AND, command table (no COM2) |
+| 5, 7 | 2.101, 2.103 | Decrement, increment and register verification |
+| 10, 12–13 | 2.106, 2.108, supplement | Branches, register/DI transfers and shifts |
 | 4 | 2.100 | CRTA/CRTB memory versus RO encodings; COM7–15 |
 | 9 | 2.105 | NOP, REDI, OR/XOR operations, rotates, SAB; RESE is hardware-generated |
 | 11 | 2.107 | SEDI, shifts and SEI/SEIM/SEIP |
@@ -49,6 +68,10 @@ Olivetti CPU19 *Tabella Microistruzioni*, publication 801.30.1:
 SUCE2 description PDF p.14 separately confirms COM0/COM1 memory encodings.
 The COM family names are supplied by the CPU19 command tables; this
 disassembler does not attempt to describe each command's hardware effects.
+CPU19 description PDF p.9 defines even byte addresses as the high byte of
+a memory word; scratchpad A is the low byte of L. The state helper keeps
+these two byte conventions separate.
+
 The decoder deliberately recognizes only the transcribed operand patterns;
 unverified don't-care variants remain undecoded.
 
@@ -109,19 +132,39 @@ word addresses 8000, 8001, 8002. Other entries can legitimately remain `DW`
 until their opcode families have been transcribed and tested. An address-correct
 listing is not a test of CPU execution.
 
+## CPU build and tests
+
+```sh
+python3 scripts/puce/test_cpu.py
+python3 scripts/puce/test_cpu.py --carom ../upstream-olivetti-p6060/rom/system/carom/carom.bin
+make SUBTARGET=p6066 SOURCES=src/mame/olivetti/p6066.cpp OSD=sdl USE_LIBSDL=1 SDL_INSTALL_ROOT=/opt/homebrew IGNORE_GIT=1 REGENIE=1 -j4
+```
+
+The optional CAROM test requires SHA-1
+`63a68b4787f33bef156f05c6b50269357d0d3c2f`. It checks cold-path control flow
+using a minimal memory fixture and separately enters the register test block.
+It does not exercise the MAME memory system; a headless machine run is the
+additional integration check. Supply the same image as `p6066/carom.bin`
+inside your own ROM directory:
+
+```sh
+./p6066 p6066 -rompath /path/to/roms -video none -sound none -nothrottle -skip_gameinfo -seconds_to_run 1
+```
+
+For this increment the expected diagnostic is an intentional nonzero exit:
+`PUCE bring-up: unsupported B1F4 at word 808B (level 4, next PC 808C)`.
+This is an implementation stop, not an emulated hardware trap.
+
 ## Next implementation steps
 
-1. Resolve the reset ROM revision and physical mapping, using the CAROM board
-   documentation and local dumps. Do not concatenate dumps merely to fill a
-   chosen region size.
-2. Complete the decoder/evidence table, especially branches, memory transfers,
-   arithmetic and all flag/command variants reached by CAROM self-test.
-3. Implement `puce_device`: scratchpad-backed counters, DI, hardware reset/fetch
-   and resumable execution phases. Verify byte/word and short-register addressing.
-4. Add the minimal `p6066` machine with evidence-backed ROM/RAM configuration,
-   then the GOINO console needed to observe and complete self-test.
-5. Follow the plan's interrupt/DMA/arbitration, floppy and serial milestones.
+1. Resolve reset ROM revision/physical mapping and RAM-board population.
+2. Implement the GOINO external-channel interface needed by cold CAROM before
+   the register self-test, including ESE selection and console lamp output.
+3. Extend CPU execution and decoder coverage for the remaining self-test,
+   memory and peripheral operations. Verify command side effects in hardware.
+4. Implement the plan's interrupt/DMA/arbitration, floppy and serial milestones,
+   with display/keyboard integration and a verified bootstrap disk.
 
-Board clocks, physical priority order, installed RAM population, DMA boundary
-jumpers and initial boot disk remain explicit open decisions. CPU19-family
-capabilities must not be mistaken for the final P6066 configuration.
+Board clocks, physical priority order, DMA boundary jumpers and initial boot
+disk remain open decisions. CPU19-family capabilities must not be mistaken
+for the final P6066 configuration.

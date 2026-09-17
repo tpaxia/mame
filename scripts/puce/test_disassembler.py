@@ -51,6 +51,8 @@ int main()
         {0xa0a3, "INCD0 D5,L3"}, {0xa0b3, "INCD1 D5,L3"},
         {0xa0ff, "INCD1 D7,L15"}, {0xa000, "INCD0 D0,L0"},
         {0xbd00, "COM0"}, {0xbd10, "COM1"}, {0xbdf0, "COM15"},
+        {0xbd20, "DW BD20"}, {0x6251, "SAD0 D1,C51"},
+        {0xb722, "ANDB A2,B2"}, {0x1fff, "SAI 9FFF"},
         {0xbd01, "DW BD01"}, {0xd722, "OREA A2,B2"},
         {0xe61f, "OR A1,B15"}, {0xf622, "ORA A2,B2"},
         {0x8722, "ORB A2,B2"}, {0xc722, "ORE A2,B2"},
@@ -63,7 +65,7 @@ int main()
         {0xfdf0, "SEIM A15"}, {0xf700, "SEIP M0"},
         {0x9000, "DW 9000"}, // never invent RESE from its RO value
         {0xf000, "DW F000"}, // never invent ALFA as a memory opcode
-        {0x0000, "DW 0000"}, {0xffff, "DW FFFF"}
+        {0x0000, "SAI 8000"}, {0xffff, "DW FFFF"}
     };
     puce_disassembler dasm;
     word_buffer buffer;
