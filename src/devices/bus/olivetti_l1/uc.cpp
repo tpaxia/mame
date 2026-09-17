@@ -81,14 +81,12 @@ void olivetti_l1_uc042_device::device_start()
 	}
 
 	save_item(NAME(m_nmi_status));
-	save_item(NAME(m_mmu_mode));
 	save_item(NAME(m_kdc_status));
 	save_item(NAME(m_lamp));
 	save_item(NAME(m_acia_irq));
 	save_item(NAME(m_suppress_enabled));
 	save_item(NAME(m_timer_vector));
 	save_item(NAME(m_acia_vector));
-	save_item(NAME(m_viol_pc));
 	save_item(NAME(m_timer_out1));
 	save_item(NAME(m_timer_pending));
 	save_item(NAME(m_arb_req));
@@ -106,12 +104,10 @@ void olivetti_l1_uc042_device::device_reset()
 	m_acia_irq = false;
 	m_lamp = 0;
 	m_nmi_status = 0x01;
-	m_mmu_mode = 0;
 	m_kdc_status = 0;
 	m_suppress_enabled = true;
 	m_timer_pending = false;
 	m_timer_out1 = false;
-	m_viol_pc = 0xffffffff;
 	m_arb_req = 0;
 	m_arb_grant = 0;
 	m_arb_rel = 0;
@@ -185,7 +181,7 @@ void olivetti_l1_uc042_device::physical_word_w(offs_t address, u16 data, u16 mem
 		ready_fault();
 }
 
-bool olivetti_l1_uc042_device::xlate(int spacenum, bool write, offs_t &address)
+z8010_device::memory_result olivetti_l1_uc042_device::xlate(int spacenum, bool write, offs_t address)
 {
 	int status;
 	if (spacenum == AS_PROGRAM)
@@ -193,7 +189,6 @@ bool olivetti_l1_uc042_device::xlate(int spacenum, bool write, offs_t &address)
 		status = m_cpu->is_ifetch1() ? z8002_device::ST_IFETCH_1 : z8002_device::ST_IFETCH_N;
 		if (status == z8002_device::ST_IFETCH_1)
 		{
-			m_viol_pc = 0xffffffff;
 			// The Z8010 sees all CPU bus cycles, including those it does not
 			// translate.  Keep its instruction-address latch in step with IFETCH1.
 			m_mmu->ifetch1_observed(address);
@@ -204,8 +199,6 @@ bool olivetti_l1_uc042_device::xlate(int spacenum, bool write, offs_t &address)
 	else
 		status = z8002_device::ST_REQ_DATA;
 
-	if (!(m_mmu_mode & 0x80))
-		return true;
 	// Preserve SN6.  The Z8001 presents a 23-bit logical address (segments
 	// 0x00-0x7f); the Z8010 uses SN6 together with URS to decide whether it
 	// qualifies for the cycle.  Masking to 22 bits aliases upper segments onto
@@ -218,36 +211,22 @@ bool olivetti_l1_uc042_device::xlate(int spacenum, bool write, offs_t &address)
 
 u16 olivetti_l1_uc042_device::mem_r(address_space &space, offs_t offset, u16 mem_mask)
 {
-	offs_t address = offset << 1;
-	// SUP suppresses the violating transfer and subsequent data accesses through
-	// the end of the instruction.  A first-word fetch releases it in xlate().
-	if (!xlate(space.spacenum(), false, address))
-	{
-		if (m_suppress_enabled)
-			m_viol_pc = m_cpu->pc();
+	offs_t const address = offset << 1;
+	auto const result = xlate(space.spacenum(), false, address);
+	if (result.suppress)
 		return space.spacenum() == AS_PROGRAM ? 0x8d07 : 0xffff; // instruction violation becomes NOP
-	}
-	if (m_viol_pc == m_cpu->pc() && space.spacenum() != AS_PROGRAM)
-		return 0xffff;
 
-	return physical_word_r(address, mem_mask);
+	// With no MMU driving the translated-address bus, the UC selects the
+	// Z8001 logical-address path directly.
+	return physical_word_r(result.address_driven ? result.address : address, mem_mask);
 }
 
 void olivetti_l1_uc042_device::mem_w(address_space &space, offs_t offset, u16 data, u16 mem_mask)
 {
-	offs_t address = offset << 1;
-	bool valid = xlate(space.spacenum(), true, address);
-	if (!valid && !m_suppress_enabled)
-	{
-		physical_word_w(address, data, mem_mask);
-		return;
-	}
-	if (!valid)
-		m_viol_pc = m_cpu->pc();
-	else if (m_viol_pc == m_cpu->pc())
-		valid = false;
-	if (valid)
-		physical_word_w(address, data, mem_mask);
+	offs_t const address = offset << 1;
+	auto const result = xlate(space.spacenum(), true, address);
+	if (!result.suppress || !m_suppress_enabled)
+		physical_word_w(result.address_driven ? result.address : address, data, mem_mask);
 }
 
 u8 olivetti_l1_uc042_device::mmu_r(offs_t offset)
@@ -260,19 +239,7 @@ u8 olivetti_l1_uc042_device::mmu_r(offs_t offset)
 void olivetti_l1_uc042_device::mmu_w(offs_t offset, u8 data)
 {
 	if (!BIT(offset, 0))
-	{
-		u8 const reg = offset >> 8;
-		m_mmu->write(reg, data);
-		if (reg == 0x00)
-		{
-			// A mode change affects translation immediately.  Invalidating on every
-			// descriptor byte would disrupt the firmware's SOTIRB block load.
-			m_mmu_mode = data;
-			m_cpu->space(AS_PROGRAM).invalidate_caches(read_or_write::READWRITE);
-			m_cpu->space(AS_DATA).invalidate_caches(read_or_write::READWRITE);
-			m_cpu->space(z8001_device::AS_STACK).invalidate_caches(read_or_write::READWRITE);
-		}
-	}
+		m_mmu->write(offset >> 8, data);
 }
 
 u16 olivetti_l1_uc042_device::l1_io_r(offs_t offset, u16 mem_mask)
@@ -384,16 +351,13 @@ void olivetti_l1_uc042_device::sio_map(address_map &map)
 
 u16 olivetti_l1_uc042_device::segtack_r()
 {
-	// Acknowledge ends the violating instruction.  Releasing SUP here is required
-	// before the trap dispatcher reads its PSA and pushes a trap frame.
-	m_viol_pc = 0xffffffff;
 	return m_mmu->segtack_r();
 }
 
 u16 olivetti_l1_uc042_device::nmiack_r()
 {
 	// NMI acknowledge likewise terminates any live suppressed instruction.
-	m_viol_pc = 0xffffffff;
+	m_mmu->instruction_end();
 	return 0;
 }
 
@@ -437,6 +401,7 @@ u16 olivetti_l1_uc042_device::local_viack_r(olivetti_l1_bus_device::interrupt_le
 
 u16 olivetti_l1_uc042_device::vi_ack_r()
 {
+	m_mmu->instruction_end();
 	return bus().viack_r();
 }
 
@@ -505,6 +470,7 @@ TIMER_CALLBACK_MEMBER(olivetti_l1_uc042_device::arb_done)
 
 u16 olivetti_l1_uc042_device::nviack_r()
 {
+	m_mmu->instruction_end();
 	// The vector fetch clears NVI but leaves the grant readable until the
 	// corresponding per-channel arbiter acknowledgement.
 	m_cpu->set_input_line(z8001_device::NVI_LINE, CLEAR_LINE);
