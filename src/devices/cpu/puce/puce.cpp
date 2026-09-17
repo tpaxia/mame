@@ -18,6 +18,9 @@ puce_device::puce_device(const machine_config &mconfig, const char *tag, device_
 	, m_select_cb(*this)
 	, m_data_cb(*this)
 	, m_stopped_cb(*this)
+	, m_ecorn_cb(*this)
+	, m_name_type_cb(*this, 0)
+	, m_input_data_cb(*this, 0)
 {
 }
 
@@ -34,6 +37,8 @@ void puce_device::device_start()
 	save_item(NAME(m_core.di));
 	save_item(NAME(m_core.level));
 	save_item(NAME(m_core.active));
+	save_item(NAME(m_core.ecorn));
+	machine().save().register_postload(save_prepost_delegate(FUNC(puce_device::update_ecorn), this));
 	save_item(NAME(m_ir));
 	save_item(NAME(m_fetch_pc));
 	save_item(NAME(m_phase));
@@ -41,6 +46,7 @@ void puce_device::device_start()
 	state_add(STATE_GENPC, "PC", m_debug_pc).callimport().callexport();
 	state_add(STATE_GENPCBASE, "CURPC", m_fetch_pc).noshow();
 	state_add(STATE_GENFLAGS, "DI", m_core.di);
+	state_add(5, "ECORN", m_core.ecorn).readonly();
 	state_add(1, "LEVEL", m_core.level).readonly();
 	state_add(2, "IR", m_ir).readonly();
 	state_add(4, "STOPPED", m_stopped).readonly();
@@ -49,9 +55,15 @@ void puce_device::device_start()
 		state_add(16 + i, util::string_format("L%u", i).c_str(), m_core.l[i]);
 }
 
+void puce_device::update_ecorn()
+{
+	m_ecorn_cb(m_core.ecorn);
+}
+
 void puce_device::device_reset()
 {
 	m_core.reset();
+	update_ecorn();
 	m_stopped = false;
 	m_stopped_cb(0);
 	m_phase = 0;
@@ -96,8 +108,22 @@ void puce_device::execute_run()
 		}
 		else
 		{
+			const bool previous_ecorn = m_core.ecorn;
 			bool done = m_core.execute_register(m_ir);
+			if (m_core.ecorn != previous_ecorn) update_ecorn();
 			const unsigned hi = m_ir >> 8, x = (m_ir >> 4) & 15, y = m_ir & 15;
+			if (!done)
+			{
+				switch (m_ir & 0xff0f)
+				{
+				case 0xaa00: case 0xb900: case 0xb20f:
+					done = m_core.execute_input(m_ir, m_name_type_cb(m_core.level), 0);
+					break;
+				case 0xb808: case 0xa908:
+					done = m_core.execute_input(m_ir, 0, m_input_data_cb(m_core.level));
+					break;
+				}
+			}
 			if (!done && (hi == 0xa8 || hi == 0x91))
 			{
 				const u16 address = m_core.indirect(x);

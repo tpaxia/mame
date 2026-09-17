@@ -52,6 +52,28 @@ int main(int argc, char **argv)
     c.l[1] = 0x8001; c.di = 0; assert(c.execute_register(0xa001));
     assert(c.pc() == 0x8002); // conditional increment can skip through live PC
     assert(puce_state::byte_mask(0) == 0xff00 && puce_state::byte_mask(1) == 0x00ff);
+    // COM3 asserts a persistent line without changing registers, DI or level.
+    c.level = 3; c.active = 0x18;
+    const auto registers = c.l;
+    const auto flags = c.di;
+    assert(c.execute_register(0xbd30));
+    assert(!c.ecorn && c.level == 3 && c.l == registers && c.di == flags);
+    assert(c.execute_register(0xc900) && !c.ecorn);
+    assert(c.execute_register(0xbd00) && c.ecorn && c.level == 4);
+    assert(c.execute_register(0xbd30) && !c.ecorn);
+    assert(c.execute_register(0xbd00) && !c.ecorn && c.level == 4);
+    // External input packing is tested with nonzero buses, independently of CAROM.
+    c.di = 0xa5; c.l[9] = 0x1234;
+    assert(c.execute_input(0xaa90, 0xabcd, 0x56) && c.l[9] == 0xabcd);
+    assert(c.execute_input(0xb990, 0x1234, 0x56) && c.l[9] == 0xab34);
+    assert(c.execute_input(0xb29f, 0x1234, 0x56) && c.l[9] == 0x1234);
+    assert(c.execute_input(0xb898, 0xabcd, 0x56) && c.l[9] == 0x1256);
+    assert(c.execute_input(0xa998, 0xabcd, 0x78) && c.l[9] == 0x7856);
+    assert(c.di == 0xa5 && !c.execute_input(0xaa91, 0xabcd, 0x56));
+    c.reset(); assert(!c.ecorn);
+    c.advance();
+    assert(c.execute_input(0xaa10, 0x9234, 0) && c.pc() == 0x9234);
+    assert(c.execute_input(0xb910, 0xab56, 0) && c.pc() == 0x9256);
     const auto before = c;
     assert(!c.execute_register(0xbd20)); assert(!c.execute_register(0xb1f4));
     assert(c.l == before.l && c.di == before.di && c.level == before.level);
@@ -90,11 +112,11 @@ int main(int argc, char **argv)
         const auto pc = c.pc(); const auto op = word(pc); c.advance(); ++count;
         assert(count < 300000 && pc != 0x8051);
         if (c.execute_register(op)) continue;
-        assert(pc == 0x802c && op == 0xbd30 && c.level == 3);
+        assert(pc == 0x802d && op == 0xaa90 && c.level == 3 && !c.ecorn);
         assert(c.l[4] == 0 && c.l[5] == 0 && c.l[6] == 0 && c.a(8) == 0x47);
         break;
     }
-    std::cout << "PASS: isolated CAROM register self-test reaches COM3 at 802C after "
+    std::cout << "PASS: isolated CAROM register self-test executes COM3 and reaches ENTL at 802D after "
               << count << " instructions (not a complete boot/self-test)\n";
 }
 '''

@@ -44,7 +44,9 @@ int main()
 {
     struct example { unsigned word; const char *text; };
     const example examples[] = {
-        {0xb1f4, "ESE A15"}, {0xb1b4, "ESE M11"}, {0xfca0, "DAE L10"},
+        {0xaa90, "ENTL L9"}, {0xb990, "ENUA A9"}, {0xb29f, "ETIB B9"},
+        {0xb898, "EDA A9"}, {0xa998, "EDB B9"}, {0xaa91, "DW AA91"},
+        {0xbd30, "COM3"}, {0xb1f4, "ESE A15"}, {0xb1b4, "ESE M11"}, {0xfca0, "DAE L10"},
         {0xb1f5, "DW B1F5"}, {0xfca1, "DW FCA1"},
         {0x5080, "CRTB B0,C80"}, {0x7089, "CRTA A0,C89"},
         {0x5fff, "CRTB B15,CFF"}, {0x7f03, "CRTA A15,C03"},

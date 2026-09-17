@@ -10,6 +10,8 @@ class p6066_goino_device : public device_t
 {
 public:
 	p6066_goino_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
+	u16 name_type_r(offs_t level);
+	u8 input_data_r(offs_t level);
 	void select_w(u8 data);
 	void data_w(offs_t level, u16 data);
 	u32 screen_update(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect);

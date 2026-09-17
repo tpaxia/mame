@@ -48,6 +48,21 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 			util::stream_format(stream, "%s C%02X", (op & 0x0100) ? "SEDI" : "REDI", op & 255);
 		return 1 | SUPPORTED;
 	}
+	const char *input = nullptr;
+	char input_reg = 'A';
+	switch (op & 0xff0f)
+	{
+	case 0xaa00: input = "ENTL"; input_reg = 'L'; break;
+	case 0xb900: input = "ENUA"; break;
+	case 0xb20f: input = "ETIB"; input_reg = 'B'; break;
+	case 0xb808: input = "EDA"; break;
+	case 0xa908: input = "EDB"; input_reg = 'B'; break;
+	}
+	if (input)
+	{
+		util::stream_format(stream, "%s %c%u", input, input_reg, x);
+		return 1 | SUPPORTED;
+	}
 	if ((op & 0xff0f) == 0xb104)
 	{
 		util::stream_format(stream, "ESE %c%u", x < 12 ? 'M' : 'A', x);

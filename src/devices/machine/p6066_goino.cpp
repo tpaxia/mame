@@ -40,6 +40,25 @@ void p6066_goino_device::update_outputs()
 	m_strobes = m_state.lamp_strobes;
 }
 
+
+// GOINO direct selection is masked outside level 4 (manual PDF pp.8,16).
+// No external controllers/interrupt owners exist in this development machine.
+// Undriven inputs use logical zero; see docs/p6066/reset-inputs.md for evidence
+// and the outstanding PUCE pull-up/CPU-name jumper verification.
+u16 p6066_goino_device::name_type_r(offs_t level)
+{
+	if (m_state.selected && level == 4)
+		fatalerror("GOINO bring-up: selected name/type input not implemented\n");
+	return 0;
+}
+
+u8 p6066_goino_device::input_data_r(offs_t level)
+{
+	if (m_state.selected && level == 4)
+		fatalerror("GOINO bring-up: selected data input not implemented\n");
+	return 0;
+}
+
 void p6066_goino_device::select_w(u8 data)
 {
 	m_state.select(data);

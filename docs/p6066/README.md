@@ -28,20 +28,23 @@ This is an early M0/M1 increment, **not a bootable P6066**.
 * Scratchpad-backed counters implement full-width level 3/4 and short
   level 1/2 addressing. Reset selects level 3 at word 8000; fetch advances
   the selected counter before execution. COM0/COM1 currently model internal
-  context changes only; external ECORN and interrupt circuitry remain absent.
+  context selection and ECORN release. COM3 asserts ECORN persistently;
+  external interrupt circuitry and controller reset fan-out remain absent.
 * The live architectural state is shared with standalone tests. It is not
   a separate reference emulator. Counter boundaries, register aliasing, flags,
   byte ordering and unsupported operations have focused regression checks.
 * The reference CAROM cold path now selects GOINO, clocks 256 serial lamp bits,
-  and executes the first register self-test block before stopping at COM3/802C.
+  executes COM3 and the initial idle-input checks, then stops at ADDA/8039.
   No entry-point bypass is required. This is not the complete self-test.
 * Added a functional console panel, live lamp outputs, a 222-by-7-dot display
   renderer and a restart control. A synthetic PUCE integration fixture verifies
   display output and restart. See [console details and tests](console.md).
-* The partial disassembler has 49 reference examples and exhaustive single-word
-  fetch/length checks. ESE/DAE decoding is added; COM2 is left `DW`
+* The partial disassembler has 56 reference examples and exhaustive single-word
+  fetch/length checks. ENTL/ENUA/ETIB/EDA/EDB decoding is added; COM2 is left `DW`
   because the documented command table omits it. Many executable instructions
   still display `DW` until their disassembler entries are transcribed.
+* ECORN and input-bus details, including the provisional idle-zero default,
+  are documented in [reset-inputs.md](reset-inputs.md).
 * ROM inventory tooling records hashes. No ROM bytes are distributed here.
 
 The machine uses a provisional lower 64KB RAM map and the merged 4KB CAROM
@@ -158,7 +161,7 @@ inside your own ROM directory:
 ```
 
 For this increment the expected diagnostic is:
-`PUCE bring-up: unsupported BD30 at word 802C (level 3, next PC 802D)`.
+`PUCE bring-up: unsupported 9632 at word 8039 (level 3, next PC 803A)`.
 The CPU stops while the UI remains open. With `-seconds_to_run`, MAME exits
 normally after the requested duration. This is an implementation stop, not a
 hardware trap. See [console.md](console.md) for the full integration test.
@@ -166,8 +169,8 @@ hardware trap. See [console.md](console.md) for the full integration test.
 ## Next implementation steps
 
 1. Resolve reset ROM revision/physical mapping and RAM-board population.
-2. Implement COM3 and controller identity/data inputs reached by CAROM, then
-   remaining self-test operations and the real console interrupt/input path.
+2. Implement ADD/SOT arithmetic and later CAROM memory operations; verify
+   physical bus defaults and implement selected controller/console inputs.
 3. Extend CPU execution and decoder coverage for the remaining self-test,
    memory and peripheral operations. Verify command side effects in hardware.
 4. Implement the plan's interrupt/DMA/arbitration, floppy and serial milestones,

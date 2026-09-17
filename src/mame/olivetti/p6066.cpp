@@ -41,6 +41,9 @@ void p6066_state::p6066(machine_config &config)
 	m_maincpu->set_addrmap(AS_PROGRAM, &p6066_state::memory_map);
 	m_maincpu->select_cb().set(m_console, FUNC(p6066_goino_device::select_w));
 	m_maincpu->data_cb().set(m_console, FUNC(p6066_goino_device::data_w));
+	m_maincpu->ecorn_cb().set_output("ecorn"); // raw active-low line, not machine reset
+	m_maincpu->name_type_cb().set(m_console, FUNC(p6066_goino_device::name_type_r));
+	m_maincpu->input_data_cb().set(m_console, FUNC(p6066_goino_device::input_data_r));
 	m_maincpu->stopped_cb().set_output("cpu_stopped");
 	m_maincpu->set_hold_on_unsupported(true); // keep the console inspectable
 	P6066_GOINO(config, m_console);

@@ -14,6 +14,9 @@ public:
 
 	auto select_cb() { return m_select_cb.bind(); }
 	auto data_cb() { return m_data_cb.bind(); }
+	auto ecorn_cb() { return m_ecorn_cb.bind(); }
+	auto name_type_cb() { return m_name_type_cb.bind(); }
+	auto input_data_cb() { return m_input_data_cb.bind(); }
 	auto stopped_cb() { return m_stopped_cb.bind(); }
 	void set_hold_on_unsupported(bool hold) { m_hold_on_unsupported = hold; }
 
@@ -35,6 +38,10 @@ private:
 	devcb_write8 m_select_cb;
 	devcb_write16 m_data_cb;
 	devcb_write_line m_stopped_cb;
+	devcb_write_line m_ecorn_cb;
+	devcb_read16 m_name_type_cb;
+	devcb_read8 m_input_data_cb;
+	void update_ecorn();
 	bool m_hold_on_unsupported = false;
 	bool m_stopped = false;
 	u16 m_ir = 0; // fetched memory word; NOT transformed hardware RO

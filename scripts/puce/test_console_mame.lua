@@ -9,14 +9,16 @@ local screen = machine.screens[":screen"]
 local function out(name) return console:output(name):get() end
 local function check_cold()
     assert(cpu.state["STOPPED"].value == 1, "CPU did not stop")
-    assert(cpu.state["IR"].value == 0xbd30, "Expected COM3")
-    assert(cpu.state["PC"].value == 0x802d, "Unexpected next PC")
+    assert(cpu.state["IR"].value == 0x9632, "Expected ADDA")
+    assert(cpu.state["PC"].value == 0x803a, "Unexpected next PC")
+    assert(cpu.state["ECORN"].value == 0, "COM3 did not hold reset low")
+    assert(cpu.state["L9"].value == 0 and cpu.state["L10"].value == 0xfd00, "Idle input bus checks")
     assert(out("console_strobes") == 256, "Expected 256 serial lamp strobes")
     for bit = 0, 15 do assert(out("console_lamp" .. bit) == 1, "Lamp bit missing") end
 end
 check_cold()
 machine.video:snapshot()
-print("PASS: cold CAROM selected GOINO, sent 256 lamp bits, completed register test and stopped at COM3/802C")
+print("PASS: cold CAROM selected GOINO, sent 256 lamp bits, executed COM3 and idle bus tests, stopped at ADDA/8039")
 
 local frames = 0
 local phase = 0
@@ -29,6 +31,7 @@ emu.register_frame_done(function()
         space:write_u16(0x1000, 0xbd00) -- exit level 3 to L0
         local pc = 0x2000
         local function emit(op) space:write_u16(pc, op); pc = pc + 1 end
+        emit(0xbd30); emit(0xbd00) -- level-4 COM0 must not release ECORN
         emit(0x7f01); emit(0xb1f4) -- CRTA A15,1; ESE A15
         emit(0x5a40)
         for bit = 15, 0, -1 do
@@ -46,6 +49,7 @@ emu.register_frame_done(function()
         phase = 1
     elseif phase == 1 and frames >= 5 then
         assert(cpu.state["STOPPED"].value == 1 and cpu.state["IR"].value == 0xf000)
+        assert(cpu.state["ECORN"].value == 0, "Level-4 COM0 unexpectedly released reset")
         assert(out("console_selected") == 1 and out("console_strobes") == 272)
         for bit = 0, 15 do
             assert(out("console_lamp" .. bit) == ((0xa55a >> bit) & 1), "Serial lamp mapping")

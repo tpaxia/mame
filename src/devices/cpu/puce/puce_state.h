@@ -15,6 +15,7 @@ struct puce_state
 	std::array<std::uint16_t, 16> l{};
 	std::uint8_t di = 0;
 	std::uint8_t level = 3;
+	bool ecorn = false; // active-low external controller reset
 	std::uint8_t active = 0x18; // base + reset's level 3 context
 
 	std::uint8_t a(unsigned r) const { return l[r] & 0xff; }
@@ -33,7 +34,7 @@ struct puce_state
 
 	// RESE establishes the level-3 entry. Other scratchpad/DI reset values
 	// remain unverified: preserve them on reset rather than fabricate clearing.
-	void reset() { l[1] = 0x8000; level = 3; active = 0x18; }
+	void reset() { l[1] = 0x8000; level = 3; active = 0x18; ecorn = false; }
 	bool enter_level(unsigned next)
 	{
 		if (next < 1 || next >= level) return false;
@@ -52,6 +53,21 @@ struct puce_state
 	// CPU byte addresses: even = high byte, odd = low byte (CPU19 p.9).
 	static unsigned byte_shift(std::uint16_t address) { return (address & 1) ? 0 : 8; }
 	static std::uint16_t byte_mask(std::uint16_t address) { return 0xffU << byte_shift(address); }
+
+	// Read-only external buses, in logical CPU bit polarity. No ECOT strobe.
+	bool execute_input(std::uint16_t op, std::uint16_t name_type, std::uint8_t data)
+	{
+		const unsigned x = (op >> 4) & 15;
+		switch (op & 0xff0f)
+		{
+		case 0xaa00: l[x] = name_type; return true; // ENTL
+		case 0xb900: set_a(x, name_type); return true; // ENUA
+		case 0xb20f: set_b(x, name_type >> 8); return true; // ETIB
+		case 0xb808: set_a(x, data); return true; // EDA
+		case 0xa908: set_b(x, data); return true; // EDB
+		}
+		return false;
+	}
 
 	// Called AFTER ALFA has advanced the selected scratchpad counter.
 	// false means unimplemented; the caller must stop or handle memory/I/O.
@@ -79,7 +95,8 @@ struct puce_state
 			if (((di >> (x >> 1)) & 1) == (x & 1)) ++l[y];
 			return true;
 		}
-		if (op == 0xbd00) { leave_level(); return true; }
+		if (op == 0xbd00) { if (level != 4) { ecorn = true; leave_level(); } return true; }
+		if (op == 0xbd30) { ecorn = false; return true; }
 		if (op == 0xbd10) { if (level == 4) enter_level(3); return true; }
 
 		std::uint8_t value;
