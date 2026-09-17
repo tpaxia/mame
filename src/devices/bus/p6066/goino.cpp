@@ -11,12 +11,25 @@ p6066_goino_device::p6066_goino_device(const machine_config &mconfig, const char
 	, m_lamps(*this, "console_lamp%u", 0U)
 	, m_selected(*this, "console_selected")
 	, m_strobes(*this, "console_strobes")
+	, m_commands_seen(*this, "commands_seen")
+	, m_interrupts_blocked(*this, "interrupts_blocked")
 {
 }
 
 void p6066_goino_device::device_start()
 {
 	save_item(NAME(m_state.selected));
+	save_item(NAME(m_state.matrix_request));
+	save_item(NAME(m_state.column_request));
+	save_item(NAME(m_state.button_request));
+	save_item(NAME(m_state.pippo_request));
+	save_item(NAME(m_state.keyboard_request));
+	save_item(NAME(m_state.timer_request));
+	save_item(NAME(m_state.double_key_request));
+	save_item(NAME(m_state.pippo_enabled));
+	save_item(NAME(m_state.timer_enabled));
+	save_item(NAME(m_state.interrupts_blocked));
+	save_item(NAME(m_state.commands_seen));
 	save_item(NAME(m_state.lamp_shift));
 	save_item(NAME(m_state.lamps));
 	save_item(NAME(m_state.lamp_bits));
@@ -39,6 +52,8 @@ void p6066_goino_device::update_outputs()
 	for (unsigned i = 0; i != 16; ++i) m_lamps[i] = BIT(m_state.lamps, i);
 	m_selected = m_state.selected;
 	m_strobes = m_state.lamp_strobes;
+	m_commands_seen = m_state.commands_seen;
+	m_interrupts_blocked = m_state.interrupts_blocked;
 }
 
 

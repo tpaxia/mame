@@ -139,4 +139,58 @@ word 1000, level 3. The saved functional panel has all lamps off at this
 checkpoint; see `analysis/mame-p6066/bootstrap-validation/installed.png` in the
 parent project. The earlier first-read checkpoint remains FFFF. No synthetic
 lamp pattern is applied for either snapshot. [Bootstrap validation](me006-bootstrap.md)
-describes the observer and the subsequent unsupported F400 console command.
+describes the observer. The former F400 stop is now resolved as described below.
+
+## Four-bit command decode and reset sequence
+
+GOINO description, printed p.13 (PDF p.17), explicitly decodes commands from
+ECD8–ECDB. Matching the entire high byte was incorrect. Commands 4–9, B, D and E
+now clear the documented asynchronous requests, disable PIPPO/timer, or release
+the ASPEO startup inhibit. Latch semantics follow printed pp.5,9,11,14–16;
+RECON also clears the button request described on printed p.14. Fields are saved.
+They are partial request/control state: keyboard, printer and timer event
+producers and synchronized interrupt delivery remain unimplemented. Starting
+those absent producers still stops explicitly; reset commands are not fake
+successful printer operations.
+
+ECD8–ECDB command selection and the ECDD/ECDE lamp/display strobes are decoded
+independently. ESE selection still cannot generate an ECOT data strobe. F400
+therefore selects REMAN and retains its other data-control bits; there is no
+blanket F400-to-0400 conversion. Gate delays, pulse stretching and input-mux
+latch behavior remain outside the current transaction model.
+
+The standalone console test seeds pending latches and tests all sixteen upper
+nibbles, selection/level masking, independent and combined strobes, and explicit
+rejection of unsupported printer/timer/PIPPO starts. Original firmware validation:
+
+```sh
+python3 scripts/puce/test_bootstrap.py \
+  --rompath ../analysis/mame-p6066/roms \
+  --media ../analysis/mame-p6066/media/p6060-assembler-121.imd \
+  --results ../analysis/mame-p6066/goino-reset-validation \
+  --checkpoint console-reset
+```
+
+The original disk's F4/F5/F6/F7/F8/F9/FB/FD/FE sequence completes and releases
+ASPEO at natural word 1095, level 4. All 23,424 disk bytes are checked first.
+The saved `installed.png` has all lamps off. Diagnostic outputs `commands_seen`
+and `interrupts_blocked` expose validation state, not extra physical lamps.
+
+## Subsequent control-flow boundary
+
+An unrestricted continuation gets much further than GOINO reset, then stops
+on B2D3 at word 0BC2. The read-only instruction ring identifies this as an
+indirect-dispatch investigation, not evidence for a new B2D3 instruction:
+
+```
+0BC1 DE00  MLIP M0,L0 consumes literal B2D3 at 0BC2
+B2D3 ...   firmware computes an indirect target through L7
+B2E1 BA77  swaps the halves of L7
+B2E2 BC07  cross-swaps L0/L7, landing at 0BC2
+0BC2 B2D3  the earlier literal is encountered as an instruction
+```
+
+The trace is in the parent project's
+`analysis/mame-p6066/goino-continuation-trace.log`. The responsible table/state
+or CPU semantic error is not yet established; no opcode, jump or pointer
+workaround has been introduced. This remains short of operating-system startup.

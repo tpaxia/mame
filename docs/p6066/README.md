@@ -75,7 +75,9 @@ DMA, console button/keyboard input and GISA2 are not implemented. GOINO/CONDY
 only implements the direct output subset described in the console notes. Save items include execution phase and
 architectural state, but save/restore integration remains untested. No complete
 hardware-conformance or ESE-startup gate has passed. The disk-to-firmware
-loader gate passes; execution subsequently stops on unsupported GOINO F400.
+loader gate passes, as does the subsequent nine-command GOINO reset/release
+sequence through level-4 continuation at word 1095. Peripheral event producers
+and operating-system startup remain incomplete.
 
 ## Sources for this increment
 

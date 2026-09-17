@@ -68,17 +68,14 @@ Both cases pass. Results contain logs, traces, expected/loaded blocks, and
 `installed.png` / `removed.png`. The installed snapshot shows all console
 lamps off at handoff, after the earlier first-read FFFF pattern.
 
-## Next boundary: GOINO initialization
+## GOINO startup continuation
 
-Without the entry observer stopping execution, firmware continues and issues
-F400 through DAE at level 4; the unsupported-output diagnostic reports next
-PC 1085. The startup sequence includes F4/F5/F6/F7/F8/F9/FB/FD/FE commands.
+The previous F400 stop was a decoder restriction: printed GOINO p.13 assigns
+command selection to ECD8–ECDB. F400 selects REMAN, independently of ECDD/ECDE
+data strobes. The original F4/F5/F6/F7/F8/F9/FB/FD/FE reset sequence now completes
+and reaches word 1095, level 4. See [console command validation](console.md).
 
-The GOINO description PDF p.9 (printed GOINO 5, figure 1.3) lists command
-04 as REMAN and other reset/control commands, but shows the upper nibble zero.
-PDF p.17 (printed GOINO 13) identifies ECD8–ECDB as command decode, ECDD/ECDE
-as display/lamp strobes, and cites DISL002 C2/E2 for command circuitry.
-These establish command functions but do not yet justify treating F4 as 04
-or suppressing possible simultaneous strobes. No masking or no-op workaround
-has been added. Resolve the upper-bit gating against circuit/revision evidence
-before implementing this startup path. See [remaining evidence](../../../TBD.md).
+Run the same acceptance tool with `--checkpoint console-reset` and a separate
+results directory to verify both the original disk blocks and this natural
+continuation. The test requires all nine command bits and release of ASPEO;
+no firmware writes or forced program-counter changes are used.

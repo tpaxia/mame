@@ -39,6 +39,7 @@ def main():
     ap.add_argument("--rompath", required=True, type=Path)
     ap.add_argument("--media", required=True, type=Path)
     ap.add_argument("--results", required=True, type=Path)
+    ap.add_argument("--checkpoint", choices=("firmware-entry", "console-reset"), default="firmware-entry")
     args = ap.parse_args()
     result = args.results.resolve()
     result.mkdir(parents=True, exist_ok=True)
@@ -60,7 +61,7 @@ def main():
     assert descriptor[40:44] == b"F\x00\x10\x00"
     (result / "blocks.txt").write_text("".join(manifest))
     for case, slot in (("installed", []), ("removed", ["-bus:microcode", ""])):
-        env = dict(os.environ, P6066_BOOT_RESULTS=str(result), P6066_BOOT_CASE=case)
+        env = dict(os.environ, P6066_BOOT_RESULTS=str(result), P6066_BOOT_CASE=case, P6066_BOOT_CHECKPOINT=args.checkpoint)
         command = [str(ROOT / "p6066"), "p6066", *slot, "-rompath", str(args.rompath.resolve()),
                    "-flop2", str(args.media.resolve()), "-video", "none", "-sound", "none",
                    "-nothrottle", "-skip_gameinfo", "-seconds_to_run", "15", "-log",

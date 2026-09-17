@@ -28,7 +28,7 @@ private:
 	void update_outputs();
 	p6066_goino_state m_state;
 	output_finder<16> m_lamps;
-	output_finder<> m_selected, m_strobes;
+	output_finder<> m_selected, m_strobes, m_commands_seen, m_interrupts_blocked;
 };
 DECLARE_DEVICE_TYPE(P6066_GOINO, p6066_goino_device)
 #endif
