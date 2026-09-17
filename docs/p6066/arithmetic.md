@@ -50,9 +50,11 @@ restart. All three PASS markers must be present. The earlier reset/input
 assumptions still apply: undriven type/data inputs are provisionally logical
 zero and are not evidence of completed peripheral emulation.
 
-## Next step
+## Follow-up
 
-Implement word-memory transfers and their register-update ordering. The next
+Word-memory transfers and their register-update ordering are now implemented;
+see [word-memory.md](word-memory.md) for the newer checkpoint. At this arithmetic
+checkpoint, the next work was to implement these transfers. The next
 CAROM instruction, MLIP M1,L1, uses the active program counter as both address
 register and destination. Later LMIP/LMIM instructions deliberately alias the
 address and source registers. Their side-effect order must be established from

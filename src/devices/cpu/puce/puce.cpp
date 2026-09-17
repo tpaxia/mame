@@ -111,6 +111,10 @@ void puce_device::execute_run()
 			const bool previous_ecorn = m_core.ecorn;
 			bool done = m_core.execute_register(m_ir);
 			if (m_core.ecorn != previous_ecorn) update_ecorn();
+			if (!done)
+				done = m_core.execute_word(m_ir,
+					[this] (u16 address) { return m_program.read_word(address); },
+					[this] (u16 address, u16 value) { m_program.write_word(address, value); });
 			const unsigned hi = m_ir >> 8, x = (m_ir >> 4) & 15, y = m_ir & 15;
 			if (!done)
 			{

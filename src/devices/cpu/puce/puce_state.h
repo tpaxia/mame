@@ -54,6 +54,31 @@ struct puce_state
 	static unsigned byte_shift(std::uint16_t address) { return (address & 1) ? 0 : 8; }
 	static std::uint16_t byte_mask(std::uint16_t address) { return 0xffU << byte_shift(address); }
 
+	// Word transfers use a latched, unscaled word address. Index adjustment
+	// precedes the data phase, so aliased stores see the updated register and
+	// aliased loads overwrite the updated index. LPMIP adds one on the output
+	// path; it does not increment the source register a second time.
+	template <typename Read, typename Write>
+	bool execute_word(std::uint16_t op, Read &&read, Write &&write)
+	{
+		const unsigned hi = op >> 8, x = (op >> 4) & 15, y = op & 15;
+		if (hi != 0xd1 && hi != 0xdd && hi != 0xde && hi != 0xe1 && hi != 0xed && hi != 0xee && hi != 0xe2)
+			return false;
+		const std::uint16_t address = indirect(x);
+		const int adjustment = (hi == 0xdd || hi == 0xed) ? -1
+			: (hi == 0xde || hi == 0xee || hi == 0xe2) ? 1 : 0;
+		if (adjustment)
+		{
+			if (x < 12) l[x] += adjustment;
+			else set_a(x, a(x) + adjustment);
+		}
+		if (hi == 0xd1 || hi == 0xdd || hi == 0xde)
+			l[y] = read(address);
+		else
+			write(address, std::uint16_t(l[y] + (hi == 0xe2 ? 1 : 0)));
+		return true;
+	}
+
 	// Read-only external buses, in logical CPU bit polarity. No ECOT strobe.
 	bool execute_input(std::uint16_t op, std::uint16_t name_type, std::uint8_t data)
 	{
@@ -133,6 +158,12 @@ struct puce_state
 			if (hi == 0xe7) set_b(y, value);
 			return true;
 		case 0xba: set_a(x, bv); set_b(y, av); return true;
+		case 0xbc:
+			// SLL is two ordered cross-half exchanges, not a plain word swap.
+			// With x == y the second exchange undoes the first (V2 p.12).
+			set_a(x, bv); set_b(y, av);
+			value = a(y); set_a(y, b(x)); set_b(x, value);
+			return true;
 		case 0xd8: set_b(y, av); return true;
 		case 0xe9: set_a(x, bv); return true;
 		case 0xe8: set_b(y, (bv & 0xf0) | (av & 15)); return true;
@@ -150,6 +181,9 @@ struct puce_state
 		case 0x930f: di = b(x); return true;
 		case 0xc50f: set_a(x, di); return true;
 		case 0xd50f: set_b(x, di); return true;
+		case 0x850f: set_a(x, a(x) + 1); return true;
+		case 0x950f: set_b(x, b(x) + 1); return true;
+		case 0xbe0f: set_b(x, b(x) - 1); zero(b(x) == 0); return true;
 		case 0xa50f: ++l[x]; return true; // ICL does not update DI
 		case 0xe50f: --l[x]; zero(l[x] == 0); return true;
 		case 0xae0f: set_a(x, a(x) - 1); zero(a(x) == 0); return true;

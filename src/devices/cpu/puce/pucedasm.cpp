@@ -48,6 +48,22 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 			util::stream_format(stream, "%s C%02X", (op & 0x0100) ? "SEDI" : "REDI", op & 255);
 		return 1 | SUPPORTED;
 	}
+	const char *word_transfer = nullptr;
+	switch (op >> 8)
+	{
+	case 0xd1: word_transfer = "MLI"; break;
+	case 0xdd: word_transfer = "MLIM"; break;
+	case 0xde: word_transfer = "MLIP"; break;
+	case 0xe1: word_transfer = "LMI"; break;
+	case 0xed: word_transfer = "LMIM"; break;
+	case 0xee: word_transfer = "LMIP"; break;
+	case 0xe2: word_transfer = "LPMIP"; break;
+	}
+	if (word_transfer)
+	{
+		util::stream_format(stream, "%s %c%u,L%u", word_transfer, x < 12 ? 'M' : 'A', x, y);
+		return 1 | SUPPORTED;
+	}
 	const char *input = nullptr;
 	char input_reg = 'A';
 	switch (op & 0xff0f)
@@ -76,6 +92,12 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 	if ((op & 0xff0f) == 0xbd00 && x != 2)
 	{
 		util::stream_format(stream, "COM%u", x);
+		return 1 | SUPPORTED;
+	}
+
+	if ((op >> 8) == 0xbc)
+	{
+		util::stream_format(stream, "SLL L%u,L%u", x, y);
 		return 1 | SUPPORTED;
 	}
 
@@ -108,6 +130,9 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 	char reg = 'A';
 	switch (op & 0xff0f)
 	{
+	case 0x850f: mnemonic = "ICA"; break;
+	case 0x950f: mnemonic = "ICB"; reg = 'B'; break;
+	case 0xbe0f: mnemonic = "DCB"; reg = 'B'; break;
 	case 0xc300: mnemonic = "SHDA"; break;
 	case 0xd300: mnemonic = "SHDB"; reg = 'B'; break;
 	case 0xc400: mnemonic = "SHSA"; break;

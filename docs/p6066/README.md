@@ -34,18 +34,21 @@ This is an early M0/M1 increment, **not a bootable P6066**.
   a separate reference emulator. Counter boundaries, register aliasing, flags,
   byte ordering and unsupported operations have focused regression checks.
 * The reference CAROM cold path now selects GOINO, clocks 256 serial lamp bits,
-  executes COM3, idle-input checks and arithmetic checks, then stops at
-  MLIP M1,L1 at 804E.
+  passes the repeated level-3 checks and configured 64KB RAM scan and CAROM checksum,
+  then stops at BMI at 80AA (next PC 80AB, D4=1).
   No entry-point bypass is required. This is not the complete self-test.
 * Added a functional console panel, live lamp outputs, a 222-by-7-dot display
   renderer and a restart control. A synthetic PUCE integration fixture verifies
   display output and restart. See [console details and tests](console.md).
-* The partial disassembler has 62 reference examples and exhaustive single-word
+* The partial disassembler has 76 reference examples and exhaustive single-word
   fetch/length checks. ADD/SOT families are decoded; COM2 is left `DW`
   because the documented command table omits it. Many executable instructions
   still display `DW` until their disassembler entries are transcribed.
 * ADD/SOT execution and flags pass 1,572,864 exhaustive cases;
   see [arithmetic.md](arithmetic.md) for semantics and validation.
+* Word-memory transfers include index/source alias ordering. Original CAROM
+  fault-injection tests distinguish successful RAM verification from its error
+  path; see [word-memory.md](word-memory.md).
 * ECORN and input-bus details, including the provisional idle-zero default,
   are documented in [reset-inputs.md](reset-inputs.md).
 * ROM inventory tooling records hashes. No ROM bytes are distributed here.

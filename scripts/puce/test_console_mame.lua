@@ -9,27 +9,28 @@ local screen = machine.screens[":screen"]
 local function out(name) return console:output(name):get() end
 local function check_cold()
     assert(cpu.state["STOPPED"].value == 1, "CPU did not stop")
-    assert(cpu.state["IR"].value == 0xde11, "Expected MLIP")
-    assert(cpu.state["PC"].value == 0x804f, "Unexpected next PC")
-    assert(cpu.state["ECORN"].value == 0, "COM3 did not hold reset low")
-    assert((cpu.state["L0"].value & 255) == 0x92, "CAROM arithmetic result")
-    assert((cpu.state["CURFLAGS"].value & 2) == 2, "CAROM equality check failed")
+    assert(cpu.state["IR"].value == 0x89f4, "Expected BMI")
+    assert(cpu.state["PC"].value == 0x80ab, "Unexpected next PC")
+    assert(cpu.state["ECORN"].value == 1, "Level-3 COM0 did not release reset")
+    assert(cpu.state["LEVEL"].value == 4 and cpu.state["L1"].value == 0x807d, "Level-3 tests did not finish")
+    assert(cpu.state["L4"].value == 0x8000, "RAM scan did not reach CAROM")
+    assert((cpu.state["CURFLAGS"].value & 0x10) == 0x10, "CAROM RAM verification failed")
     assert(out("console_strobes") == 256, "Expected 256 serial lamp strobes")
     for bit = 0, 15 do assert(out("console_lamp" .. bit) == 1, "Lamp bit missing") end
 end
 check_cold()
 machine.video:snapshot()
-print("PASS: cold CAROM selected GOINO, sent 256 lamp bits, passed reset/input and arithmetic tests, stopped at MLIP/804E")
+print("PASS: cold CAROM selected GOINO, sent 256 lamp bits, completed level-3 checks, RAM scan and CAROM checksum (D4=1), stopped at BMI/80AA")
 
 local frames = 0
 local phase = 0
 emu.register_frame_done(function()
     frames = frames + 1
+    assert(frames < 360 or phase == 4, "Integration fixture timed out")
     if phase == 0 and frames == 2 then
         local space = cpu.spaces["program"]
         -- Byte 0 is FF, byte 1 is 00: ESE must read the odd byte to select GOINO.
         space:write_u16(0, 0xff00)
-        space:write_u16(0x1000, 0xbd00) -- exit level 3 to L0
         local pc = 0x2000
         local function emit(op) space:write_u16(pc, op); pc = pc + 1 end
         emit(0xbd30); emit(0xbd00) -- level-4 COM0 must not release ECORN
@@ -46,7 +47,7 @@ emu.register_frame_done(function()
         end
         emit(0xf000) -- explicit implementation stop after this synthetic fixture
         cpu.state["L0"].value = 0x2000
-        cpu.state["PC"].value = 0x1000 -- debugger import resumes the held CPU
+        cpu.state["PC"].value = 0x2000 -- already level 4; debugger import resumes the held CPU
         phase = 1
     elseif phase == 1 and frames >= 5 then
         assert(cpu.state["STOPPED"].value == 1 and cpu.state["IR"].value == 0xf000)
@@ -67,9 +68,11 @@ emu.register_frame_done(function()
     elseif phase == 2 then
         machine.ioport.ports[":PANEL"].fields["Restart machine"]:set_value(0)
         phase = 3
-    elseif phase == 3 and frames >= 45 then
+    elseif phase == 3 and cpu.state["STOPPED"].value == 1 then
         check_cold()
         print("PASS: panel restart input resets CPU/console and repeats cold CAROM")
         phase = 4
+        machine.video:snapshot()
+        machine:exit()
     end
 end)
