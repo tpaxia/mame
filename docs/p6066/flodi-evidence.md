@@ -15,7 +15,7 @@ IMD nor injects extracted firmware or directory records into guest RAM.
 
 ## Circuit evidence that resolved the failed command
 
-The local `AndreaMaglio/AdreaRiccardoEmanuele/FLODI FLOA-FLOB SCHEMI LOGICI
+The local `reference/AdreaRiccardoEmanuele/FLODI FLOA-FLOB SCHEMI LOGICI
 (BIT 661.60.1 G.02) .pdf` contains logical sheets titled **FLOD2**, drawing
 168664. They must not be treated as identical to the older FLODI description.
 

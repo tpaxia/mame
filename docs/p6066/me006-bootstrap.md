@@ -9,7 +9,7 @@ handoff, not completed ESE startup or evidence that this disk is a P6066 ESE mas
 ## Hardware evidence
 
 Source: `RA008 e ME006 - RAM per CPU19M - Descrizione di Funzionamento.pdf`,
-in the parent project's `AndreaMaglio/DocumentazioneP6060_P6066/Manuali STAC e di servizio/2L`.
+in the parent project's `reference/DocumentazioneP6060_P6066/Manuali STAC e di servizio/2L`.
 
 * PDF p.7 identifies ME006 as P6066 microprogram memory.
 * PDF p.37 (printed 2.01) specifies 32 KB, four selectable word-address

@@ -71,7 +71,7 @@ reset fan-out is implemented; unverified card-specific latch effects remain open
   verifying the physical wiring.
 
 Manuals are in the parent project's
-`AndreaMaglio/DocumentazioneP6060_P6066/Manuali STAC e di servizio/2L`.
+`reference/DocumentazioneP6060_P6066/Manuali STAC e di servizio/2L`.
 
 ## Validation and next step
 

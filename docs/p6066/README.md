@@ -115,7 +115,7 @@ it does not treat an old filename as a checksum or assume the inputs match
 the original audit.
 
 The two upstream merged CAROM/ROMCA files are identical 4096-byte images,
-CRC32 `9caca305`. The local AndreaMaglio set has five 4096-byte ROMCA files
+CRC32 `9caca305`. The local reference set has five 4096-byte ROMCA files
 and two 8192-byte updated CAROM files, none byte-identical to that merged
 upstream image. Their filename CRCs match their computed CRCs. Their exact
 physical organization and revision relationships are still unresolved.

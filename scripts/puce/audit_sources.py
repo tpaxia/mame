@@ -32,8 +32,8 @@ def main():
     args = parser.parse_args()
     project = args.project.resolve()
     paths = set()
-    for folder in ('AndreaMaglio/DocumentazioneP6060_P6066/ROM DUMP',
-                   'AndreaMaglio/DocumentazioneP6060_P6066/Reverse engineering schede/GISA2',
+    for folder in ('reference/DocumentazioneP6060_P6066/ROM DUMP',
+                   'reference/DocumentazioneP6060_P6066/Reverse engineering schede/GISA2',
                    'upstream-olivetti-p6060/rom/system'):
         paths.update((project / folder).rglob('*.bin'))
     for name in ('068.IMD', 'K0E002.bin', 'K0E003.bin', 'K0E002-load-0180.bin',
@@ -43,7 +43,7 @@ def main():
     by_hash = {}
     for item in files:
         by_hash.setdefault(item['sha256'], []).append(item['path'])
-    service = project / 'AndreaMaglio/DocumentazioneP6060_P6066/Manuali STAC e di servizio/2L'
+    service = project / 'reference/DocumentazioneP6060_P6066/Manuali STAC e di servizio/2L'
     required = ['CPU19 - Descrizione (Aggiornamento Tecnico).pdf',
                 'CPU19 - Tabella Microistruzioni V1.pdf',
                 'CPU19 - Tabella Microistruzioni V2.pdf',

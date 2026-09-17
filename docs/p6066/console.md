@@ -56,7 +56,7 @@ test data, not a recovered firmware screen.
 
 Primary source: Olivetti *GOINO e ASTAM e CONDY e ROMCA e TASTIERA — Descrizione
 di Funzionamento*, STAC 670.30.1, in the parent project's
-`AndreaMaglio/DocumentazioneP6060_P6066/Manuali STAC e di servizio/2L`.
+`reference/DocumentazioneP6060_P6066/Manuali STAC e di servizio/2L`.
 
 | PDF pages | Evidence used |
 |---|---|
