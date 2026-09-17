@@ -150,7 +150,7 @@ After the tools build:
 
 ```sh
 python3 scripts/puce/test_disassembler.py --unidasm ./unidasm
-./unidasm ../upstream-olivetti-p6060/rom/system/carom/carom.bin -arch puce -basepc 8000 -count 16
+./unidasm ../reference/olivetti-p6060/rom/system/carom/carom.bin -arch puce -basepc 8000 -count 16
 ```
 
 The first words should show `CRTB B0,C80`, `CRTA A0,C89`, `COM0` at consecutive
@@ -162,7 +162,7 @@ listing is not a test of CPU execution.
 
 ```sh
 python3 scripts/puce/test_cpu.py
-python3 scripts/puce/test_cpu.py --carom ../upstream-olivetti-p6060/rom/system/carom/carom.bin
+python3 scripts/puce/test_cpu.py --carom ../reference/olivetti-p6060/rom/system/carom/carom.bin
 make SUBTARGET=p6066 SOURCES=src/mame/olivetti/p6066.cpp OSD=sdl USE_LIBSDL=1 SDL_INSTALL_ROOT=/opt/homebrew IGNORE_GIT=1 REGENIE=1 -j4
 ```
 

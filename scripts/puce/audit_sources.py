@@ -34,7 +34,7 @@ def main():
     paths = set()
     for folder in ('reference/DocumentazioneP6060_P6066/ROM DUMP',
                    'reference/DocumentazioneP6060_P6066/Reverse engineering schede/GISA2',
-                   'upstream-olivetti-p6060/rom/system'):
+                   'reference/olivetti-p6060/rom/system'):
         paths.update((project / folder).rglob('*.bin'))
     for name in ('068.IMD', 'K0E002.bin', 'K0E003.bin', 'K0E002-load-0180.bin',
                  'K0E002-load-1000.bin', 'K0E002-load-8800.bin'):
