@@ -78,6 +78,41 @@ int main(int argc, char **argv)
     assert(!c.execute_register(0xbd20)); assert(!c.execute_register(0xb1f4));
     assert(c.l == before.l && c.di == before.di && c.level == before.level);
     std::cout << "PASS: registers, reset, nested counters, addressing, branches, flags and unsupported operations\n";
+    // Independent arithmetic oracle: subtraction/borrow rather than the core's
+    // complemented-add implementation. Exhaust all operands/carry/destinations,
+    // both aliased and separate A/B halves, with varying preserved DI bits.
+    unsigned arithmetic_cases = 0;
+    for (unsigned sub = 0; sub != 2; ++sub)
+    for (unsigned destination = 0; destination != 3; ++destination)
+    for (unsigned alias = 0; alias != 2; ++alias)
+    for (int a = 0; a != 256; ++a)
+    for (int b = 0; b != 256; ++b)
+    for (int carry = 0; carry != 2; ++carry)
+    {
+        puce_state t;
+        t.l.fill(0x5aa5);
+        const unsigned x = 3, y = alias ? 3 : 4;
+        t.set_a(x, a); t.set_b(y, b);
+        t.di = ((a ^ b) & 0xf8) | 6 | carry;
+        const auto before = t;
+        const int raw = sub ? a - b - (1 - carry) : a + b + carry;
+        const unsigned result = raw & 255;
+        const bool full_carry = sub ? raw >= 0 : raw >= 256;
+        const bool half_carry = sub ? (a & 15) >= (b & 15) + (1 - carry)
+                                   : (a & 15) + (b & 15) + carry >= 16;
+        const unsigned expected_di = (before.di & 0xf8) | full_carry
+                                   | (result == 0 ? 2 : 0) | (half_carry ? 4 : 0);
+        const unsigned hi = (sub ? 0xb6 : 0x86) + destination * 0x10;
+        assert(t.execute_register((hi << 8) | (x << 4) | y));
+        auto expected = before.l;
+        if (destination == 1) expected[x] = (expected[x] & 0xff00) | result;
+        if (destination == 2) expected[y] = (expected[y] & 0xff) | (result << 8);
+        assert(t.l == expected && t.di == expected_di);
+        ++arithmetic_cases;
+    }
+    c.reset(); c.set_pc(0x80ff); c.set_b(2, 1); c.di = 0; c.advance();
+    assert(c.execute_register(0x9612) && c.pc() == 0x8101);
+    std::cout << "PASS: " << arithmetic_cases << " exhaustive ADD/SOT cases and post-fetch PC alias\n";
     if (argc == 1) return 0;
     std::ifstream input(argv[1], std::ios::binary);
     std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(input)), {});

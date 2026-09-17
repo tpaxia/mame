@@ -9,16 +9,17 @@ local screen = machine.screens[":screen"]
 local function out(name) return console:output(name):get() end
 local function check_cold()
     assert(cpu.state["STOPPED"].value == 1, "CPU did not stop")
-    assert(cpu.state["IR"].value == 0x9632, "Expected ADDA")
-    assert(cpu.state["PC"].value == 0x803a, "Unexpected next PC")
+    assert(cpu.state["IR"].value == 0xde11, "Expected MLIP")
+    assert(cpu.state["PC"].value == 0x804f, "Unexpected next PC")
     assert(cpu.state["ECORN"].value == 0, "COM3 did not hold reset low")
-    assert(cpu.state["L9"].value == 0 and cpu.state["L10"].value == 0xfd00, "Idle input bus checks")
+    assert((cpu.state["L0"].value & 255) == 0x92, "CAROM arithmetic result")
+    assert((cpu.state["CURFLAGS"].value & 2) == 2, "CAROM equality check failed")
     assert(out("console_strobes") == 256, "Expected 256 serial lamp strobes")
     for bit = 0, 15 do assert(out("console_lamp" .. bit) == 1, "Lamp bit missing") end
 end
 check_cold()
 machine.video:snapshot()
-print("PASS: cold CAROM selected GOINO, sent 256 lamp bits, executed COM3 and idle bus tests, stopped at ADDA/8039")
+print("PASS: cold CAROM selected GOINO, sent 256 lamp bits, passed reset/input and arithmetic tests, stopped at MLIP/804E")
 
 local frames = 0
 local phase = 0

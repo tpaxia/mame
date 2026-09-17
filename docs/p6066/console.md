@@ -5,7 +5,8 @@
 The `p6066` machine now executes the reference CAROM from reset through its
 initial lamp sequence and first register self-test block. It passes COM3 and
 the initial input checks using the current provisional idle-bus defaults, then
-stops at word `8039` (ADDA), with next PC `803A`, keeping the console window
+passes the arithmetic checks and stops at word `804E` (MLIP), with next PC
+`804F`, keeping the console window
 open. This is a
 development stop, not an emulated hardware halt or a completed CAROM self-test.
 
@@ -48,7 +49,7 @@ implemented. Calculator indication currently shows LAMX1; LAMX2 is preserved
 in the register but its visual/color relationship remains to be resolved.
 
 The display is blank on the current cold CAROM path because firmware has not
-sent it a message before ADDA/8039. The regression fixture separately exercises
+sent it a message before MLIP/804E. The regression fixture separately exercises
 its renderer with a synthetic PUCE program in RAM. Its diagonal pattern is
 test data, not a recovered firmware screen.
 
@@ -114,7 +115,7 @@ Full integration with the reference CAROM:
 The Lua test must print **three PASS lines**, with no Lua assertion errors:
 
 1. Cold CAROM selects GOINO, clocks 256 lamp bits, executes COM3 and idle input
-   checks, and reaches ADDA/8039.
+   and arithmetic checks, and reaches MLIP/804E.
 2. Synthetic PUCE code selects from an odd memory byte, clocks lamp pattern
    A55A, and transmits 224 display bytes; actual rendered pixels are checked.
 3. The panel's restart input resets the CPU/console and repeats the cold path.
@@ -125,7 +126,7 @@ markers as well as the process exit status. No ROM bytes are in the scripts.
 
 ## Next gate
 
-Implement the remaining arithmetic/memory operations in CAROM. COM3 and
+Implement the word-memory operations in CAROM; see [arithmetic.md](arithmetic.md). COM3 and
 initial idle input handling are described in [reset-inputs.md](reset-inputs.md). Extend console inputs
 alongside the real interrupt/selection protocol. Complete self-test before
 claiming a boot or moving to floppy bootstrap acceptance.

@@ -3,7 +3,7 @@
 
 // Initial, deliberately partial CPU19/PUCE disassembler.
 // Source: Olivetti CPU19 Tabella Microistruzioni, publication 801.30.1,
-// V2 PDF pp.2-4,9-11,14 (including the branch and command tables).
+// V2 PDF pp.1-6,9-12,14,20 (including arithmetic, input and command tables).
 // Decode memory words, not the transformed RO register contents. ALFA and
 // RESE are hardware-generated pseudo-instructions, not memory opcodes.
 // Untranscribed encodings remain DW; this does not imply a hardware trap.
@@ -82,6 +82,12 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 	const char *mnemonic = nullptr;
 	switch (op >> 8)
 	{
+	case 0x86: mnemonic = "ADD"; break;
+	case 0x96: mnemonic = "ADDA"; break;
+	case 0xa6: mnemonic = "ADDB"; break;
+	case 0xb6: mnemonic = "SOT"; break;
+	case 0xc6: mnemonic = "SOTA"; break;
+	case 0xd6: mnemonic = "SOTB"; break;
 	case 0x97: mnemonic = "AND"; break;
 	case 0xa7: mnemonic = "ANDA"; break;
 	case 0xb7: mnemonic = "ANDB"; break;

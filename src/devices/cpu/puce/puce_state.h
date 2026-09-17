@@ -99,6 +99,21 @@ struct puce_state
 		if (op == 0xbd30) { ecorn = false; return true; }
 		if (op == 0xbd10) { if (level == 4) enter_level(3); return true; }
 
+		if (hi == 0x86 || hi == 0x96 || hi == 0xa6 || hi == 0xb6 || hi == 0xc6 || hi == 0xd6)
+		{
+			// SOT uses A + complement(B) + old DI0, i.e. A - B - !DI0.
+			// DI2 is carry from the low nibble, not signed overflow.
+			const unsigned rhs = hi >= 0xb6 ? (bv ^ 0xff) : bv;
+			const unsigned carry = di & 1;
+			const unsigned sum = av + rhs + carry;
+			const std::uint8_t result = sum;
+			di = (di & 0xf8) | (sum > 255 ? 1 : 0) | (result == 0 ? 2 : 0)
+				| ((av & 15) + (rhs & 15) + carry > 15 ? 4 : 0);
+			if (hi == 0x96 || hi == 0xc6) set_a(x, result);
+			if (hi == 0xa6 || hi == 0xd6) set_b(y, result);
+			return true;
+		}
+
 		std::uint8_t value;
 		switch (hi)
 		{

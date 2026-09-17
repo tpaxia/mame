@@ -3,8 +3,9 @@
 # COM3 and initial input-bus checks
 
 Cold CAROM now executes COM3 at word 802C and the input checks at 802D–8035.
-It stops before executing ADDA A3,B2 (`9632`) at word **8039**, with next PC
-803A. This is further progress through self-test, not completion of it.
+That increment stopped before executing ADDA A3,B2 (`9632`) at word **8039**, with next PC
+803A. [Arithmetic support](arithmetic.md) subsequently advances the current
+stop to MLIP/804E. Neither checkpoint completes self-test.
 
 ## CPU behavior
 
@@ -30,7 +31,7 @@ The following input instructions now read callbacks without generating ECOT:
 
 None changes DI. Tests use nonzero input values to check packing, preservation
 of the other register half, and flags independently of CAROM's expected zero.
-Decoder coverage is now 56 reference cases plus exhaustive word-length checks.
+That increment brought decoder coverage to 56 reference cases plus exhaustive word-length checks.
 
 ## Current bus model and its limits
 
@@ -76,14 +77,13 @@ Manuals are in the parent project's
 
 ## Validation and next step
 
-The standalone CPU and decoder tests pass. The MAME integration test in
-`scripts/puce/test_console_mame.lua` verifies ECORN held low, L9=0000 and
-L10=FD00 at the new stopping point, 256 lamp strobes, synthetic lamp/display
+The standalone CPU and decoder tests pass. The integration test at that checkpoint verified ECORN held low, L9=0000
+and L10=FD00, 256 lamp strobes, synthetic lamp/display
 output with level-4 COM0 leaving reset asserted, and panel restart followed by
 the same cold path. All three PASS markers must be present; Lua assertions
 alone do not guarantee a nonzero MAME exit status. Save/load re-drive is
 implemented but its integration test remains outstanding.
 
-The next CPU work is ADD/SOT arithmetic, including carry and nibble flags,
-followed by the word-memory operations later in CAROM. The physical bus
+ADD/SOT arithmetic is now implemented and tested. The next CPU work is the
+word-memory operations later in CAROM. The physical bus
 verification and controller implementations remain separate open gates.
