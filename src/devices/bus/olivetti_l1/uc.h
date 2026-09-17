@@ -53,7 +53,7 @@ private:
 
 	u16 mem_r(address_space &space, offs_t offset, u16 mem_mask);
 	void mem_w(address_space &space, offs_t offset, u16 data, u16 mem_mask);
-	bool xlate(int spacenum, bool write, offs_t &address);
+	z8010_device::memory_result xlate(int spacenum, bool write, offs_t address);
 	u16 physical_word_r(offs_t address, u16 mem_mask);
 	void physical_word_w(offs_t address, u16 data, u16 mem_mask);
 	void ready_fault();
@@ -105,14 +105,12 @@ private:
 	// 128-entry NOVRAM population supported by this CPU-board family.
 	u8 m_earom[0x80]{};
 	u8 m_nmi_status = 0;
-	u8 m_mmu_mode = 0;
 	u8 m_kdc_status = 0;
 	u8 m_lamp = 0;
 	bool m_acia_irq = false;
 	bool m_suppress_enabled = true;
 	u8 m_timer_vector = 0;
 	u8 m_acia_vector = 0;
-	u32 m_viol_pc = 0xffffffff;
 	bool m_timer_out1 = false;
 	bool m_timer_pending = false;
 
