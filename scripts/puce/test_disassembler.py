@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # license:BSD-3-Clause
-# copyright-holders:P6066 contributors
+# copyright-holders:Salvatore Paxia
 """Compile and test the actual PUCE disassembler without a full MAME build.
 
 No ROM files are required. Expected strings are transcribed instruction
@@ -44,6 +44,8 @@ int main()
 {
     struct example { unsigned word; const char *text; };
     const example examples[] = {
+        {0xb1f4, "ESE A15"}, {0xb1b4, "ESE M11"}, {0xfca0, "DAE L10"},
+        {0xb1f5, "DW B1F5"}, {0xfca1, "DW FCA1"},
         {0x5080, "CRTB B0,C80"}, {0x7089, "CRTA A0,C89"},
         {0x5fff, "CRTB B15,CFF"}, {0x7f03, "CRTA A15,C03"},
         {0xc900, "NOP"}, {0xc800, "REDI C00"},

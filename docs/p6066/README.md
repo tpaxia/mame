@@ -4,7 +4,7 @@ Work started 2026-09-17 on branch `P6066`, based on upstream master
 `315fa5f0aa5f8288428e8773ff061e228d525089` (verified against the remote).
 The checkout is shallow; the full upstream history is not downloaded.
 
-The machine will be `p6066`, with a reusable CPU core under `cpu/puce`.
+The machine is `p6066`, with a reusable CPU core under `cpu/puce`.
 CPU19 is the documented hardware name; PUCE1 and PUCE2 are its boards.
 The driver will execute original PUCE firmware rather than reproduce the
 Z8000 EP60 implementation of the program-visible instruction set.
@@ -21,7 +21,8 @@ This is an early M0/M1 increment, **not a bootable P6066**.
 
 * Added `puce_device` and the `p6066` development machine. The CPU executes
   a documented subset of register/logic/branch operations and basic AMI/MAI
-  byte transfers. Unsupported operations stop with a diagnostic.
+  byte transfers, plus ESE/DAE console output. Unsupported CPU operations
+  stop with a diagnostic while the functional panel remains open.
 * Scratchpad-backed counters implement full-width level 3/4 and short
   level 1/2 addressing. Reset selects level 3 at word 8000; fetch advances
   the selected counter before execution. COM0/COM1 currently model internal
@@ -29,12 +30,14 @@ This is an early M0/M1 increment, **not a bootable P6066**.
 * The live architectural state is shared with standalone tests. It is not
   a separate reference emulator. Counter boundaries, register aliasing, flags,
   byte ordering and unsupported operations have focused regression checks.
-* The reference CAROM cold path reaches its first external-channel operation,
-  ESE at word 808B. An isolated entry at 8003 runs the first register self-test
-  block to COM3 at 802C in 196,731 instructions. This bypasses console setup
-  for that test only and does not establish a complete CAROM self-test.
-* The partial disassembler has 44 reference examples and exhaustive single-word
-  fetch/length checks. Branch and AND decoding is added; COM2 is left `DW`
+* The reference CAROM cold path now selects GOINO, clocks 256 serial lamp bits,
+  and executes the first register self-test block before stopping at COM3/802C.
+  No entry-point bypass is required. This is not the complete self-test.
+* Added a functional console panel, live lamp outputs, a 222-by-7-dot display
+  renderer and a restart control. A synthetic PUCE integration fixture verifies
+  display output and restart. See [console details and tests](console.md).
+* The partial disassembler has 49 reference examples and exhaustive single-word
+  fetch/length checks. ESE/DAE decoding is added; COM2 is left `DW`
   because the documented command table omits it. Many executable instructions
   still display `DW` until their disassembler entries are transcribed.
 * ROM inventory tooling records hashes. No ROM bytes are distributed here.
@@ -46,8 +49,9 @@ clock are placeholders, **not hardware timing**. Only established reset
 state is changed on reset; remaining registers start at deterministic zero
 on initial construction, with no claim that hardware clears them.
 
-Bus slots, memory boards, DMA, external interrupt requests/arbitration, GOINO,
-FLODI and GISA2 are not implemented. Save items include execution phase and
+Bus slots, memory boards, DMA, external interrupt requests/arbitration,
+console button/keyboard input, FLODI and GISA2 are not implemented. GOINO/CONDY
+only implements the direct output subset described in the console notes. Save items include execution phase and
 architectural state, but save/restore integration remains untested. No complete
 CAROM or bootstrap gate has passed.
 
@@ -151,15 +155,17 @@ inside your own ROM directory:
 ./p6066 p6066 -rompath /path/to/roms -video none -sound none -nothrottle -skip_gameinfo -seconds_to_run 1
 ```
 
-For this increment the expected diagnostic is an intentional nonzero exit:
-`PUCE bring-up: unsupported B1F4 at word 808B (level 4, next PC 808C)`.
-This is an implementation stop, not an emulated hardware trap.
+For this increment the expected diagnostic is:
+`PUCE bring-up: unsupported BD30 at word 802C (level 3, next PC 802D)`.
+The CPU stops while the UI remains open. With `-seconds_to_run`, MAME exits
+normally after the requested duration. This is an implementation stop, not a
+hardware trap. See [console.md](console.md) for the full integration test.
 
 ## Next implementation steps
 
 1. Resolve reset ROM revision/physical mapping and RAM-board population.
-2. Implement the GOINO external-channel interface needed by cold CAROM before
-   the register self-test, including ESE selection and console lamp output.
+2. Implement COM3 and controller identity/data inputs reached by CAROM, then
+   remaining self-test operations and the real console interrupt/input path.
 3. Extend CPU execution and decoder coverage for the remaining self-test,
    memory and peripheral operations. Verify command side effects in hardware.
 4. Implement the plan's interrupt/DMA/arbitration, floppy and serial milestones,

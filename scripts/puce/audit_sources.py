@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # license:BSD-3-Clause
-# copyright-holders:P6066 contributors
+# copyright-holders:Salvatore Paxia
 """Inventory local P6066 evidence; never copy or alter ROM/media contents.
 
 Usage: python3 scripts/puce/audit_sources.py --project .. --output ../analysis/mame-p6066
