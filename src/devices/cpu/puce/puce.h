@@ -18,6 +18,7 @@ public:
 	auto name_type_cb() { return m_name_type_cb.bind(); }
 	auto input_data_cb() { return m_input_data_cb.bind(); }
 	auto stopped_cb() { return m_stopped_cb.bind(); }
+	void invalid_memory_access() { m_invalid_pending = true; ++m_invalid_cycles; }
 	void set_hold_on_unsupported(bool hold) { m_hold_on_unsupported = hold; }
 
 protected:
@@ -44,6 +45,8 @@ private:
 	void update_ecorn();
 	bool m_hold_on_unsupported = false;
 	bool m_stopped = false;
+	bool m_invalid_pending = false;
+	u32 m_invalid_cycles = 0;
 	u16 m_ir = 0; // fetched memory word; NOT transformed hardware RO
 	u16 m_fetch_pc = 0x8000;
 	u16 m_debug_pc = 0x8000; // debugger-only import/export, never execution state

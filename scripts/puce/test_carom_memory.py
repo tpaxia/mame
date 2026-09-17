@@ -22,20 +22,25 @@ int main(int argc, char **argv)
     std::ifstream f(argv[1], std::ios::binary);
     f.read(reinterpret_cast<char *>(rom.data()), rom.size());
     assert(f.gcount() == rom.size());
-    for (unsigned mode = 0; mode != 4; ++mode)
+    for (unsigned mode = 0; mode != 5; ++mode)
     {
-        puce_state c; c.level = 4; c.active = 0x10; c.set_pc(0x8092);
+        puce_state c; c.level = 4; c.active = 0x10; c.set_pc(0x8092); c.l[1] = 0x807d;
         std::array<std::uint16_t, 32768> ram{};
         unsigned stores = 0, verifies = 0, errors = 0, steps = 0;
-        bool probe_branch = false, finished = false;
+        bool probe_branch = false, finished = false, invalid_pending = false;
+        unsigned invalid_cycles = 0;
         auto read = [&](unsigned address) -> std::uint16_t {
             if (address >= 0x8000 && address < 0x8800)
                 return (rom[(address - 0x8000) * 2] << 8) | rom[(address - 0x8000) * 2 + 1];
-            assert(address < ram.size());
+            if (address >= ram.size())
+            {
+                assert(mode == 4); invalid_pending = true; ++invalid_cycles; return 0;
+            }
             return ram[address];
         };
         while (++steps < 2000000)
         {
+            if (invalid_pending) { invalid_pending = false; assert(c.enter_level(3)); }
             const auto pc = c.pc();
             if (pc == 0x80a1 && c.l[4] == 0)
             {
@@ -47,13 +52,13 @@ int main(int argc, char **argv)
             }
             if (pc == 0x80b7) probe_branch = true;
             if (pc == 0x81b6) ++errors;
-            if (pc == 0x80ba && mode != 3)
+            if (pc == 0x80ba && mode < 3)
             {
                 assert(mode == 1 && !probe_branch && c.l[2] == 0xa880);
                 std::cout << "PASS: read-only memory takes the alternate probe path at 80BA\n";
                 finished = true; break;
             }
-            if (pc == 0x81be && mode != 3)
+            if (pc == 0x81be && mode < 3)
             {
                 assert(mode != 1 && probe_branch && c.l[2] == 0xac80);
                 assert(bool(c.di & 0x10) == (mode == 0));
@@ -65,16 +70,25 @@ int main(int argc, char **argv)
                     << ", stores=" << stores << ", verifies=" << verifies << "\n";
                 finished = true; break;
             }
-            if (pc == 0x80aa)
+            if (pc == 0x80aa && mode == 3)
             {
                 assert(mode == 3 && c.l[4] == 0x8000 && (c.di & 0x10));
                 assert(stores == 65536 && verifies == 65536 && errors == 0);
                 std::cout << "PASS: all 32 RAM blocks verify both patterns; CAROM checksum path returns with D4 set; next BMI/80AA\n";
                 finished = true; break;
             }
+            if (pc == 0x8308)
+            {
+                assert(mode == 4 && invalid_cycles == 30 && errors == 0);
+                assert(stores == 65536 && verifies == 65536);
+                assert(c.l[1] == 0x8226 && c.a(14) == 1 && (ram[0] & 255) == 0xe0);
+                assert((ram[7] >> 8) == 0x80); // byte 0E: first non-RAM block
+                std::cout << "PASS: memory enumeration recovers 30 invalid cycles and reaches floppy selection E0 at 8308\n";
+                finished = true; break;
+            }
             const auto op = read(pc); c.advance();
             if (c.execute_register(op)) continue;
-            const bool done = c.execute_word(op,
+            bool done = c.execute_word(op,
                 [&](unsigned address) -> std::uint16_t {
                     auto value = read(address);
                     if (pc == 0x81ab)
@@ -85,10 +99,17 @@ int main(int argc, char **argv)
                     return value;
                 },
                 [&](unsigned address, std::uint16_t value) {
+                    if (address >= 0x8800) { assert(mode == 4); invalid_pending = true; ++invalid_cycles; return; }
                     if (address >= 0x8000) return; // ROM ignores writes
                     assert(address < ram.size());
                     if (mode != 1) ram[address] = value;
                     if (pc == 0x8197) ++stores;
+                });
+            if (!done) done = c.execute_byte(op,
+                [&](unsigned address) { return (read(address / 2) >> puce_state::byte_shift(address)) & 255; },
+                [&](unsigned address, unsigned value) {
+                    const unsigned word=address/2, mask=puce_state::byte_mask(address);
+                    ram[word]=(ram[word]&~mask)|(value<<puce_state::byte_shift(address));
                 });
             if (!done) std::cerr << "Unsupported " << std::hex << op << " at " << pc << "\n";
             assert(done);

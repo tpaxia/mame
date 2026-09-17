@@ -79,6 +79,41 @@ struct puce_state
 		return true;
 	}
 
+	// Byte callbacks take byte addresses. Like word transfers, updated indexes
+	// are visible during the data phase; direct transfers address the low 256 bytes.
+	template <typename Read, typename Write>
+	bool execute_byte(std::uint16_t op, Read &&read, Write &&write)
+	{
+		const unsigned hi = op >> 8, x = (op >> 4) & 15, y = op & 15;
+		if ((op >> 12) == 2) { write(op & 255, a((op >> 8) & 15)); return true; }
+		if ((op >> 12) == 3) { set_a((op >> 8) & 15, read(op & 255)); return true; }
+		bool store, bank_b;
+		int adjustment = 0;
+		switch (hi)
+		{
+		case 0xa8: store = true; bank_b = false; break;
+		case 0x82: store = true; bank_b = false; adjustment = -1; break;
+		case 0x88: store = true; bank_b = false; adjustment = 1; break;
+		case 0x89: store = true; bank_b = true; break;
+		case 0x8a: store = true; bank_b = true; adjustment = -1; break;
+		case 0x8c: store = true; bank_b = true; adjustment = 1; break;
+		case 0x91: store = false; bank_b = false; break;
+		case 0x92: store = false; bank_b = false; adjustment = -1; break;
+		case 0x98: store = false; bank_b = false; adjustment = 1; break;
+		case 0x99: store = false; bank_b = true; break;
+		case 0x9a: store = false; bank_b = true; adjustment = -1; break;
+		case 0x9c: store = false; bank_b = true; adjustment = 1; break;
+		default: return false;
+		}
+		const std::uint16_t address = indirect(x);
+		if (x < 12) l[x] += adjustment;
+		else set_a(x, a(x) + adjustment);
+		if (store) write(address, bank_b ? b(y) : a(y));
+		else if (bank_b) set_b(y, read(address));
+		else set_a(y, read(address));
+		return true;
+	}
+
 	// Read-only external buses, in logical CPU bit polarity. No ECOT strobe.
 	bool execute_input(std::uint16_t op, std::uint16_t name_type, std::uint8_t data)
 	{
@@ -181,6 +216,10 @@ struct puce_state
 		case 0x930f: di = b(x); return true;
 		case 0xc50f: set_a(x, di); return true;
 		case 0xd50f: set_b(x, di); return true;
+		case 0xab0f: set_a(x, a(x) & 0xf0); return true;
+		case 0xbb0f: set_a(x, a(x) & 0x0f); return true;
+		case 0xcb0f: set_b(x, b(x) & 0xf0); return true;
+		case 0xdb0f: set_b(x, b(x) & 0x0f); return true;
 		case 0x850f: set_a(x, a(x) + 1); return true;
 		case 0x950f: set_b(x, b(x) + 1); return true;
 		case 0xbe0f: set_b(x, b(x) - 1); zero(b(x) == 0); return true;

@@ -95,6 +95,33 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 		return 1 | SUPPORTED;
 	}
 
+	if ((op >> 12) == 2 || (op >> 12) == 3)
+	{
+		util::stream_format(stream, "%s A%u,C%02X", (op >> 12) == 2 ? "AMD" : "MAD", (op >> 8) & 15, op & 255);
+		return 1 | SUPPORTED;
+	}
+	const char *byte_transfer = nullptr;
+	char byte_bank = 'A';
+	switch (op >> 8)
+	{
+	case 0xa8: byte_transfer = "AMI"; break;
+	case 0x82: byte_transfer = "AMIM"; break;
+	case 0x88: byte_transfer = "AMIP"; break;
+	case 0x89: byte_transfer = "BMI"; byte_bank = 'B'; break;
+	case 0x8a: byte_transfer = "BMIM"; byte_bank = 'B'; break;
+	case 0x8c: byte_transfer = "BMIP"; byte_bank = 'B'; break;
+	case 0x91: byte_transfer = "MAI"; break;
+	case 0x92: byte_transfer = "MAIM"; break;
+	case 0x98: byte_transfer = "MAIP"; break;
+	case 0x99: byte_transfer = "MBI"; byte_bank = 'B'; break;
+	case 0x9a: byte_transfer = "MBIM"; byte_bank = 'B'; break;
+	case 0x9c: byte_transfer = "MBIP"; byte_bank = 'B'; break;
+	}
+	if (byte_transfer)
+	{
+		util::stream_format(stream, "%s %c%u,%c%u", byte_transfer, x < 12 ? 'M' : 'A', x, byte_bank, y);
+		return 1 | SUPPORTED;
+	}
 	if ((op >> 8) == 0xbc)
 	{
 		util::stream_format(stream, "SLL L%u,L%u", x, y);
@@ -130,6 +157,10 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 	char reg = 'A';
 	switch (op & 0xff0f)
 	{
+	case 0xab0f: mnemonic = "AZAM"; break;
+	case 0xbb0f: mnemonic = "AZAP"; break;
+	case 0xcb0f: mnemonic = "AZBM"; reg = 'B'; break;
+	case 0xdb0f: mnemonic = "AZBP"; reg = 'B'; break;
 	case 0x850f: mnemonic = "ICA"; break;
 	case 0x950f: mnemonic = "ICB"; reg = 'B'; break;
 	case 0xbe0f: mnemonic = "DCB"; reg = 'B'; break;

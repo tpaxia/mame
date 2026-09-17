@@ -44,6 +44,13 @@ int main()
 {
     struct example { unsigned word; const char *text; };
     const example examples[] = {
+        {0x27ff, "AMD A7,CFF"}, {0x3502, "MAD A5,C02"},
+        {0xa823, "AMI M2,A3"}, {0x82cc, "AMIM A12,A12"}, {0x88ff, "AMIP A15,A15"},
+        {0x8a12, "BMIM M1,B2"}, {0x8c22, "BMIP M2,B2"},
+        {0x91c3, "MAI A12,A3"}, {0x9212, "MAIM M1,A2"}, {0x9811, "MAIP M1,A1"},
+        {0x99f1, "MBI A15,B1"}, {0x9a22, "MBIM M2,B2"}, {0x9cc3, "MBIP A12,B3"},
+        {0xab2f, "AZAM A2"}, {0xbb2f, "AZAP A2"}, {0xcb2f, "AZBM B2"}, {0xdb2f, "AZBP B2"},
+        {0x89f4, "BMI A15,B4"}, {0x8922, "BMI M2,B2"},
         {0xbc36, "SLL L3,L6"}, {0xbc02, "SLL L0,L2"}, {0xbcff, "SLL L15,L15"},
         {0xd112, "MLI M1,L2"}, {0xddc3, "MLIM A12,L3"}, {0xde11, "MLIP M1,L1"},
         {0xe134, "LMI M3,L4"}, {0xed22, "LMIM M2,L2"}, {0xeef1, "LMIP A15,L1"},

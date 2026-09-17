@@ -2,6 +2,9 @@
 
 # Word transfers and the first CAROM RAM test
 
+Historical checkpoint: the subsequent [bootstrap increment](bootstrap-boundary.md)
+passes BMI and reaches floppy-controller selection.
+
 Implemented MLI, MLIM, MLIP, LMI, LMIM, LMIP and LPMIP, plus ICA, ICB, DCB and SLL. Cold CAROM now completes its repeated level-3 checks and the configured
 64KB RAM scan and CAROM checksum. It stops before unsupported BMI (`89F4`) at
 word `80AA`, with next PC `80AB`. This does not complete all CAROM self-tests.

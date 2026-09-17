@@ -43,6 +43,9 @@ void puce_device::device_start()
 	save_item(NAME(m_fetch_pc));
 	save_item(NAME(m_phase));
 	save_item(NAME(m_stopped));
+	save_item(NAME(m_invalid_pending));
+	save_item(NAME(m_invalid_cycles));
+	state_add(6, "INVALID", m_invalid_cycles).readonly();
 	state_add(STATE_GENPC, "PC", m_debug_pc).callimport().callexport();
 	state_add(STATE_GENPCBASE, "CURPC", m_fetch_pc).noshow();
 	state_add(STATE_GENFLAGS, "DI", m_core.di);
@@ -65,6 +68,8 @@ void puce_device::device_reset()
 	m_core.reset();
 	update_ecorn();
 	m_stopped = false;
+	m_invalid_pending = false;
+	m_invalid_cycles = 0;
 	m_stopped_cb(0);
 	m_phase = 0;
 	m_fetch_pc = m_core.pc();
@@ -100,9 +105,18 @@ void puce_device::execute_run()
 		if (m_stopped) { m_icount = 0; return; }
 		if (m_phase == 0)
 		{
+			if (m_invalid_pending)
+			{
+				// Transaction-level INV00 recovery. Circuit timing and faults
+				// during higher-priority service still require verification.
+				m_invalid_pending = false;
+				if (!m_core.enter_level(3))
+					fatalerror("PUCE: invalid memory cycle at level %u is not implemented", m_core.level);
+			}
 			m_fetch_pc = m_core.pc();
 			debugger_instruction_hook(m_fetch_pc);
 			m_ir = m_program.read_word(m_fetch_pc);
+			if (m_invalid_pending) fatalerror("PUCE: invalid instruction fetch at %04X is not implemented", m_fetch_pc);
 			m_core.advance();
 			m_phase = 1;
 		}
@@ -115,7 +129,7 @@ void puce_device::execute_run()
 				done = m_core.execute_word(m_ir,
 					[this] (u16 address) { return m_program.read_word(address); },
 					[this] (u16 address, u16 value) { m_program.write_word(address, value); });
-			const unsigned hi = m_ir >> 8, x = (m_ir >> 4) & 15, y = m_ir & 15;
+			const unsigned x = (m_ir >> 4) & 15;
 			if (!done)
 			{
 				switch (m_ir & 0xff0f)
@@ -128,17 +142,10 @@ void puce_device::execute_run()
 					break;
 				}
 			}
-			if (!done && (hi == 0xa8 || hi == 0x91))
-			{
-				const u16 address = m_core.indirect(x);
-				const unsigned shift = puce_state::byte_shift(address);
-				const u16 mask = puce_state::byte_mask(address);
-				if (hi == 0xa8)
-					m_program.write_word(address >> 1, u16(m_core.a(y)) << shift, mask);
-				else
-					m_core.set_a(y, m_program.read_word(address >> 1, mask) >> shift);
-				done = true;
-			}
+			if (!done)
+				done = m_core.execute_byte(m_ir,
+					[this] (u16 address) { return m_program.read_word(address >> 1, puce_state::byte_mask(address)) >> puce_state::byte_shift(address); },
+					[this] (u16 address, u8 value) { m_program.write_word(address >> 1, u16(value) << puce_state::byte_shift(address), puce_state::byte_mask(address)); });
 			if (!done && (m_ir & 0xff0f) == 0xb104)
 			{
 				const u16 address = m_core.indirect(x);

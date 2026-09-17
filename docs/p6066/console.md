@@ -2,13 +2,11 @@
 
 # GOINO/CONDY console increment
 
-The `p6066` machine now executes the reference CAROM from reset through its
-initial lamp sequence and first register self-test block. It passes COM3 and
-the initial input checks using the current provisional idle-bus defaults, then
-completes the repeated level-3 checks and configured RAM scan and CAROM checksum,
-then stops at word `80AA` (BMI), with next PC `80AB` and success flag D4 set, keeping the console window
-open. This is a
-development stop, not an emulated hardware halt or a completed CAROM self-test.
+The `p6066` machine now runs original CAROM from reset through CPU and
+memory checks and memory enumeration, then selects floppy controller E0.
+Because that controller is not attached, CAROM emits timeout lamp word
+`8084` and loops at `80B6`. This is firmware behavior, not an emulator
+unsupported-instruction stop. See [bootstrap details](bootstrap-boundary.md).
 
 ## Implemented path
 
@@ -49,7 +47,7 @@ implemented. Calculator indication currently shows LAMX1; LAMX2 is preserved
 in the register but its visual/color relationship remains to be resolved.
 
 The display is blank on the current cold CAROM path because firmware has not
-sent it a message before BMI/80AA. The regression fixture separately exercises
+sent it a message before the floppy-controller timeout. The regression fixture separately exercises
 its renderer with a synthetic PUCE program in RAM. Its diagonal pattern is
 test data, not a recovered firmware screen.
 
@@ -105,22 +103,22 @@ python3 scripts/puce/test_console.py
 python3 scripts/puce/test_disassembler.py
 python3 scripts/puce/test_cpu.py
 python3 scripts/puce/test_word_memory.py
+python3 scripts/puce/test_byte_memory.py
 ```
 
 Full integration with the reference CAROM:
 
 ```sh
-./p6066 p6066 -rompath /path/to/roms -video none -sound none -nothrottle -skip_gameinfo -seconds_to_run 15 -autoboot_delay 5 -autoboot_script scripts/puce/test_console_mame.lua -snapview Console -snapname console-cold -snapshot_directory /path/to/results
+./p6066 p6066 -rompath /path/to/roms -video none -sound none -nothrottle -skip_gameinfo -seconds_to_run 20 -autoboot_delay 7 -autoboot_script scripts/puce/test_console_mame.lua -snapview Console -snapname console-cold -snapshot_directory /path/to/results
 ```
 
 The Lua test must print **three PASS lines**, with no Lua assertion errors:
 
-1. Cold CAROM selects GOINO, clocks 256 lamp bits, executes COM3 and idle input
-   checks, completes the level-3 word-transfer tests and configured RAM scan and CAROM checksum,
-   and reaches BMI/80AA with D4 set.
-2. Synthetic PUCE code selects from an odd memory byte, clocks lamp pattern
-   A55A, and transmits 224 display bytes; actual rendered pixels are checked.
-3. The panel's restart input resets the CPU/console and repeats the cold path.
+1. Cold CAROM completes memory enumeration, selects E0, and reaches its
+   timeout loop with lamp pattern 8084 and the expected bootstrap parameters.
+2. Synthetic PUCE code verifies BMI byte lanes, selects from an odd memory
+   byte, clocks lamp pattern A55A, and transmits 224 display bytes.
+3. The panel restart resets CPU/console and repeats the entire cold path.
 
 Snapshots `console-cold.png` and `console-fixture.png` capture the native MAME
 layout. MAME can return zero even after a Lua assertion, so check the PASS
@@ -128,8 +126,7 @@ markers as well as the process exit status. No ROM bytes are in the scripts.
 
 ## Next gate
 
-Implement BMI and continue CAROM beyond the configured RAM scan; see
-[word-memory.md](word-memory.md). COM3 and
-initial idle input handling are described in [reset-inputs.md](reset-inputs.md). Extend console inputs
-alongside the real interrupt/selection protocol. Complete self-test before
-claiming a boot or moving to floppy bootstrap acceptance.
+Implement the floppy controller and external interrupt ownership so CAROM
+can read a boot sector. See [bootstrap-boundary.md](bootstrap-boundary.md).
+The invalid-address model and provisional idle inputs require further
+hardware confirmation; console input, DMA and bus arbitration remain open.

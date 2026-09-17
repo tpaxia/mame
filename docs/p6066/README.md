@@ -22,8 +22,8 @@ The `P6066` branch is published at https://github.com/tpaxia/mame/tree/P6066.
 This is an early M0/M1 increment, **not a bootable P6066**.
 
 * Added `puce_device` and the `p6066` development machine. The CPU executes
-  a documented subset of register/logic/branch operations and basic AMI/MAI
-  byte transfers, plus ESE/DAE console output. Unsupported CPU operations
+  a documented subset of register/logic/branch operations and direct/indexed
+  byte and word transfers, plus ESE/DAE console output. Unsupported CPU operations
   stop with a diagnostic while the functional panel remains open.
 * Scratchpad-backed counters implement full-width level 3/4 and short
   level 1/2 addressing. Reset selects level 3 at word 8000; fetch advances
@@ -35,12 +35,14 @@ This is an early M0/M1 increment, **not a bootable P6066**.
   byte ordering and unsupported operations have focused regression checks.
 * The reference CAROM cold path now selects GOINO, clocks 256 serial lamp bits,
   passes the repeated level-3 checks and configured 64KB RAM scan and CAROM checksum,
-  then stops at BMI at 80AA (next PC 80AB, D4=1).
-  No entry-point bypass is required. This is not the complete self-test.
+  then enumerates memory and reaches floppy selection E0. With no controller,
+  firmware displays timeout lamps 8084 and loops at 80B6. See
+  [bootstrap boundary and evidence limits](bootstrap-boundary.md).
+  No entry-point bypass is required; no disk has been read.
 * Added a functional console panel, live lamp outputs, a 222-by-7-dot display
   renderer and a restart control. A synthetic PUCE integration fixture verifies
   display output and restart. See [console details and tests](console.md).
-* The partial disassembler has 76 reference examples and exhaustive single-word
+* The partial disassembler has 95 reference examples and exhaustive single-word
   fetch/length checks. ADD/SOT families are decoded; COM2 is left `DW`
   because the documented command table omits it. Many executable instructions
   still display `DW` until their disassembler entries are transcribed.
@@ -64,7 +66,7 @@ Bus slots, memory boards, DMA, external interrupt requests/arbitration,
 console button/keyboard input, FLODI and GISA2 are not implemented. GOINO/CONDY
 only implements the direct output subset described in the console notes. Save items include execution phase and
 architectural state, but save/restore integration remains untested. No complete
-CAROM or bootstrap gate has passed.
+hardware-conformance or disk-bootstrap gate has passed.
 
 ## Sources for this increment
 
