@@ -64,8 +64,8 @@ device_p6066_card_interface *p6066_bus_device::channel_card(unsigned level)
 }
 u16 p6066_bus_device::name_type_r(offs_t level) { auto *card=channel_card(level); return card ? card->name_type(level) : 0; }
 u8 p6066_bus_device::input_data_r(offs_t level) { auto *card=channel_card(level); return card ? card->input_data(level) : 0; }
-void p6066_bus_device::data_w(offs_t level, u16 data) { if (auto *card=channel_card(level)) card->output_data(level, data); }
-void p6066_bus_device::command_w(offs_t level, u8 data) { if (auto *card=channel_card(level)) card->command(level, data); }
+void p6066_bus_device::data_w(offs_t level, u16 data, u16 mask) { if (auto *card=channel_card(level)) card->output_data_masked(level, data, mask); }
+void p6066_bus_device::command_w(offs_t level, u16 data, u16 mask) { if (auto *card=channel_card(level)) card->command_word(level, data, mask); }
 void p6066_bus_device::strobe_w(u8 level) { if (auto *card=channel_card(level)) card->strobe(level); }
 void p6066_bus_device::control_w(offs_t level, u8 signal) { if (auto *card=channel_card(level)) card->control(level, signal); }
 void p6066_bus_device::ecorn_w(int state)

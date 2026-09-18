@@ -33,6 +33,15 @@ None changes DI. Tests use nonzero input values to check packing, preservation
 of the other register half, and flags independently of CAROM's expected zero.
 That increment brought decoder coverage to 56 reference cases plus exhaustive word-length checks.
 
+## Internal CPU requests
+
+CPU19M supplement (inside RA008/ME006), PDF p.93 / printed 3.14,
+DISL600 M3 and DISL602 A7-G7, gives name 02 for COM1/ICOON and
+03 for invalid-memory/ICMEN. These are CPU-driven responses, not undriven
+bus defaults. The CPU retains the internal source through higher-priority
+level-1/2 service and clears it when level 3 returns. See
+[the busy-SIO regression](cpu-internal-requests.md).
+
 ## Current bus model and its limits
 
 The backplane now supports controller boards and latched interrupt ownership.
@@ -42,8 +51,8 @@ modelled as logical zero. This is a functional default, not a fabricated respons
 a floppy or serial controller, and not a full electrical bus simulation.
 
 The GOINO manual explicitly describes an undriven name bus reading as 00.
-The type/data default and CPU-name jumper population still need independent
-schematic verification. CAROM masks name bit 1 before checking zero, so the
+The undriven type/data default and cold-reset name still need independent
+schematic verification. Active COM1/INV names are documented above. CAROM masks name bit 1 before checking zero, so the
 successful test cannot distinguish a CPU name of 00 from 02. Its later data
 comparison also cannot independently establish every undriven electrical
 level. These remain open evidence items; no PC-specific responses or skipped

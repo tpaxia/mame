@@ -39,6 +39,7 @@ static void peripheral_cards(device_slot_interface &device) { device.option_add(
 void p6066_state::p6066(machine_config &config)
 {
 	PUCE(config,m_maincpu,1'000'000); // provisional scheduling clock
+	m_maincpu->set_cpu19m(true);
 	P6066_BUS(config,m_bus);
 	m_maincpu->set_addrmap(AS_PROGRAM,&p6066_state::memory_map);
 	m_bus->invalid_cb().set([this](int state) { if (state) m_maincpu->invalid_memory_access(); });

@@ -80,10 +80,14 @@ results directory to verify both the original disk blocks and this natural
 continuation. The test requires all nine command bits and release of ASPEO;
 no firmware writes or forced program-counter changes are used.
 
-## Firmware dispatch continuation
+## Software read continuation
 
-`--checkpoint firmware-dispatch` also verifies natural execution of B2D3
-at word 0BC2 as ETIB B13, followed by 0BC3. CPU19 V2 p.6 control words
-7FDF/1C/06 select and write RB from RO4–7; RO0–3 is unused. Idle selected
-GOINO supplies type 00. No disk bytes or pointers are replaced. Later
-startup remains in an I/O wait at A0F9; ESE readiness is not established.
+Use `--checkpoint software-read` to validate the original loaded blocks,
+CPU-service name 02, SIO retries while HOME is busy, WAIT completion and
+128 bytes matching cylinder 0, sector 5 at D700. See
+[CPU internal requests](cpu-internal-requests.md).
+
+The old `firmware-dispatch` checkpoint was removed: its 0BC2/0BC3 path
+followed an erroneous context switch caused by missing CPU request identity.
+ETIB B2xy aliases remain supported by the documented nanocode; their
+execution there did not validate the preceding control flow.

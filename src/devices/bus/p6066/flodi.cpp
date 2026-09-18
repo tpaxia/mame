@@ -26,21 +26,25 @@ void p6066_flodi_device::device_start()
 	save_item(NAME(m_data_mark)); save_item(NAME(m_expected_mark)); save_item(NAME(m_expected_clock)); save_item(NAME(m_end_status));
 	save_item(NAME(m_id_time)); save_item(NAME(m_next_index)); save_item(NAME(m_sectors_read)); save_item(NAME(m_bytes_read));
 	m_timer=timer_alloc(FUNC(p6066_flodi_device::mechanical_tick),this);
-	save_item(NAME(m_local)); save_item(NAME(m_motion)); save_item(NAME(m_direction)); save_item(NAME(m_settle)); save_item(NAME(m_event_status));
+	save_item(NAME(m_local)); save_item(NAME(m_motion)); save_item(NAME(m_direction)); save_item(NAME(m_settle)); save_item(NAME(m_index)); save_item(NAME(m_command_response));
+	save_item(NAME(m_latches.command)); save_item(NAME(m_latches.mas)); save_item(NAME(m_latches.num));
+	save_item(NAME(m_latches.prico)); save_item(NAME(m_latches.cote));
 	save_item(NAME(m_selected)); save_item(NAME(m_requests)); save_item(NAME(m_pending_type));
-	save_item(NAME(m_active_type)); save_item(NAME(m_commands)); save_item(NAME(m_command_count)); save_item(NAME(m_reset));
+	save_item(NAME(m_active_type)); save_item(NAME(m_response_type)); save_item(NAME(m_reset));
 }
-void p6066_flodi_device::device_reset() { stop_read(); m_sectors_read=m_bytes_read=0; m_sector_output=0; m_byte_output=0; m_selected=0; m_reset=true; m_requests=0; m_active_type=0; m_pending_type=0; m_command_count=0; m_local[0]=m_local[1]=false; m_motion=false; m_settle=0; m_timer->adjust(attotime::never); }
+void p6066_flodi_device::device_reset() { stop_read(); m_sectors_read=m_bytes_read=0; m_sector_output=0; m_byte_output=0; m_selected=0; m_reset=true; m_requests=0; m_active_type=0; m_pending_type=0; m_response_type=0; m_command_response=false; m_index=false; m_latches={}; m_end_status=0; m_local[0]=m_local[1]=false; m_motion=false; m_settle=0; m_timer->adjust(attotime::never); }
 void p6066_flodi_device::controller_reset(bool asserted)
 {
 	m_reset=asserted;
-	if (asserted) { stop_read(); m_local[0]=m_local[1]=false; m_motion=false; m_settle=0; m_timer->adjust(attotime::never); m_requests=0; m_active_type=0; m_pending_type=0; m_command_count=0; }
+	if (asserted) { stop_read(); m_local[0]=m_local[1]=false; m_motion=false; m_settle=0; m_timer->adjust(attotime::never); m_requests=0; m_active_type=0; m_pending_type=0; m_response_type=0; m_command_response=false; m_index=false; m_latches={}; m_end_status=0; }
 }
 void p6066_flodi_device::select(u8 name)
 {
 	// Manual table 2 lists active-low bus values 9F/1F, hence logical 60/E0.
 	if (m_reset || (name!=0x60 && name!=0xe0)) return;
-	m_selected=BIT(name,7); m_pending_type=1; m_requests|=8;
+	// SEDI is held while GOCO is asserted (K02 A5). SELE still responds.
+	if (!m_latches.busy()) m_selected=BIT(name,7);
+	m_response_type=1; m_requests|=8;
 	if (auto *f=drive()) { f->ss_w(0); f->mon_w(0); }
 	logerror("FLODI select %02X, drive %u\n",name,m_selected+1);
 }
@@ -48,7 +52,15 @@ void p6066_flodi_device::irq_ack(unsigned source)
 {
 	if (source==0 && (m_requests&1)) { m_requests&=~1; m_data_irq=true; return; }
 	if ((source!=2 && source!=3) || !(m_requests&(1U<<source))) fatalerror("FLODI unsupported interrupt acknowledgement");
-	m_requests&=~(1U<<source); m_active_type=m_pending_type; m_pending_type=0; m_command_count=0;
+	m_requests&=~(1U<<source);
+	if (source==3) { m_active_type=m_response_type; m_response_type=0; }
+	else
+	{
+		m_active_type=m_pending_type;
+		// FOGO survives acknowledgement. ECOT clears the asynchronous
+		// latch; the synchronized FUGO remains visible until ECM3.
+		m_pending_type&=8;
+	}
 }
 void p6066_flodi_device::irq_end(unsigned level)
 {
@@ -89,49 +101,45 @@ void p6066_flodi_device::irq_end(unsigned level)
 		return;
 	}
 	if (level!=3) return;
-	const u8 type=m_active_type;
 	m_active_type=0;
-	if (m_command_count) apply_commands(type);
-	if (type==1 && m_command_count) { m_pending_type=3; m_requests|=8; }
+	m_latches.ecm3();
+	if (m_pending_type) m_requests|=4;
+	if (m_command_response) { m_response_type=3; m_requests|=8; m_command_response=false; }
 }
-void p6066_flodi_device::apply_commands(u8 type)
+void p6066_flodi_device::latch_command(u8 previous)
 {
-	const u8 first=m_commands[0], last=m_commands[m_command_count-1];
-	if (type==1 && !first && !last) { m_local[m_selected]=true; return; }
-	if (type==1 && (last&0xf0)==0x50)
+	const u8 data=m_latches.command;
+	m_direction=BIT(data,3);
+	const bool motion=BIT(data,4), cate=BIT(data,7);
+	if (!cate)
 	{
-		m_motion=true; m_direction=BIT(first,3);
-		// FDU pp.9-10, figs.14-18: two motor pulses per track;
-		// first pair is separated by T1+T2 = 1.5+5 ms.
-		m_timer->adjust(attotime::from_usec(6500)); return;
-	}
-	if (first==0x80 || first==0xc0)
-	{
-		if (m_motion || m_command_count==1)
-		{
-			m_motion=false; m_settle=true;
-			m_timer->adjust(attotime::from_msec(4)); return;
-		}
-		if (m_reading) { m_last_sector=true; return; }
-		// Read protocol: FLODI pp.33-36, figures 16-17. ECOFO controls
-		// the CRC window and its delayed falling edge ends the byte train.
-		m_settle=false; m_timer->adjust(attotime::never);
-		m_reading=true; m_last_sector=false; m_end_status=0;
-		load_track(); next_id(); return;
-	}
-	if (!first && (m_command_count==1 || (type==8 && m_command_count==2 && !last)))
-	{
-		// FLODI table 5 and FLOD2 K02 E8/E9: zero clears the command
-		// buffer, including VIRI/CATE. Stop mechanical and data activity.
-		// At the last HOME/SEEK settling interrupt a second zero CAE loads
-		// scan key length; it has no further effect for these operations.
-		m_motion=false; m_settle=false;
-		m_timer->adjust(attotime::never);
+		// K03 P8/Q9 and T8/U8: CATE clear resets ERRO and ERAS.
+		m_end_status=0;
+		m_settle=false;
 		stop_read();
-		return;
 	}
-
-	fatalerror("FLODI unsupported command %02X %02X in type %02X",first,last,type);
+	if (motion && !m_motion)
+		// FLODISC figs.14-18: first pair 1.5+5 ms, subsequent pairs 10 ms.
+		m_timer->adjust(attotime::from_usec(6500));
+	else if (!motion && cate && !BIT(previous,7) && m_latches.cote)
+	{
+		m_settle=true;
+		m_timer->adjust(attotime::from_usec(4096));
+	}
+	else if (!motion && !m_settle)
+		m_timer->adjust(attotime::never);
+	m_motion=motion;
+}
+void p6066_flodi_device::start_transfer()
+{
+	// INCO clocks MAS even for HOME/SEEK, whose cleared CATE inhibits data.
+	if (!(m_latches.command&0x80)) return;
+	if (m_reading) { m_last_sector=true; return; }
+	if (m_latches.command&0x07)
+		fatalerror("FLODI data operation %02X is not implemented",m_latches.command);
+	m_settle=false; m_timer->adjust(attotime::never);
+	m_reading=true; m_last_sector=false; m_end_status=0;
+	load_track(); next_id();
 }
 TIMER_CALLBACK_MEMBER(p6066_flodi_device::mechanical_tick)
 {
@@ -144,17 +152,15 @@ TIMER_CALLBACK_MEMBER(p6066_flodi_device::mechanical_tick)
 		// K02 P9: CATE2=0 asserts the active-low preset of COTE0.
 		// K07 C8/C9 routes COTE0 to logical EPD1, so positioning
 		// reports both bit 1 and TEVEO bit 2, not TEVEO alone.
-		m_event_status=6;
 		m_timer->adjust(attotime::from_msec(10)); // two subsequent 5 ms pulses
 	}
 	else if (m_settle)
 	{
-		m_event_status=2;
 		// FLODI p.30: free-running MCOTO; firmware counts ten pulses.
-		m_timer->adjust(attotime::from_msec(4));
+		m_timer->adjust(attotime::from_usec(4096));
 	}
 	else return;
-	request3(8,m_event_status);
+	request3(8);
 }
 u16 p6066_flodi_device::name_type(unsigned level)
 {
@@ -172,18 +178,39 @@ u8 p6066_flodi_device::input_data(unsigned level)
 	}
 	if (level!=3 || !m_active_type) fatalerror("FLODI status without interrupt ownership");
 	auto *f=drive();
-	const u8 status=(m_active_type==8 || m_active_type==4) ? (m_event_status | (m_active_type==8 && f && !f->trk00_r() ? 0x40 : 0))
-		: (!f || !f->exists() ? 0x80 : 0) | (f && !f->trk00_r() ? 0x40 : 0) | (m_local[m_selected] ? 0x10 : 0) | (m_motion ? 6 : 0);
+	const u8 status=(m_active_type&0x0c)
+		? m_latches.status(BIT(m_active_type,2),m_index,f && !f->trk00_r(),m_end_status)
+		: (!f || !f->exists() ? 0x80 : 0) | (f && !f->trk00_r() ? 0x40 : 0) | (m_local[m_selected] ? 0x10 : 0) | (m_latches.busy() ? 6 : 0);
 	logerror("FLODI status %02X type %02X\n",status,m_active_type);
 	return status;
 }
 void p6066_flodi_device::command(unsigned level,u8 data)
 {
-	if (level!=3 || !m_active_type || m_command_count>=2) fatalerror("FLODI unsupported command phase");
-	m_commands[m_command_count++]=data;
-	logerror("FLODI command %02X\n",data);
+	if (level!=3 || !m_active_type) fatalerror("FLODI command without interrupt ownership");
+	const u8 previous=m_latches.command;
+	const bool mema=(m_active_type&0x0c)!=0;
+	switch (m_latches.write(mema,data))
+	{
+	case p6066_flodi_latches::effect::local: m_local[m_selected]=true; break;
+	case p6066_flodi_latches::effect::command: latch_command(previous); break;
+	case p6066_flodi_latches::effect::inco: start_transfer(); break;
+	}
+	if (!mema) m_command_response=true;
+	strobe(level); // ECO supplies ECOC together with ECOT.
+	logerror("FLODI command %02X latched=%02X PRICO=%u COTE=%u MAS=%02X\n",data,m_latches.command,m_latches.prico,m_latches.cote,m_latches.mas);
 }
-void p6066_flodi_device::strobe(unsigned level) { if (level==1 && m_data_irq) return; if (level!=3 || !m_active_type) fatalerror("FLODI strobe without owner"); }
+void p6066_flodi_device::strobe(unsigned level)
+{
+	if (level==1 && m_data_irq) return;
+	if (level!=3 || !m_active_type) fatalerror("FLODI strobe without owner");
+	if (m_active_type&0x0c)
+	{
+		// K06 M2/M3 and A4/C4: ECOT.MEMA resets FOGO; the
+		// function type in FUGO is retained for the rest of this service.
+		m_index=false;
+		m_pending_type&=~8;
+	}
+}
 
 void p6066_flodi_device::stop_read()
 {
@@ -192,8 +219,11 @@ void p6066_flodi_device::stop_read()
 }
 void p6066_flodi_device::request3(u8 type,u8 status)
 {
-	if (m_requests&12) fatalerror("FLODI pending level-3 event overrun");
-	m_pending_type=type; m_event_status=status; m_requests|=(type==1 || type==3) ? 8 : 4;
+	// K06 has independent function/end and selection/command latches.
+	// Repeated function pulses coalesce rather than forming a software queue.
+	if (type==1 || type==3) { m_response_type=type; m_requests|=8; }
+	else { m_pending_type|=type; if (!(m_active_type&0x0c)) m_requests|=4; }
+	if (status&1) m_index=true;
 }
 void p6066_flodi_device::load_track()
 {

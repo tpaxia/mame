@@ -39,13 +39,14 @@ def main():
     ap.add_argument("--rompath", required=True, type=Path)
     ap.add_argument("--media", required=True, type=Path)
     ap.add_argument("--results", required=True, type=Path)
-    ap.add_argument("--checkpoint", choices=("firmware-entry", "console-reset", "firmware-dispatch"), default="firmware-entry")
+    ap.add_argument("--checkpoint", choices=("firmware-entry", "console-reset", "software-read"), default="firmware-entry")
     args = ap.parse_args()
     result = args.results.resolve()
     result.mkdir(parents=True, exist_ok=True)
     raw = args.media.read_bytes()
     assert hashlib.sha256(raw).hexdigest() == FIXTURE_SHA256, "Not the validated disk-121 fixture"
     disk = sectors(raw)
+    (result / "expected-first-software-read.bin").write_bytes(disk[0, 5])
     descriptor = disk[1, 1]
     manifest = []
     for off in range(0, 40, 8):

@@ -20,7 +20,17 @@ public:
 	virtual u16 name_type(unsigned level) { return 0; }
 	virtual u8 input_data(unsigned level) { return 0; }
 	virtual void output_data(unsigned level, u16 data) { }
+	virtual void output_data_masked(unsigned level, u16 data, u16 mask)
+	{
+		if (mask != 0xffff) fatalerror("%s: partial ECD transaction %04X needs board wiring", device().tag(), mask);
+		output_data(level, data);
+	}
 	virtual void command(unsigned level, u8 data) { fatalerror("%s: channel command not implemented", device().tag()); }
+	virtual void command_word(unsigned level, u16 data, u16 mask)
+	{
+		if (mask != 0x00ff) fatalerror("%s: word command needs board wiring", device().tag());
+		command(level, data);
+	}
 	virtual void control(unsigned level, u8 signal) { }
 	virtual void strobe(unsigned level) { }
 	virtual void controller_reset(bool asserted) { }
@@ -49,8 +59,8 @@ public:
 	void select_w(u8 name);
 	u16 name_type_r(offs_t level);
 	u8 input_data_r(offs_t level);
-	void data_w(offs_t level, u16 data);
-	void command_w(offs_t level, u8 data);
+	void data_w(offs_t level, u16 data, u16 mask = 0xffff);
+	void command_w(offs_t level, u16 data, u16 mask = 0x00ff);
 	void strobe_w(u8 level);
 	void control_w(offs_t level, u8 signal);
 	void ecorn_w(int state);

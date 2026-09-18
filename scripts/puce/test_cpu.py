@@ -18,6 +18,27 @@ TEST = r'''
 
 int main(int argc, char **argv)
 {
+    // CPU19M p.3.14: software service is CPU name 02, not GOINO 00.
+    // A higher-priority external service temporarily owns the name bus.
+    {
+        puce_state q; q.execute_register(0xbd00); q.di=0xc0;
+        q.execute_register(0xbd10);
+        assert(q.level==4 && q.com1_pending && q.internal_name==0 && q.di==0xc0);
+        // Handler emits a request; the execution loop arbitrates at ALFA.
+        assert(q.enter_level(3)); q.com1_pending=false; q.internal_name=2;
+        assert(q.execute_input(0xaab0,0,0) && q.l[11]==2);
+        q.execute_register(0xbd10); assert(q.internal_name==2);
+        assert(q.enter_level(2));
+        assert(q.execute_input(0xaab0,0x0860,0) && q.l[11]==0x0860);
+        q.execute_register(0xbd00);
+        assert(q.execute_input(0xb9b0,0,0) && q.a(11)==2);
+        q.execute_register(0xbd00); assert(q.internal_name==0);
+        assert(q.enter_level(3));
+        assert(q.execute_input(0xaab0,0x0160,0) && q.l[11]==0x0160);
+        q.internal_name=3; // INV's ICMEN row of the same priority table
+        assert(q.execute_input(0xaab0,0,0) && q.l[11]==3);
+        q.com1_pending=true; q.reset(); assert(q.internal_name==0 && !q.com1_pending);
+    }
     puce_state c;
     c.l[2] = 0x1234; c.set_a(2, 0xab); assert(c.l[2] == 0x12ab);
     c.set_b(2, 0xcd); assert(c.l[2] == 0xcdab);
@@ -25,7 +46,9 @@ int main(int argc, char **argv)
     assert(c.pc() == 0x8000 && c.l[2] == 0xcdab && c.di == 0x55);
     c.l[0] = 0x8089; c.advance(); assert(c.execute_register(0xbd00));
     assert(c.pc() == 0x8089 && c.l[1] == 0x8001 && c.level == 4);
-    assert(c.execute_register(0xbd10)); assert(c.pc() == 0x8001);
+    assert(c.execute_register(0xbd10)); assert(c.pc() == 0x8089 && c.com1_pending);
+    assert(c.enter_level(3)); c.com1_pending=false; c.internal_name=2;
+    assert(c.pc() == 0x8001);
     c.l[13] = 0x56ff; assert(c.enter_level(2)); c.advance();
     assert(c.pc() == 0x8200 && c.l[13] == 0x5600);
     c.l[12] = 0x78ff; assert(c.enter_level(1)); c.advance();

@@ -19,12 +19,17 @@ the complete architecture, evidence references and acceptance gates.
 The `P6066` branch is published at https://github.com/tpaxia/mame/tree/P6066.
 `origin` is the tpaxia fork; `upstream` is mamedev/mame.
 
-CAROM and the disk-to-firmware loader handoff pass; **operating-system startup remains incomplete**.
+CAROM, the disk-to-firmware loader handoff, and the first software SIO/WAIT read pass; **operating-system startup remains incomplete**.
 
-* Added `puce_device` and the `p6066` development machine. The CPU executes
-  a documented subset of register/logic/branch operations and direct/indexed
-  byte and word transfers, plus ESE/DAE console output. Unsupported CPU operations
-  stop with a diagnostic while the functional panel remains open.
+* CPU internal names 02 (COM1) and 03 (invalid memory) now follow the
+  CPU19M priority table. Original disk 121 retries SIO while HOME is busy,
+  completes WAIT, and reads 128 verified bytes into D700. See
+  [CPU internal requests](cpu-internal-requests.md).
+* All documented canonical CPU19/CPU19M instruction encodings now have decode
+  and execution paths. The [instruction audit](instruction-audit.md) records
+  semantic tests and the remaining interrupt, signal-wiring and timing gaps.
+  **The full CPU audit is not signed off; it takes priority over OS bring-up.**
+  Unsupported encodings and unresolved required input wiring stop explicitly.
 * Scratchpad-backed counters implement full-width level 3/4 and short
   level 1/2 addressing. Reset selects level 3 at word 8000; fetch advances
   the selected counter before execution. COM0/COM1 currently model internal
@@ -48,10 +53,10 @@ CAROM and the disk-to-firmware loader handoff pass; **operating-system startup r
 * Added a functional console panel, live lamp outputs, a 222-by-7-dot display
   renderer and a restart control. A synthetic PUCE integration fixture verifies
   display output and restart. See [console details and tests](console.md).
-* The partial disassembler has 95 reference examples and exhaustive single-word
-  fetch/length checks. ADD/SOT families are decoded; COM2 is left `DW`
-  because the documented command table omits it. Many executable instructions
-  still display `DW` until their disassembler entries are transcribed.
+* The disassembler has 96 reference examples and exhaustive single-word
+  fetch/length checks. The independent inventory checks decode and execution
+  for 91,616 canonical encoding/variant pairs. COM2 remains `DW` because the
+  documented command table omits it; undocumented aliases require evidence.
 * ADD/SOT execution and flags pass 1,572,864 exhaustive cases;
   see [arithmetic.md](arithmetic.md) for semantics and validation.
 * Word-memory transfers include index/source alias ordering. Original CAROM
@@ -76,9 +81,12 @@ implements the direct output subset and selected idle name/type input described 
 architectural state, but save/restore integration remains untested. No complete
 hardware-conformance or ESE-startup gate has passed. The disk-to-firmware
 loader gate passes, as does the subsequent nine-command GOINO reset/release
-sequence through level-4 continuation at word 1095. The original ETIB alias
-dispatch now passes 0BC2/0BC3; subsequent firmware waits at A0F9 with a
-control-block discrepancy still under investigation. Peripheral event producers
+sequence through level-4 continuation at word 1095. The first software
+SIO/WAIT read now passes with CPU internal-request identity corrected.
+The earlier 0BC2/A0F9 path was caused by that identity bug. The subsequent
+missing DEA/FB78 at word BE09 triggered the systematic instruction audit.
+DEA and the other missing documented operations are now implemented, but
+further OS debugging is held pending CPU audit. Peripheral event producers
 and operating-system startup remain incomplete.
 
 ## Sources for this increment

@@ -16,6 +16,14 @@ public:
 	virtual u16 name_type(unsigned level) override { return name_type_r(level); }
 	virtual u8 input_data(unsigned level) override { return input_data_r(level); }
 	virtual void output_data(unsigned level, u16 data) override { data_w(level,data); }
+	virtual void output_data_masked(unsigned level, u16 data, u16 mask) override
+	{
+		// GOINO command decoder uses ECD8..11; CONDY's data strobes
+		// additionally consume the low byte. Do not manufacture that byte.
+		if ((mask & 0xff00) != 0xff00 || ((data & 0x6000) && (mask & 0xff) != 0xff))
+			fatalerror("GOINO: unspecified ECD lanes %04X require electrical bus model", mask);
+		data_w(level,data);
+	}
 	u16 name_type_r(offs_t level);
 	u8 input_data_r(offs_t level);
 	void select_w(u8 data);

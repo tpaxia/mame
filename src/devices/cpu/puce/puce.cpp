@@ -1,9 +1,11 @@
 // license:BSD-3-Clause
 // copyright-holders: Salvatore Paxia
 
-// CPU19 bring-up: register operations and basic byte memory transfers.
+// CPU19/CPU19M instruction-level execution.
 // Timing is provisional (one fetch + one execute scheduling quantum).
-// Channel operations and interrupts use bus callbacks; DMA waits are absent.
+// All documented canonical instructions have execution paths. Channel
+// transactions use bus callbacks; full interrupt/fault arbitration and DMA
+// waits remain under audit. See docs/p6066/instruction-audit.md.
 // Stop explicitly on unsupported operations; never substitute successful I/O.
 
 #include "emu.h"
@@ -24,10 +26,13 @@ puce_device::puce_device(const machine_config &mconfig, const char *tag, device_
 	, m_irq_request_cb(*this, 0)
 	, m_irq_ack_cb(*this)
 	, m_irq_end_cb(*this)
-	, m_command_cb(*this)
 	, m_strobe_cb(*this)
 	, m_control_cb(*this)
+	, m_command_cb(*this)
 	, m_service_console_cb(*this)
+	, m_service_console_input_cb(*this, 0)
+	, m_service_console_control_cb(*this)
+	, m_ecof_cb(*this, 0)
 {
 }
 
@@ -43,8 +48,11 @@ void puce_device::device_start()
 	save_item(NAME(m_core.l));
 	save_item(NAME(m_core.di));
 	save_item(NAME(m_core.level));
+	save_item(NAME(m_core.internal_name));
+	save_item(NAME(m_core.com1_pending));
 	save_item(NAME(m_core.active));
 	save_item(NAME(m_core.ecorn));
+	save_item(NAME(m_core.inhibit_level3));
 	machine().save().register_postload(save_prepost_delegate(FUNC(puce_device::update_ecorn), this));
 	save_item(NAME(m_ir));
 	save_item(NAME(m_fetch_pc));
@@ -102,8 +110,42 @@ void puce_device::state_export(const device_state_entry &entry)
 
 std::unique_ptr<util::disasm_interface> puce_device::create_disassembler()
 {
-	return std::make_unique<puce_disassembler>();
+	return std::make_unique<puce_disassembler>(m_core.cpu19m);
 }
+
+// All channel instruction ordering is shared with the ROM-free tests.
+struct puce_device::channel_adapter
+{
+	puce_device &cpu;
+	u16 read_word(u16 address) { return cpu.m_program.read_word(address); }
+	void write_word(u16 address, u16 value) { cpu.m_program.write_word(address, value); }
+	u8 read_byte(u16 address) { return cpu.m_program.read_word(address >> 1, puce_state::byte_mask(address)) >> puce_state::byte_shift(address); }
+	void write_byte(u16 address, u8 value) { cpu.m_program.write_word(address >> 1, u16(value) << puce_state::byte_shift(address), puce_state::byte_mask(address)); }
+	u16 name_type() { return cpu.m_name_type_cb(cpu.m_core.level); }
+	u8 input() { return cpu.m_input_data_cb(cpu.m_core.level); }
+	void output(u16 value, u16 mask) { cpu.m_data_cb(cpu.m_core.level, value, mask); }
+	void command(u16 value, u16 mask) { cpu.m_command_cb(cpu.m_core.level, value, mask); }
+	void select(u8 value) { cpu.m_select_cb(value); }
+	void strobe() { cpu.m_strobe_cb(cpu.m_core.level); }
+	void control(u8 value) { cpu.m_control_cb(cpu.m_core.level, value); }
+	void console_output(u16 value) { cpu.m_service_console_cb(value); }
+	u8 console_input(u8 selector)
+	{
+		if (cpu.m_service_console_input_cb.isunset()) fatalerror("PUCE: SUCE2 input bus is not connected");
+		return cpu.m_service_console_input_cb(selector);
+	}
+	void console_control(u8 command)
+	{
+		// SUCE2 is an optional external console: unconnected command outputs
+		// have no receiver. Input pull levels require separate board evidence.
+		cpu.m_service_console_control_cb(command);
+	}
+	bool ecof()
+	{
+		if (cpu.m_ecof_cb.isunset()) fatalerror("PUCE: SADE ECOFO source is not connected");
+		return cpu.m_ecof_cb();
+	}
+};
 
 void puce_device::execute_run()
 {
@@ -112,7 +154,7 @@ void puce_device::execute_run()
 		if (m_stopped) { m_icount = 0; return; }
 		if (m_phase == 0)
 		{
-			const u8 irq=m_irq_request_cb(m_core.level);
+			const u8 irq=m_irq_request_cb(m_core.external_irq_poll_level());
 			if (irq && (!m_invalid_pending || irq<=2))
 			{
 				const unsigned level=irq<=2 ? irq : 3;
@@ -126,6 +168,16 @@ void puce_device::execute_run()
 				m_invalid_pending = false;
 				if (!m_core.enter_level(3))
 					fatalerror("PUCE: invalid memory cycle at level %u is not implemented", m_core.level);
+				m_core.internal_name = 3;
+			}
+			else if (m_core.com1_pending && m_core.level == 4)
+			{
+				// CPU19M pp.3.13-3.14: COM1 is below INV and 3A/3B.
+				// Requesting service must not change the current level during
+				// BETA, before the shared ALFA arbitration can choose a source.
+				m_core.enter_level(3);
+				m_core.com1_pending = false;
+				m_core.internal_name = 2;
 			}
 			m_fetch_pc = m_core.pc();
 			debugger_instruction_hook(m_fetch_pc);
@@ -148,77 +200,14 @@ void puce_device::execute_run()
 				done = m_core.execute_word(m_ir,
 					[this] (u16 address) { return m_program.read_word(address); },
 					[this] (u16 address, u16 value) { m_program.write_word(address, value); });
-			const unsigned x = (m_ir >> 4) & 15;
-			if (!done)
-			{
-				switch ((m_ir & 0xff00) == 0xb200 ? 0xb20f : (m_ir & 0xff0f))
-				{
-				case 0xaa00: case 0xb900: case 0xb20f:
-					done = m_core.execute_input(m_ir, m_name_type_cb(m_core.level), 0);
-					break;
-				case 0xb808: case 0xa908:
-					done = m_core.execute_input(m_ir, 0, m_input_data_cb(m_core.level));
-					break;
-				}
-			}
 			if (!done)
 				done = m_core.execute_byte(m_ir,
 					[this] (u16 address) { return m_program.read_word(address >> 1, puce_state::byte_mask(address)) >> puce_state::byte_shift(address); },
 					[this] (u16 address, u8 value) { m_program.write_word(address >> 1, u16(value) << puce_state::byte_shift(address), puce_state::byte_mask(address)); });
-			if (!done && (m_ir >> 8) == 0xfa)
-			{
-				// CPU19 V2 p.2.108: separate SUCE2 service-console bus.
-				m_service_console_cb((u16(m_core.b(m_ir & 15)) << 8) | m_core.a(x)); done=true;
-			}
-			if (!done && (m_ir == 0xbd70 || m_ir == 0xbd80))
-			{
-				m_control_cb(m_core.level, m_ir == 0xbd70 ? 7 : 8); done=true;
-			}
-			if (!done && (m_ir & 0xff0f) == 0xad0f)
-			{
-				m_core.l[x]=(m_core.l[x]&0xf000)|((m_core.l[x]-1)&0x0fff);
-				if (!(m_core.l[x]&0x0fff)) m_control_cb(m_core.level, 0); // ECOF pulse
-				done=true;
-			}
 			if (!done)
 			{
-				const unsigned code=m_ir&0xff0f;
-				const bool input=code==0x8d08 || code==0xa108 || code==0xa208;
-				const bool output=code==0x9000 || code==0x9d00 || code==0x9400;
-				if (input || output)
-				{
-					const u16 address=m_core.indirect(x);
-					const int delta=(code==0xa108 || code==0x9d00) ? -1 : (code==0xa208 || code==0x9400) ? 1 : 0;
-					if (x<12) m_core.l[x]+=delta; else m_core.set_a(x,m_core.a(x)+delta);
-					if (input)
-					{
-						m_program.write_word(address>>1,u16(m_input_data_cb(m_core.level))<<puce_state::byte_shift(address),puce_state::byte_mask(address));
-						m_strobe_cb(m_core.level);
-					}
-					else m_data_cb(m_core.level,m_program.read_word(address>>1,puce_state::byte_mask(address))>>puce_state::byte_shift(address));
-					done=true;
-				}
-			}
-			if (!done && m_ir == 0xbd40)
-			{
-				m_strobe_cb(m_core.level); done=true;
-			}
-			if (!done && (m_ir & 0xff0f) == 0xb402)
-			{
-				const u16 address=m_core.indirect(x);
-				m_command_cb(m_core.level,m_program.read_word(address>>1,puce_state::byte_mask(address))>>puce_state::byte_shift(address));
-				done=true;
-			}
-			if (!done && (m_ir & 0xff0f) == 0xb104)
-			{
-				const u16 address = m_core.indirect(x);
-				m_select_cb(m_program.read_word(address >> 1, puce_state::byte_mask(address)) >> puce_state::byte_shift(address));
-				done = true;
-			}
-			if (!done && (m_ir & 0xff0f) == 0xfc00)
-			{
-				m_data_cb(m_core.level, m_core.l[x]);
-				done = true;
+				channel_adapter channel{*this};
+				done = m_core.execute_channel(m_ir, channel);
 			}
 			if (!done)
 			{

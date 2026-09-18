@@ -17,7 +17,9 @@ IMD nor injects extracted firmware or directory records into guest RAM.
 
 The local `reference/AdreaRiccardoEmanuele/FLODI FLOA-FLOB SCHEMI LOGICI
 (BIT 661.60.1 G.02) .pdf` contains logical sheets titled **FLOD2**, drawing
-168664. They must not be treated as identical to the older FLODI description.
+168664. Printed p.1 of the description explicitly covers both FLODI and
+FLOD2; differences must be demonstrated from the applicable schematics, not
+assumed from the different names.
 
 * PDF p.5, sheet 002 (168664-K02), E9: command-register output CATEO is
   parallel input ECD70 (command bit 7). CATEN is its complement; G9 buffers
@@ -31,14 +33,42 @@ The local `reference/AdreaRiccardoEmanuele/FLODI FLOA-FLOB SCHEMI LOGICI
   incorrectly returned zero for positioning, indistinguishable from a sector
   count. CAROM consequently decremented its sector counter during head steps.
 
-K02 P9 also presets COTE0 while CATE2=0. K07 C8/C9 routes COTE0 to
-logical EPD1. Positioning therefore reports **06**, or **46** at track zero
-(bits 1 and 2 plus PIZE); the earlier 04/44 model omitted COTE0. CAROM
-then emits 80, counts ten time events, and emits 80/00 to start reading.
-Its final-sector command and end interrupt now occur. This change follows
-these gates; it is not a firmware-specific replacement for head movement.
-Physical board/revision matching for the eventual P6066 configuration remains
-an inventory task in [TBD.md](../../../TBD.md).
+The supplied FLOD2 drawing supports COTE/EPD1 set during positioning:
+K02 P9 has an active-low preset driven by CATE2; K07 routes COTE0 to
+EPD1. Thus this drawing yields 06/46. Printed p.29 instead describes
+positioning with COTE=0. That prose/circuit discrepancy and physical revision
+matching remain open; passing CAROM cannot resolve them. The parent project's
+`analysis/mame-p6066/flodi-status-handler-audit.md` records the derivation.
+
+## Command-latch refactor (2026-09-18)
+
+The model now applies commands at ECOC/ECOT, not at COM0. The standalone
+`flodi_latches.h` implements the documented phase qualification of PRICO:
+selection commands both update the control register; a second command in
+function/end service loads MAS and generates INCO. CATE and COTE are separate.
+The first completion command immediately switches input to NUM, before ECM3.
+NUM's scan counting is not implemented; its value has no defined software
+meaning for the supported read operation (printed p.37).
+
+Selection/command and function/end requests no longer share one pending-type
+variable. Repeated function pulses coalesce. ECOT clears the asynchronous
+function indication while the acknowledged function type remains visible
+until ECM3. Busy selection preserves SEDI, and GOCO derives from command
+latches. The settling interval is now 4096 microseconds.
+
+This remains a bus-service abstraction: grant and synchronization are handled
+through acknowledgement/termination callbacks. It does not yet reproduce all
+ECM3 electrical edges, FINE/RIFI reset gates, or prove simultaneous-event
+ordering. No completion event is fabricated to advance the firmware.
+
+Standalone protocol tests cover both selection writes, CATE/COTE, MAS,
+PRICO's immediate NUM mux and PIZE/ERRO status selection. Original-CAROM read
+and damaged-CRC regressions pass, as does full bootstrap to firmware dispatch
+with the removable-memory negative case. The earlier A0F9 stop was a CPU
+internal-request identity error, not a FLODI wait. With that corrected,
+software SIO retries and WAIT complete, and 128 bytes from cylinder 0,
+sector 5 match the disk. HOME still issues 00 at A1BE. See the parent project's
+`analysis/mame-p6066/flodi-latch-refactor.md` for artifacts and limits.
 
 ## Timing and transfer evidence
 
@@ -51,7 +81,7 @@ Unless otherwise specified, references are to PDF page numbers.
 | CPU19 V2 p.12 | TABC is a separate SUCE2 service-console transfer, not GOINO lamps. |
 | FLODI pp.15–17, 32 | Selection names, interrupt types, status and commands. Status bit 2 is qualified by the later FLOD2 circuit above. |
 | FLODI pp.21–22, printed 33–36, figures 16–17 | Eight ID interrupts; FE/track/head/sector/size comparison; ECOFO/FITUCO/FNCO/COCI byte pipeline, payload and CRC windows. |
-| FLODI pp.7–9, 19–20 | Head positioning, firmware time counting, sector-count and index events. The controller time counter emits events every 4 ms until commanded out of that phase. |
+| FLODI pp.7–9, 19–20 | Head positioning, firmware time counting, sector-count and index events. Printed p.9 specifies 4096 us; p.30 rounds to 4 ms. Implemented as 4096 us. |
 | FDU STAC 1L p.12, printed 1.06, fig.9 | Both mains-frequency versions turn the spindle at 360 RPM. |
 | FLODISC/ALI161 pp.15–16, printed 9–10, figs.14–18 | Two motor pulses per track. First pulse spacing T1+T2 = 1.5+5 ms, subsequent spacing 5 ms. Model first track-completion event at 6.5 ms, subsequent events at 10 ms. |
 | FLODISC/ALI161 p.28, printed 22 | FM clock spacing 4 us, clock-to-data spacing 2 us. |
@@ -112,6 +142,7 @@ investigation material, not the current implementation.
 
 Zero command bytes now clear mechanical VIRI/CATE activity as well as byte
 reads (K02 E8/E9, FLODI table 5). The original disk firmware reaches track
-zero and sends this clear, but subsequently waits at A0F9; the parent
+zero and sends this clear, then proceeds with the queued software read
+after the CPU internal-name correction; the parent
 project's `analysis/mame-p6066/firmware-startup-dispatch.md` records the
 unresolved control-block layout. This is not completed OS startup.

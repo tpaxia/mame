@@ -1,9 +1,9 @@
 // license:BSD-3-Clause
 // copyright-holders: Salvatore Paxia
 
-// Initial, deliberately partial CPU19/PUCE disassembler.
+// CPU19/CPU19M canonical instruction disassembler.
 // Source: Olivetti CPU19 Tabella Microistruzioni, publication 801.30.1,
-// V2 PDF pp.1-6,9-12,14,20 (including arithmetic, input and command tables).
+// V2 PDF pp.1-14 and CPU19M supplement PDF pp.83,85 (3.09-3.10).
 // Decode memory words, not the transformed RO register contents. ALFA and
 // RESE are hardware-generated pseudo-instructions, not memory opcodes.
 // Untranscribed encodings remain DW; this does not imply a hardware trap.
@@ -16,6 +16,45 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 	const u16 op = opcodes.r16(pc);
 	const unsigned x = (op >> 4) & 15;
 	const unsigned y = op & 15;
+
+	// CPU19M additions are selected explicitly; they are not CPU19 opcodes.
+	if (m_cpu19m)
+	{
+		if ((op >> 8) == 0xce)
+		{
+			util::stream_format(stream, "ADLL L%u,L%u", x, y);
+			return 1 | SUPPORTED;
+		}
+		if ((op >> 8) == 0xa4)
+		{
+			util::stream_format(stream, "INC2%u D%u,L%u", x & 1, x >> 1, y);
+			return 1 | SUPPORTED;
+		}
+		if (op == 0xbd20 || op == 0xbd21)
+		{
+			stream << (op == 0xbd20 ? "INTON" : "INTOF");
+			return 1 | SUPPORTED;
+		}
+		struct entry { unsigned code; const char *name; char reg; };
+		static constexpr entry extensions[] = {
+			{0xfe0f,"AZL",'L'}, {0xb50f,"COINA",'A'}, {0xe30f,"COINB",'B'},
+			{0x800f,"COMPA",'A'}, {0x810f,"COMPB",'B'}, {0x840f,"COMPL",'L'},
+			{0xcd08,"DEL",'L'}, {0xf408,"EDAT",'A'}, {0xf208,"EDBT",'B'},
+			{0xaa08,"EDTL",'L'}, {0xf301,"SLDL",'L'}, {0xdc01,"SLSL",'L'},
+			{0xac0f,"ZMB",'M'}, {0xc10f,"ZMW",'M'}
+		};
+		for (const auto &e : extensions)
+			if ((op & 0xff0f) == e.code)
+			{
+				util::stream_format(stream, "%s %c%u", e.name, e.reg == 'M' && x >= 12 ? 'A' : e.reg, x);
+				return 1 | SUPPORTED;
+			}
+	}
+	if ((op >> 12) == 4)
+	{
+		util::stream_format(stream, "SADE C%02X", op & 255);
+		return 1 | SUPPORTED;
+	}
 
 	if ((op & 0xe000) == 0)
 	{
@@ -189,6 +228,44 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 	{
 		// Short indirect selectors 12..15 address through A, not full L.
 		util::stream_format(stream, "%s %c%u", mnemonic, x < 12 ? 'M' : 'A', x);
+		return 1 | SUPPORTED;
+	}
+
+	// Remaining CPU19 canonical encodings, including service-console I/O.
+	struct entry { unsigned code; const char *name; char reg; };
+	static constexpr entry singles[] = {
+		{0xfc02,"CAE",'L'}, {0xfb08,"DEA",'L'}, {0xad0f,"EDC",'L'},
+		{0xae0f,"DCA",'A'}, {0xe50f,"DCL",'L'}, {0xa50f,"ICL",'L'},
+		{0xa30f,"SDIA",'A'}, {0xb30f,"SDIB",'B'},
+		{0xc401,"SLSA",'A'}, {0xd401,"SLSB",'B'},
+		{0x830f,"TADI",'A'}, {0x930f,"TBDI",'B'},
+		{0xca00,"TCCA",'A'}, {0xc50f,"TDIA",'A'}, {0xd50f,"TDIB",'B'},
+		{0xda01,"TDMA",'A'}, {0xea02,"TDPA",'A'},
+		{0x8e0f,"VRA",'A'}, {0x9e0f,"VRB",'B'}, {0xf50f,"VRL",'L'},
+		{0xb402,"ECO",'M'}, {0x8d08,"EMI",'M'}, {0xa108,"EMIM",'M'},
+		{0xa208,"EMIP",'M'}, {0xe008,"ESI",'M'}, {0xec08,"ESIM",'M'},
+		{0xeb08,"ESIP",'M'}, {0x9000,"MEI",'M'}, {0x9d00,"MEIM",'M'},
+		{0x9400,"MEIP",'M'}
+	};
+	for (const auto &e : singles)
+		if ((op & 0xff0f) == e.code)
+		{
+			util::stream_format(stream, "%s %c%u", e.name, e.reg == 'M' && x >= 12 ? 'A' : e.reg, x);
+			return 1 | SUPPORTED;
+		}
+	switch (op >> 8)
+	{
+	case 0xd8: mnemonic = "TAB"; break;
+	case 0xfa: mnemonic = "TABC"; break;
+	case 0xe8: mnemonic = "TABM"; break;
+	case 0xd9: mnemonic = "TABP"; break;
+	case 0xe9: mnemonic = "TBA"; break;
+	case 0xf9: mnemonic = "TBAM"; break;
+	case 0xf8: mnemonic = "TBAP"; break;
+	}
+	if (mnemonic)
+	{
+		util::stream_format(stream, "%s A%u,B%u", mnemonic, x, y);
 		return 1 | SUPPORTED;
 	}
 

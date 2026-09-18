@@ -80,7 +80,7 @@ int main()
         {0xc312, "DW C312"}, {0x8b2f, "ROTA A2"}, {0x9b3f, "ROTB B3"},
         {0xf1b0, "SEI M11"}, {0xf1c0, "SEI A12"},
         {0xfdf0, "SEIM A15"}, {0xf700, "SEIP M0"},
-        {0x9000, "DW 9000"}, // never invent RESE from its RO value
+        {0x9000, "MEI M0"}, // memory encoding MEI; RESE has no memory opcode
         {0xf000, "DW F000"}, // never invent ALFA as a memory opcode
         {0x0000, "SAI 8000"}, {0xffff, "DW FFFF"}
     };

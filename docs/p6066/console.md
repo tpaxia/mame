@@ -189,8 +189,9 @@ floating name lines and an eight-input encoder on EPT4–6. The 74148 visible
 on the board scan produces physical 111 with no requests, logical type 00.
 Pending requests remain explicitly unsupported here.
 
-The `firmware-dispatch` bootstrap checkpoint verifies the original disk
-blocks and natural arrival at 0BC3 with B13=00/A13=0A after ETIB. Subsequent
-execution reaches the firmware I/O wait at A0F9. See the parent project's
-`analysis/mame-p6066/firmware-startup-dispatch.md` for the control-block
-trace and remaining discrepancy. ESE startup is not complete.
+The former `firmware-dispatch` checkpoint was removed after debugging
+showed that its 0BC2 path followed an incorrect context switch. A0F9 was
+an error loop, not an I/O wait. CPU-driven COM1 name 02 is distinct from
+idle GOINO name 00. Correcting that response now passes the first software
+SIO/WAIT read; see [CPU internal requests](cpu-internal-requests.md).
+ESE startup is not complete.
