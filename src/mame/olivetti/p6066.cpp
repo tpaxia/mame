@@ -49,6 +49,7 @@ void p6066_state::p6066(machine_config &config)
 	m_maincpu->ecorn_cb().set(m_bus,FUNC(p6066_bus_device::ecorn_w));
 	m_maincpu->name_type_cb().set(m_bus,FUNC(p6066_bus_device::name_type_r));
 	m_maincpu->input_data_cb().set(m_bus,FUNC(p6066_bus_device::input_data_r));
+	m_maincpu->interrupt_sync_cb().set(m_bus,FUNC(p6066_bus_device::interrupt_sync_w));
 	m_maincpu->irq_request_cb().set(m_bus,FUNC(p6066_bus_device::irq_r));
 	m_maincpu->irq_ack_cb().set(m_bus,FUNC(p6066_bus_device::irq_ack_w));
 	m_maincpu->irq_end_cb().set(m_bus,FUNC(p6066_bus_device::irq_end_w));

@@ -13,12 +13,13 @@ struct p6066_flodi_latches
 	std::uint8_t command = 0, mas = 0, num = 0;
 	bool prico = false, cote = true;
 
-	effect write(bool mema, std::uint8_t data)
+	effect write(bool mema, std::uint8_t data, bool drive2 = true)
 	{
 		const bool second = prico;
 		prico = true;
 		// COLON excludes a local command from MACON during selection.
-		if (!mema && data == 0) return effect::local;
+		// K02 M1 decodes ECD6/ECD7, not an all-eight-bits zero test.
+		if (!mema && !(data & 0xc0)) return effect::local;
 		if (mema && second)
 		{
 			mas = data;
@@ -26,7 +27,8 @@ struct p6066_flodi_latches
 			if (command & 0x80) cote = false;
 			return effect::inco;
 		}
-		command = data;
+		// K02 G6/G7 gates CADI in MACON only; all eight MAS bits pass.
+		command = data & (drive2 ? 0xff : 0xdf);
 		if (!(command & 0x80)) cote = true;
 		return effect::command;
 	}

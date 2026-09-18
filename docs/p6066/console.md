@@ -39,9 +39,10 @@ four LED indicators, and a clickable **RESTART** control. F3 restarts the
 machine; Tab opens MAME settings; Esc exits. The CPU STOPPED indicator is an
 emulator diagnostic. The other lamp labels follow the console manual.
 
-The seven console-labelled panels currently display lamp outputs. Their
-physical button inputs, keyboard, interrupt requests and acknowledgements
-are **not implemented**. RESTART is an emulator control, not a claim about a
+The seven console-labelled panels display lamp outputs and accept button
+clicks. GOINO button interrupts and keyboard signal conversion are implemented;
+the full keyboard device and host alphanumeric key mapping remain incomplete.
+See the current interrupt/input section below. RESTART is an emulator control, not a claim about a
 physical P6066 button. LED indicators currently expose the raw register bits;
 the LER1 driver circuit/blink and the cicalino monostable/audio remain to be
 implemented. Calculator indication currently shows LAMX1; LAMX2 is preserved
@@ -69,8 +70,13 @@ di Funzionamento*, STAC 670.30.1, in the parent project's
 CPU19 *Tabella Microistruzioni V2*, PDF pages 5–6, defines DAE and ESE.
 The console manual calls its output transfers CAE, but the reference CAROM
 uses DAE for lamp startup; GOINO's data strobe decode and ESE exclusion are
-modelled at the transaction boundary. CAE and further command semantics have
-not yet been implemented in the CPU.
+modelled at the transaction boundary. CAE is now implemented in the CPU and routed through GOINO's word-command
+callback to the same ECD/ECOT decoder as DAE. The previous inherited callback
+rejected CAE even though the CPU executed it. `test_goino_transport.py` compiles
+the actual CPU, bus and board callback bodies and checks 262,144 transactions
+plus complete CAE lamp/display frames. The timer, synchronized requests, button/keyboard input selection and
+interrupt-owned service are now implemented as described below. Printer and
+PROM input sources remain incomplete.
 
 Figure 18 gives the shift order used here (bit 0 receives the newest bit):
 unused, TROM, unused, unused, LED3, LED2, LED1, LED0, LAMX1, LAMX2,
@@ -83,8 +89,8 @@ shifting, display serial/multiplex timing and protection circuitry. Lamp
 publication at complete words is a presentation approximation. Vertical dot
 orientation and blink polarity remain provisional pending schematic checks.
 The device uses deterministic reset values without claiming verified physical
-reset behavior. Bus arbitration is implemented, but interrupt-owned GOINO selection remains absent;
-the direct level-4 callback must not be treated as their implementation.
+reset behavior. Direct level-4 selection and interrupt-owned level-3 selection are now
+separate. A level-2 printer column uses its own buffer/strobe path.
 Save items cover partial transfers and outputs, but save/load integration has
 not yet been tested. Sound is still flagged unemulated.
 
@@ -101,6 +107,7 @@ ROM-free tests and CPU regression:
 
 ```sh
 python3 scripts/puce/test_console.py
+python3 scripts/puce/test_goino_transport.py
 python3 scripts/puce/test_disassembler.py
 python3 scripts/puce/test_cpu.py
 python3 scripts/puce/test_word_memory.py
@@ -148,20 +155,25 @@ ECD8–ECDB. Matching the entire high byte was incorrect. Commands 4–9, B, D a
 now clear the documented asynchronous requests, disable PIPPO/timer, or release
 the ASPEO startup inhibit. Latch semantics follow printed pp.5,9,11,14–16;
 RECON also clears the button request described on printed p.14. Fields are saved.
-They are partial request/control state: keyboard, printer and timer event
-producers and synchronized interrupt delivery remain unimplemented. Starting
-those absent producers still stops explicitly; reset commands are not fake
+Timer and synchronized interrupt/input behavior is now implemented below.
+Printer motion and PIPPO start still stop explicitly; reset commands are not fake
 successful printer operations.
 
-ECD8–ECDB command selection and the ECDD/ECDE lamp/display strobes are decoded
-independently. ESE selection still cannot generate an ECOT data strobe. F400
-therefore selects REMAN and retains its other data-control bits; there is no
-blanket F400-to-0400 conversion. Gate delays, pulse stretching and input-mux
-latch behavior remain outside the current transaction model.
+ECD8–ECDB selects commands independently of the upper nibble. Data strobes
+use the documented destinations in figure 1.3 (printed GOINO p.5): `20xx`
+for display and `40xx` for lamps. Testing ECDD/ECDE alone incorrectly counted
+the nine Fxxx startup commands as data, offsetting the display frame and
+leaving it blank. F400 executes REMAN without a display/lamp transfer.
+Undocumented destination aliases still require DISL002 M2/P2 gate evidence;
+this implements the documented encodings, not a recovered complete truth table.
+ESE selection cannot generate an ECOT data strobe.
 
-The standalone console test seeds pending latches and tests all sixteen upper
-nibbles, selection/level masking, independent and combined strobes, and explicit
-rejection of unsupported printer/timer/PIPPO starts. Original firmware validation:
+The console and production transport tests cover command aliases, selection,
+canonical data destinations and the nine startup commands followed by a full
+224-byte display frame. They preserve CONDY's documented blanking during writes
+and scan enable at frame completion (printed CONDY pp.8–13).
+
+Original firmware validation:
 
 ```sh
 python3 scripts/puce/test_bootstrap.py \
@@ -187,7 +199,8 @@ US4032895 datapath, not a patched jump or a new canonical instruction.
 Idle selected GOINO returns name/type 0000: Fig.1.2 and printed pp.6/14 show
 floating name lines and an eight-input encoder on EPT4–6. The 74148 visible
 on the board scan produces physical 111 with no requests, logical type 00.
-Pending requests remain explicitly unsupported here.
+Pending requests now drive the documented priority-encoder type; sources
+remain latched until the appropriate ECM following their reset command.
 
 The former `firmware-dispatch` checkpoint was removed after debugging
 showed that its 0BC2 path followed an incorrect context switch. A0F9 was
@@ -195,3 +208,36 @@ an error loop, not an I/O wait. CPU-driven COM1 name 02 is distinct from
 idle GOINO name 00. Correcting that response now passes the first software
 SIO/WAIT read; see [CPU internal requests](cpu-internal-requests.md).
 ESE startup is not complete.
+
+
+## Interrupts, timer and input paths (2026-09-18)
+
+CPU ALFA and COM0 now broadcast the level-qualified ECM strobes. GOINO samples
+asynchronous requests into separate synchronous state; acknowledgement takes
+ownership without erasing the request. RETIN/RECAN/RECON clear source state,
+and the next eligible ECM propagates that clear. ASPEO blocks level 3 until
+SASPN; INTOF changes CPU acceptance, not the actual level used for ECM.
+
+The nominal 6.3 ms timer is driven by a MAME timer. TIMEN/FTIMN gate events;
+RETIN is a separate request clear. The priority encoder implements fig.1.2,
+including live ARDIO selection of the synchronized MODE0 keyboard request.
+DEA selector 0 reads buttons and selector 1 reads the converted TAS1..9 code.
+The seven panel keys are clickable: Calculator, Print All, Trace, Break,
+No Print, Continue and Step. Numpad 1–7 map respectively to Calculator, Break,
+Continue, Trace, Step, Print All and No Print. Down supplies TASB; Caps Lock
+toggles Keyboard Mode. The normal host alphanumeric keyboard encoder is not
+implemented; `keyboard_w`/`keyboard_error_w` expose its peripheral signal boundary.
+
+Level-3 output now operates under this board's grant; level-2 output loads
+printer columns without decoding commands. Printer mechanics remain absent.
+Printer/decimal status and specialization PROM inputs require a verified source
+and stop explicitly if unbound. A partially specified ECD transfer propagates
+validity masks to display/lamp state; unknown display columns are not drawn.
+Pulse stretching, physical timer phase and complete keyboard scanning remain
+unverified. The broader pre-boot gate remains closed.
+
+New ROM-free tests: `test_goino_events.py`, `test_goino_transport.py`, and
+`test_goino_integration.py`. The last compiles production CPU-loop, bus and board
+callback bodies and exercises timer, keyboard, buttons and nested level-2/3
+service. The parent project records source conflicts and limitations in
+`analysis/mame-p6066/goino-interrupt-input-audit.md`. No OS/firmware boot was run.

@@ -8,6 +8,10 @@ int main()
 {
  using effect = p6066_flodi_latches::effect;
  p6066_flodi_latches f;
+ // Table 5 HOME direction/start bytes: CLAB (ECD6) excludes local mode.
+ assert(f.write(false,0x40)==effect::command && f.command==0x40);
+ assert(f.write(false,0x50)==effect::command && f.command==0x50 && f.busy());
+ f.ecm3();
  // Table 5: both selection commands reach the register, even with PRICO set.
  assert(f.write(false,0x42)==effect::command && !f.busy());
  assert(f.write(false,0x52)==effect::command && f.command==0x52 && f.busy());

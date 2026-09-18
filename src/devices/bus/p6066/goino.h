@@ -18,25 +18,53 @@ public:
 	virtual void output_data(unsigned level, u16 data) override { data_w(level,data); }
 	virtual void output_data_masked(unsigned level, u16 data, u16 mask) override
 	{
-		// GOINO command decoder uses ECD8..11; CONDY's data strobes
-		// additionally consume the low byte. Do not manufacture that byte.
-		if ((mask & 0xff00) != 0xff00 || ((data & 0x6000) && (mask & 0xff) != 0xff))
-			fatalerror("GOINO: unspecified ECD lanes %04X require electrical bus model", mask);
-		data_w(level,data);
+		if (level == 2 && m_state.owned2)
+		{
+			if ((mask & 0x7f) != 0x7f) fatalerror("GOINO: unspecified printer column");
+			data_w(level, data, mask);
+			return;
+		}
+		if ((mask & 0xff00) != 0xff00)
+			fatalerror("GOINO: unspecified ECD control lanes %04X", mask);
+		data_w(level, data, mask);
+	}
+	virtual void command_word(unsigned level, u16 data, u16 mask) override
+	{
+		// GOINO printed pp.5,13: CAE supplies the same ECD command/data
+		// decoder and ECOT strobes. ECOC does not select a second register.
+		output_data_masked(level, data, mask);
 	}
 	u16 name_type_r(offs_t level);
 	u8 input_data_r(offs_t level);
 	void select_w(u8 data);
-	void data_w(offs_t level, u16 data);
+	void data_w(offs_t level, u16 data, u16 mask = 0xffff);
+	virtual u8 irq_requests() const override { return m_state.irq_requests(); }
+	virtual void interrupt_sync(u8 mask) override { m_state.synchronize(mask); }
+	virtual void irq_ack(unsigned source) override;
+	virtual void strobe(unsigned level) override { if (level == 2 && m_state.owned2) m_state.column_request = false; }
+	virtual void irq_end(unsigned level) override { m_state.end(level); }
+	// Peripheral-side signal boundary: logical TAS1..9, PRCAA and ERSIN.
+	void keyboard_w(u16 code, bool ready) { m_state.keyboard_code = code & 0x1ff; m_state.keyboard_request = ready; }
+	void keyboard_error_w(int asserted) { m_state.double_key_request = asserted; }
+	DECLARE_INPUT_CHANGED_MEMBER(buttons_changed);
+	DECLARE_INPUT_CHANGED_MEMBER(mode_changed);
+	auto auxiliary_input_cb() { return m_auxiliary_input_cb.bind(); }
+
 	u32 screen_update(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect);
 protected:
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
+	virtual ioport_constructor device_input_ports() const override;
 private:
 	void update_outputs();
+	TIMER_CALLBACK_MEMBER(timer_tick);
+	emu_timer *m_timer = nullptr;
+	required_ioport m_buttons;
+	devcb_read8 m_auxiliary_input_cb;
 	p6066_goino_state m_state;
 	output_finder<16> m_lamps;
 	output_finder<> m_selected, m_strobes, m_commands_seen, m_interrupts_blocked;
+	output_finder<> m_lamp_word, m_display_strobes, m_display_ready;
 };
 DECLARE_DEVICE_TYPE(P6066_GOINO, p6066_goino_device)
 #endif

@@ -35,6 +35,7 @@ public:
 	virtual void strobe(unsigned level) { }
 	virtual void controller_reset(bool asserted) { }
 	// Request bits: 1, 2, 3A, 3B. Ownership survives request deassertion.
+	virtual void interrupt_sync(u8 mask) { } // bits 1/2/3: ECM1/2/3
 	virtual u8 irq_requests() const { return 0; }
 	virtual void irq_ack(unsigned source) { }
 	virtual void irq_end(unsigned level) { }
@@ -64,6 +65,7 @@ public:
 	void strobe_w(u8 level);
 	void control_w(offs_t level, u8 signal);
 	void ecorn_w(int state);
+	void interrupt_sync_w(u8 mask);
 	u8 irq_r(offs_t level);
 	void irq_ack_w(u8 source);
 	void irq_end_w(u8 level);

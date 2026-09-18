@@ -61,9 +61,9 @@ int main()
         assert(q.data(prefix | 0x0401, 4));
         assert(!q.matrix_request && q.keyboard_request && q.timer_request);
         assert(q.commands_seen == 0x0010);
-        // Independent ECDD/ECDE strobe paths, including simultaneous assertion.
-        assert(q.lamp_strobes == ((upper & 4) ? 1U : 0U));
-        assert(q.display_position == ((upper & 2) ? 1U : 0U));
+        // A REMAN command must not shift either CONDY data buffer.
+        assert(q.lamp_strobes == 0);
+        assert(q.display_position == 0);
         assert(q.data(prefix | 0x0500, 4) && !q.column_request && !q.button_request);
         assert(q.data(prefix | 0x0600, 4) && !q.pippo_request && q.pippo_enabled);
         assert(q.data(prefix | 0x0700, 4) && !q.keyboard_request);
@@ -76,9 +76,9 @@ int main()
         q.matrix_request = true;
         q.select(1); assert(q.data(prefix | 0x0400, 4) && q.matrix_request);
         q.select(0); assert(q.data(prefix | 0x0400, 3) && q.matrix_request);
-        // No invented timer, PIPPO or printer event producers.
+        // Timer enable exists; PIPPO and printer motion still have no producers.
         assert(!q.data(prefix | 0x0a00, 4));
-        assert(!q.data(prefix | 0x0c00, 4));
+        assert(q.data(prefix | 0x0c00, 4) && q.timer_enabled);
         assert(!q.data(prefix | 0x0100, 4));
     }
     std::cout << "PASS: selection gating, serial lamp order/framing, CAROM lamp stream, display framing, four-bit command decode, reset latches and unsupported event producers\n";

@@ -5,13 +5,15 @@
 #pragma once
 #include "p6066.h"
 #include "flodi_latches.h"
+#include "flodi_irq.h"
 #include "imagedev/floppy.h"
 class p6066_flodi_device : public device_t, public device_p6066_card_interface
 {
 public:
 	p6066_flodi_device(const machine_config &,const char *,device_t *,u32 clock=0);
 	virtual void select(u8 name) override;
-	virtual u8 irq_requests() const override { return m_requests; }
+	virtual u8 irq_requests() const override { return m_irq.requests(); }
+	virtual void interrupt_sync(u8 mask) override;
 	virtual void irq_ack(unsigned source) override;
 	virtual void irq_end(unsigned level) override;
 	virtual u16 name_type(unsigned level) override;
@@ -60,12 +62,13 @@ private:
 	u32 m_sectors_read=0, m_bytes_read=0;
 	output_finder<> m_sector_output, m_byte_output;
 	bool m_local[2]{}, m_motion=false, m_direction=false, m_settle=false;
-	bool m_index=false, m_command_response=false;
+	bool m_index=false;
+	p6066_flodi_irq m_irq;
 	p6066_flodi_latches m_latches;
 	void latch_command(u8 previous);
 	void start_transfer();
 	required_device_array<floppy_connector,2> m_drives;
-	u8 m_selected=0, m_requests=0, m_pending_type=0, m_active_type=0, m_response_type=0;
+	u8 m_selected=0, m_active_type=0;
 	bool m_reset=true;
 };
 DECLARE_DEVICE_TYPE(P6066_FLODI,p6066_flodi_device)

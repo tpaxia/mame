@@ -91,3 +91,8 @@ void p6066_bus_device::irq_end_w(u8 level)
 	const int slot=m_irq.release(level);
 	if (slot>=0) m_cards[slot]->irq_end(level);
 }
+
+void p6066_bus_device::interrupt_sync_w(u8 mask)
+{
+	for (auto *card : m_cards) if (card) card->interrupt_sync(mask);
+}

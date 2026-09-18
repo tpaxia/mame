@@ -2,6 +2,37 @@
 
 # FLODI first-read milestone
 
+**Current acceptance status (2026-09-18): boot paused.** The original-software
+results below are historical checkpoints, not a fresh validation of the
+current implementation. Protocol corrections are tested independently as
+described in the next section; full controller acceptance remains open.
+
+## Protocol synchronization increment
+
+`flodi_irq.h` now represents FOGO/FUGO, FINE/RIFI and RILI/LIVI separately.
+The CPU/bus ECM broadcast samples these sources. ECC grants ownership;
+ECOT/MEMA resets FOGO and FINE while their synchronous type persists until
+ECM3. Byte acknowledgement clears RILI, with LIVI updated at ECM1.
+Unserved selection/command responses survive ECM3; PRICO receives the actual
+broadcast instead of a substitute in the owner's return callback.
+
+Further circuit corrections: COLON decodes ECD6/7 rather than a full zero
+byte; CADI is gated to drive 2 in MACON, preserving every MAS bit; index
+requests depend on COTE rather than the host read-engine flag. Evidence:
+FLOD2 K02 A3/E3/A7/M1/G6/G7, K04 G1 and K06 request/reset circuits;
+description printed pp.27–32,36–37 and tables 3–4.
+
+`python3 scripts/puce/test_flodi_protocol.py` passes 2,236 enumerated cases
+and nested/competing interrupt sequences using production CPU/bus/FLODI
+callback bodies. MAME timer/drive plumbing and flux acquisition are stubbed;
+these results do not validate the media datapath. Full status wiring, scan
+results, write/verify/format, media errors and timing remain incomplete.
+The parent project's `analysis/mame-p6066/flodi-protocol-audit.md` records
+the evidence, coverage and remaining work. FLODI byte transfers use level-1
+interrupts, not DMA.
+
+## Historical original-CAROM checkpoint
+
 The first-read acceptance gate passes with original, unmodified CAROM and
 archive disk 121 (P6060 assembler). CAROM selects drive 2, homes the head,
 counts the settling interval, synchronizes to index, reads track 0 sectors
@@ -41,6 +72,10 @@ matching remain open; passing CAROM cannot resolve them. The parent project's
 `analysis/mame-p6066/flodi-status-handler-audit.md` records the derivation.
 
 ## Command-latch refactor (2026-09-18)
+
+This section records the earlier refactor and its tests. Its return-callback
+synchronization approximation was subsequently replaced by the protocol
+increment above; the archived software runs were not repeated after that change.
 
 The model now applies commands at ECOC/ECOT, not at COM0. The standalone
 `flodi_latches.h` implements the documented phase qualification of PRICO:

@@ -24,6 +24,7 @@ puce_device::puce_device(const machine_config &mconfig, const char *tag, device_
 	, m_name_type_cb(*this, 0)
 	, m_input_data_cb(*this, 0)
 	, m_irq_request_cb(*this, 0)
+	, m_interrupt_sync_cb(*this)
 	, m_irq_ack_cb(*this)
 	, m_irq_end_cb(*this)
 	, m_strobe_cb(*this)
@@ -154,6 +155,8 @@ void puce_device::execute_run()
 		if (m_stopped) { m_icount = 0; return; }
 		if (m_phase == 0)
 		{
+			// US4032895 table 16: ALFA strobes only higher levels.
+			m_interrupt_sync_cb(((1U << m_core.level) - 1) & 0x0e);
 			const u8 irq=m_irq_request_cb(m_core.external_irq_poll_level());
 			if (irq && (!m_invalid_pending || irq<=2))
 			{
@@ -195,7 +198,13 @@ void puce_device::execute_run()
 			const unsigned previous_level = m_core.level;
 			bool done = m_core.execute_register(m_ir);
 			if (m_core.ecorn != previous_ecorn) update_ecorn();
-			if (m_ir == 0xbd00 && previous_level != 4) m_irq_end_cb(previous_level);
+			if (m_ir == 0xbd00 && previous_level != 4)
+			{
+				// COM0 also strobes the ending level, allowing cleared source
+				// latches to propagate before ownership is released.
+				m_interrupt_sync_cb(((1U << (previous_level + 1)) - 1) & 0x0e);
+				m_irq_end_cb(previous_level);
+			}
 			if (!done)
 				done = m_core.execute_word(m_ir,
 					[this] (u16 address) { return m_program.read_word(address); },

@@ -17,6 +17,7 @@ public:
 	auto ecorn_cb() { return m_ecorn_cb.bind(); }
 	auto name_type_cb() { return m_name_type_cb.bind(); }
 	auto input_data_cb() { return m_input_data_cb.bind(); }
+	auto interrupt_sync_cb() { return m_interrupt_sync_cb.bind(); }
 	auto irq_request_cb() { return m_irq_request_cb.bind(); }
 	auto irq_ack_cb() { return m_irq_ack_cb.bind(); }
 	auto irq_end_cb() { return m_irq_end_cb.bind(); }
@@ -59,6 +60,7 @@ private:
 	devcb_read16 m_name_type_cb;
 	devcb_read8 m_input_data_cb;
 	devcb_read8 m_irq_request_cb;
+	devcb_write8 m_interrupt_sync_cb;
 	devcb_write8 m_irq_ack_cb, m_irq_end_cb, m_strobe_cb, m_control_cb;
 	devcb_write16 m_command_cb, m_service_console_cb;
 	devcb_read8 m_service_console_input_cb;
