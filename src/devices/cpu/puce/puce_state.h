@@ -122,11 +122,15 @@ struct puce_state
 	bool execute_input(std::uint16_t op, std::uint16_t name_type, std::uint8_t data)
 	{
 		const unsigned x = (op >> 4) & 15;
+		// ETIB: CPU19 V2 p.6 gives CROM 7FDF, TROM 1C, VROM 06.
+		// RB is selected by RO4..7; only RB is written. RO0..3 is unused
+		// (US4032895 register selectors and TROM write enables). The manual
+		// prints canonical B2xF, but B2xy executes the same transfer.
+		if ((op & 0xff00) == 0xb200) { set_b(x, name_type >> 8); return true; }
 		switch (op & 0xff0f)
 		{
 		case 0xaa00: l[x] = name_type; return true; // ENTL
 		case 0xb900: set_a(x, name_type); return true; // ENUA
-		case 0xb20f: set_b(x, name_type >> 8); return true; // ETIB
 		case 0xb808: set_a(x, data); return true; // EDA
 		case 0xa908: set_b(x, data); return true; // EDB
 		}

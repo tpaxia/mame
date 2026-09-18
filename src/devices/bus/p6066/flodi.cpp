@@ -119,7 +119,18 @@ void p6066_flodi_device::apply_commands(u8 type)
 		m_reading=true; m_last_sector=false; m_end_status=0;
 		load_track(); next_id(); return;
 	}
-	if (!first && m_command_count==1) { stop_read(); return; }
+	if (!first && (m_command_count==1 || (type==8 && m_command_count==2 && !last)))
+	{
+		// FLODI table 5 and FLOD2 K02 E8/E9: zero clears the command
+		// buffer, including VIRI/CATE. Stop mechanical and data activity.
+		// At the last HOME/SEEK settling interrupt a second zero CAE loads
+		// scan key length; it has no further effect for these operations.
+		m_motion=false; m_settle=false;
+		m_timer->adjust(attotime::never);
+		stop_read();
+		return;
+	}
+
 	fatalerror("FLODI unsupported command %02X %02X in type %02X",first,last,type);
 }
 TIMER_CALLBACK_MEMBER(p6066_flodi_device::mechanical_tick)
@@ -130,7 +141,10 @@ TIMER_CALLBACK_MEMBER(p6066_flodi_device::mechanical_tick)
 		// FLOD2 168664-K02 E9/G9: command bit 7 drives CATE/CATE5.
 		// K07 E5/E6: TEVEO = (DIVE0 & RIF10) | !CATE5. Thus
 		// positioning (CATE5=0) sets status bit 2, unlike a sector count.
-		m_event_status=4;
+		// K02 P9: CATE2=0 asserts the active-low preset of COTE0.
+		// K07 C8/C9 routes COTE0 to logical EPD1, so positioning
+		// reports both bit 1 and TEVEO bit 2, not TEVEO alone.
+		m_event_status=6;
 		m_timer->adjust(attotime::from_msec(10)); // two subsequent 5 ms pulses
 	}
 	else if (m_settle)

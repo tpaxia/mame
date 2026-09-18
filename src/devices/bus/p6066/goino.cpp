@@ -63,8 +63,11 @@ void p6066_goino_device::update_outputs()
 // and the outstanding PUCE pull-up/CPU-name jumper verification.
 u16 p6066_goino_device::name_type_r(offs_t level)
 {
-	if (m_state.selected && level == 4)
-		fatalerror("GOINO bring-up: selected name/type input not implemented\n");
+	// GOINO Fig.1.2: EPN and EPT0..3/7 float; EPT4..6 come from
+	// the 74148 encoder. With no requests its physical outputs are 111,
+	// hence logical type 00. Pending/synchronized sources remain unmodelled.
+	if (m_state.selected && level == 4 && m_state.requests_pending())
+		fatalerror("GOINO bring-up: pending request name/type input not implemented\n");
 	return 0;
 }
 

@@ -151,7 +151,7 @@ void puce_device::execute_run()
 			const unsigned x = (m_ir >> 4) & 15;
 			if (!done)
 			{
-				switch (m_ir & 0xff0f)
+				switch ((m_ir & 0xff00) == 0xb200 ? 0xb20f : (m_ir & 0xff0f))
 				{
 				case 0xaa00: case 0xb900: case 0xb20f:
 					done = m_core.execute_input(m_ir, m_name_type_cb(m_core.level), 0);

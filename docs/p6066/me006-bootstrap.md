@@ -79,3 +79,11 @@ Run the same acceptance tool with `--checkpoint console-reset` and a separate
 results directory to verify both the original disk blocks and this natural
 continuation. The test requires all nine command bits and release of ASPEO;
 no firmware writes or forced program-counter changes are used.
+
+## Firmware dispatch continuation
+
+`--checkpoint firmware-dispatch` also verifies natural execution of B2D3
+at word 0BC2 as ETIB B13, followed by 0BC3. CPU19 V2 p.6 control words
+7FDF/1C/06 select and write RB from RO4–7; RO0–3 is unused. Idle selected
+GOINO supplies type 00. No disk bytes or pointers are replaced. Later
+startup remains in an I/O wait at A0F9; ESE readiness is not established.

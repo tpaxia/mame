@@ -57,7 +57,7 @@ int main()
         {0xe222, "LPMIP M2,L2"}, {0x85ff, "ICA A15"}, {0x954f, "ICB B4"},
         {0xbe4f, "DCB B4"}, {0x9540, "DW 9540"}, {0x8612, "ADD A1,B2"}, {0x9632, "ADDA A3,B2"}, {0xa623, "ADDB A2,B3"},
         {0xb6ff, "SOT A15,B15"}, {0xc60a, "SOTA A0,B10"}, {0xd6ca, "SOTB A12,B10"},
-        {0xaa90, "ENTL L9"}, {0xb990, "ENUA A9"}, {0xb29f, "ETIB B9"},
+        {0xaa90, "ENTL L9"}, {0xb990, "ENUA A9"}, {0xb29f, "ETIB B9"}, {0xb2d3, "ETIB B13"},
         {0xb898, "EDA A9"}, {0xa998, "EDB B9"}, {0xaa91, "DW AA91"},
         {0xbd30, "COM3"}, {0xb1f4, "ESE A15"}, {0xb1b4, "ESE M11"}, {0xfca0, "DAE L10"},
         {0xb1f5, "DW B1F5"}, {0xfca1, "DW FCA1"},

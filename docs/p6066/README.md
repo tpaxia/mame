@@ -72,11 +72,13 @@ on initial construction, with no claim that hardware clears them.
 Bus slots, separate memory boards and functional external interrupt arbitration
 are implemented. FLODI's first read-command gate passes; controller writes,
 DMA, console button/keyboard input and GISA2 are not implemented. GOINO/CONDY
-only implements the direct output subset described in the console notes. Save items include execution phase and
+implements the direct output subset and selected idle name/type input described in the console notes. Save items include execution phase and
 architectural state, but save/restore integration remains untested. No complete
 hardware-conformance or ESE-startup gate has passed. The disk-to-firmware
 loader gate passes, as does the subsequent nine-command GOINO reset/release
-sequence through level-4 continuation at word 1095. Peripheral event producers
+sequence through level-4 continuation at word 1095. The original ETIB alias
+dispatch now passes 0BC2/0BC3; subsequent firmware waits at A0F9 with a
+control-block discrepancy still under investigation. Peripheral event producers
 and operating-system startup remain incomplete.
 
 ## Sources for this increment

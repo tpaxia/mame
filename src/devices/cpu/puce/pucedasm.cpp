@@ -66,7 +66,7 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 	}
 	const char *input = nullptr;
 	char input_reg = 'A';
-	switch (op & 0xff0f)
+	switch ((op & 0xff00) == 0xb200 ? 0xb20f : (op & 0xff0f))
 	{
 	case 0xaa00: input = "ENTL"; input_reg = 'L'; break;
 	case 0xb900: input = "ENUA"; break;

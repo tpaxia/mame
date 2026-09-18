@@ -52,9 +52,11 @@ int main()
     {
         p6066_goino_state q;
         q.select(0);
+        assert(!q.requests_pending());
         q.matrix_request = q.column_request = q.button_request = true;
         q.pippo_request = q.keyboard_request = q.timer_request = q.double_key_request = true;
         q.pippo_enabled = q.timer_enabled = true;
+        assert(q.requests_pending());
         const auto prefix = upper << 12;
         assert(q.data(prefix | 0x0401, 4));
         assert(!q.matrix_request && q.keyboard_request && q.timer_request);
@@ -70,7 +72,7 @@ int main()
         assert(q.data(prefix | 0x0b00, 4) && !q.pippo_enabled);
         assert(q.data(prefix | 0x0d00, 4) && !q.timer_enabled && q.interrupts_blocked);
         assert(q.data(prefix | 0x0e00, 4) && !q.interrupts_blocked);
-        assert(q.commands_seen == 0x6bf0);
+        assert(q.commands_seen == 0x6bf0 && !q.requests_pending());
         q.matrix_request = true;
         q.select(1); assert(q.data(prefix | 0x0400, 4) && q.matrix_request);
         q.select(0); assert(q.data(prefix | 0x0400, 3) && q.matrix_request);

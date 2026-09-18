@@ -83,6 +83,16 @@ int main(int argc, char **argv)
     assert(c.execute_register(0xbd00) && c.ecorn && c.level == 4);
     assert(c.execute_register(0xbd30) && !c.ecorn);
     assert(c.execute_register(0xbd00) && !c.ecorn && c.level == 4);
+    // ETIB CROM/TROM select and write RB only; RO0..3 is unused.
+    for (unsigned r=0; r<16; ++r)
+        for (unsigned low=0; low<16; ++low)
+        {
+            puce_state alias;
+            alias.l.fill(0x5aa5); alias.di=0xdb;
+            auto expected=alias.l; expected[r]=0x39a5;
+            assert(alias.execute_input(0xb200 | (r<<4) | low, 0x3972, 0xe6));
+            assert(alias.l==expected && alias.di==0xdb);
+        }
     // External input packing is tested with nonzero buses, independently of CAROM.
     c.di = 0xa5; c.l[9] = 0x1234;
     assert(c.execute_input(0xaa90, 0xabcd, 0x56) && c.l[9] == 0xabcd);

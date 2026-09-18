@@ -18,6 +18,12 @@ struct p6066_goino_state
 	bool pippo_enabled = false, timer_enabled = false, interrupts_blocked = true;
 	std::uint16_t commands_seen = 0; // diagnostic, not a hardware register
 
+	bool requests_pending() const
+	{
+		return matrix_request || column_request || button_request || pippo_request
+			|| keyboard_request || timer_request || double_key_request;
+	}
+
 	bool command(unsigned code)
 	{
 		// GOINO description, printed pp.5,9,11,14-16: ECD8-ECDB alone

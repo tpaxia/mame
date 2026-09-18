@@ -31,7 +31,9 @@ The local `reference/AdreaRiccardoEmanuele/FLODI FLOA-FLOB SCHEMI LOGICI
   incorrectly returned zero for positioning, indistinguishable from a sector
   count. CAROM consequently decremented its sector counter during head steps.
 
-The corrected function status is 44 at track zero (bit 2 plus PIZE). CAROM
+K02 P9 also presets COTE0 while CATE2=0. K07 C8/C9 routes COTE0 to
+logical EPD1. Positioning therefore reports **06**, or **46** at track zero
+(bits 1 and 2 plus PIZE); the earlier 04/44 model omitted COTE0. CAROM
 then emits 80, counts ten time events, and emits 80/00 to start reading.
 Its final-sector command and end interrupt now occur. This change follows
 these gates; it is not a firmware-specific replacement for head movement.
@@ -107,3 +109,9 @@ write/format/scan commands and save/restore verification. Unsupported command
 and overrun cases currently stop with diagnostics. See [TBD.md](../../../TBD.md).
 The archived `analysis/mame-p6066/flodi-unverified-draft/` is historical
 investigation material, not the current implementation.
+
+Zero command bytes now clear mechanical VIRI/CATE activity as well as byte
+reads (K02 E8/E9, FLODI table 5). The original disk firmware reaches track
+zero and sends this clear, but subsequently waits at A0F9; the parent
+project's `analysis/mame-p6066/firmware-startup-dispatch.md` records the
+unresolved control-block layout. This is not completed OS startup.

@@ -41,7 +41,7 @@ bootstrap_entry_tap=s:install_read_tap(0x1000,0x1000,"bootstrap-entry-oracle",fu
     end
     if total~=23424 or f:output("sectors_read"):get()~=206 then finish("FAIL: unexpected load length/read count");return end
     entry_checked=true
-    if checkpoint=="console-reset" then done=false;return end
+    if checkpoint~="firmware-entry" then done=false;return end
     finish("PASS: bootstrap installed ME006; four disk blocks / 23424 bytes match; 206 sectors read; CAROM transfers to level 3 at word 1000")
 end)
 -- Natural continuation immediately after the ninth startup command, SASPN.
@@ -52,6 +52,16 @@ bootstrap_console_tap=s:install_read_tap(0x1095,0x1095,"console-reset-oracle",fu
         finish("FAIL: incomplete console reset/release sequence");return
     end
     finish("PASS: bootstrap console reset; verified disk blocks; F4 F5 F6 F7 F8 F9 FB FD FE executed; SASPN releases inhibit; natural level-4 continuation at word 1095")
+end)
+-- The immutable disk table dispatches to B2D3 at 0BC2. Its low nibble
+-- is unused by ETIB nanocode; selected idle GOINO supplies type zero.
+bootstrap_dispatch_tap=s:install_read_tap(0x0bc3,0x0bc3,"firmware-dispatch-oracle",function()
+    if done or checkpoint~="firmware-dispatch" or c.state["PHASE"].value~=0 then return end
+    if not entry_checked or c.state["LEVEL"].value~=4 or c.state["IR"].value~=0xb2d3
+        or c.state["L13"].value~=0x000a then
+        finish("FAIL: unexpected ETIB alias continuation");return
+    end
+    finish("PASS: bootstrap firmware dispatch; verified disk blocks; original B2D3 executes ETIB B13; idle GOINO type 00; natural continuation at word 0BC3")
 end)
 emu.register_frame_done(function()
     if done then return end

@@ -39,7 +39,7 @@ def main():
     ap.add_argument("--rompath", required=True, type=Path)
     ap.add_argument("--media", required=True, type=Path)
     ap.add_argument("--results", required=True, type=Path)
-    ap.add_argument("--checkpoint", choices=("firmware-entry", "console-reset"), default="firmware-entry")
+    ap.add_argument("--checkpoint", choices=("firmware-entry", "console-reset", "firmware-dispatch"), default="firmware-entry")
     args = ap.parse_args()
     result = args.results.resolve()
     result.mkdir(parents=True, exist_ok=True)

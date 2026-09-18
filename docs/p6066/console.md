@@ -176,21 +176,21 @@ ASPEO at natural word 1095, level 4. All 23,424 disk bytes are checked first.
 The saved `installed.png` has all lamps off. Diagnostic outputs `commands_seen`
 and `interrupts_blocked` expose validation state, not extra physical lamps.
 
-## Subsequent control-flow boundary
+## Subsequent firmware dispatch
 
-An unrestricted continuation gets much further than GOINO reset, then stops
-on B2D3 at word 0BC2. The read-only instruction ring identifies this as an
-indirect-dispatch investigation, not evidence for a new B2D3 instruction:
+The original table selects word 0BC2, containing B2D3, which also serves as
+an earlier DE00 address literal. CPU19 V2 p.6 ETIB control words 7FDF/1C/06
+select RB with RO4–7 and write only RB; the low nibble is unused. The CPU now
+accepts B2D3 as ETIB B13. This is derived from the documented nanocode and
+US4032895 datapath, not a patched jump or a new canonical instruction.
 
-```
-0BC1 DE00  MLIP M0,L0 consumes literal B2D3 at 0BC2
-B2D3 ...   firmware computes an indirect target through L7
-B2E1 BA77  swaps the halves of L7
-B2E2 BC07  cross-swaps L0/L7, landing at 0BC2
-0BC2 B2D3  the earlier literal is encountered as an instruction
-```
+Idle selected GOINO returns name/type 0000: Fig.1.2 and printed pp.6/14 show
+floating name lines and an eight-input encoder on EPT4–6. The 74148 visible
+on the board scan produces physical 111 with no requests, logical type 00.
+Pending requests remain explicitly unsupported here.
 
-The trace is in the parent project's
-`analysis/mame-p6066/goino-continuation-trace.log`. The responsible table/state
-or CPU semantic error is not yet established; no opcode, jump or pointer
-workaround has been introduced. This remains short of operating-system startup.
+The `firmware-dispatch` bootstrap checkpoint verifies the original disk
+blocks and natural arrival at 0BC3 with B13=00/A13=0A after ETIB. Subsequent
+execution reaches the firmware I/O wait at A0F9. See the parent project's
+`analysis/mame-p6066/firmware-startup-dispatch.md` for the control-block
+trace and remaining discrepancy. ESE startup is not complete.
