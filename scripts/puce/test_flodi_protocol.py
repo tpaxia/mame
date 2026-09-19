@@ -21,6 +21,8 @@ source=r'''
 #include "bus/p6066/arbiter.h"
 #include "bus/p6066/flodi_latches.h"
 #include "bus/p6066/flodi_irq.h"
+#include "bus/p6066/flodi_scan.h"
+#include "bus/p6066/flodi_fm.h"
 #include "bus/p6066/goino_state.h"
 #include <cassert>
 #include <cstdio>
@@ -41,6 +43,7 @@ struct attotime {
  static attotime from_hz(unsigned v){return {1000000000/v};}
  friend attotime operator+(attotime a,attotime b){return {a.ns+b.ns};}
  friend attotime operator-(attotime a,attotime b){return {a.ns-b.ns};}
+ friend bool operator>(attotime a,attotime b){return a.ns>b.ns;}
  friend bool operator<(attotime a,attotime b){return a.ns<b.ns;}
 };
 const attotime attotime::never{0x7fffffffffffffff};
@@ -48,6 +51,7 @@ struct emu_timer {attotime next;void adjust(attotime v){next=v;}};
 struct floppy_image_device {
  bool present=true,zero=true;unsigned steps=0;
  bool exists(){return present;}int trk00_r(){return !zero;}
+ void write_start(attotime){}void write_flux_change(attotime){}void write_end(attotime){}
  void ss_w(int){}void mon_w(int){}void dir_w(int){}void stp_w(int v){steps+=v;}
 };
 struct floppy_connector {floppy_image_device media;floppy_image_device*get_device(){return &media;}};
@@ -55,7 +59,8 @@ template<class T,unsigned N>struct required_device_array {
  mutable std::array<T,N> items;T*operator[](unsigned n)const{return &items[n];}
 };
 template<class... T>using output_finder=unsigned;
-#define TIMER_CALLBACK_MEMBER(name) void name()
+#define TIMER_CALLBACK_MEMBER(name) void name(int param=0)
+#define TIMER_CALLBACK_DEFINITION(name) void name(int param)
 struct device_p6066_card_interface {
  virtual bool direct_selected() const{return false;}
  virtual unsigned irq_requests()const{return 0;}
@@ -68,28 +73,32 @@ struct device_p6066_card_interface {
 struct p6066_flodi_device:device_p6066_card_interface {
  struct machine_stub {attotime time(){return {};}};
  machine_stub machine(){return {};}
- emu_timer mechanical,bytes;unsigned captures=0,searches=0;
- p6066_flodi_device(){m_timer=&mechanical;m_byte_timer=&bytes;device_reset();controller_reset(false);}
+ emu_timer mechanical,bytes,erase,write;unsigned captures=0,searches=0;
+ p6066_flodi_device(){m_timer=&mechanical;m_byte_timer=&bytes;m_erase_timer=&erase;m_write_timer=&write;device_reset();controller_reset(false);}
  void device_reset();
 '''
 header=(ROOT/'src/devices/bus/p6066/flodi.h').read_text()
-a=header.index('\tvirtual void select(');b=header.index('protected:',a)
+a=header.index('\t// Optional automatic feeder');b=header.index('protected:',a)
 source+=header[a:b].replace('virtual u8 irq_requests()', 'virtual unsigned irq_requests()')
 a=header.index('\tfloppy_image_device *drive() const;');b=header.index('\n};',a)
 source+=header[a:b]+'\n};\n'
 for sig in ('floppy_image_device *p6066_flodi_device::drive()',
             'void p6066_flodi_device::device_reset()', 'void p6066_flodi_device::controller_reset(',
-            'void p6066_flodi_device::select(', 'void p6066_flodi_device::interrupt_sync(',
+            'void p6066_flodi_device::operator_reset(', 'void p6066_flodi_device::media_loaded(', 'void p6066_flodi_device::media_unloaded(',
+            'void p6066_flodi_device::changer_door_w(', 'void p6066_flodi_device::changer_busy_w(',
+            'void p6066_flodi_device::changer_ack_w(', 'void p6066_flodi_device::select(', 'void p6066_flodi_device::interrupt_sync(',
             'void p6066_flodi_device::irq_ack(', 'void p6066_flodi_device::irq_end(',
             'void p6066_flodi_device::latch_command(', 'void p6066_flodi_device::start_transfer(',
             'u16 p6066_flodi_device::name_type(', 'u8 p6066_flodi_device::input_data(',
             'void p6066_flodi_device::command(', 'void p6066_flodi_device::strobe(',
             'void p6066_flodi_device::stop_read(', 'void p6066_flodi_device::request3(',
             'void p6066_flodi_device::output_data(', 'void p6066_flodi_device::control(',
-            'void p6066_flodi_device::schedule_byte(', 'void p6066_flodi_device::index_changed(',
+            'u8 p6066_flodi_device::record_byte(', 'void p6066_flodi_device::finish_sector(',
+            'void p6066_flodi_device::begin_recording(', 'void p6066_flodi_device::end_recording(',
+            'TIMER_CALLBACK_MEMBER(p6066_flodi_device::write_gate_tick)', 'TIMER_CALLBACK_MEMBER(p6066_flodi_device::erase_tick)', 'void p6066_flodi_device::format_tick(', 'void p6066_flodi_device::advance_data(', 'void p6066_flodi_device::write_byte(', 'void p6066_flodi_device::schedule_byte(', 'void p6066_flodi_device::index_changed(',
             'TIMER_CALLBACK_MEMBER(p6066_flodi_device::mechanical_tick)',
             'TIMER_CALLBACK_MEMBER(p6066_flodi_device::byte_tick)'):
-    source+=method('src/devices/bus/p6066/flodi.cpp',sig)+'\n'
+    source+=method('src/devices/bus/p6066/flodi.cpp',sig).replace('TIMER_CALLBACK_MEMBER(', 'TIMER_CALLBACK_DEFINITION(')+'\n'
 source+='void p6066_flodi_device::trace_event(const char *,unsigned){}\n'
 source+='void p6066_flodi_device::load_track(){++captures;}\nvoid p6066_flodi_device::next_id(){++searches;}\n'
 source+=r'''
@@ -239,7 +248,7 @@ int main(){
  // Exercise the actual byte timer callback and level-1 payload callback.
  // Payload is injected at the decoded-byte boundary, not claimed as flux QA.
  {p6066_flodi_device f;f.m_reading=true;f.m_bit_count=100;f.m_id_pos=0;
-  f.m_length=128;f.m_payload[0]=0xa6;f.m_payload_start=true;
+  f.m_length=128;for(unsigned i=0;i<8;++i)f.m_bits[17+2*i]=(0xa6>>(7-i))&1;f.m_payload_start=true;
   f.byte_tick();assert(f.m_irq.rili&&f.m_irq.fogo&&!f.irq_requests());
   f.interrupt_sync(10);assert(f.irq_requests()==5);f.irq_ack(0);
   assert(f.input_data(1)==0xa6&&f.m_bytes_read==1&&!f.m_irq.rili&&f.m_irq.livi);
@@ -282,8 +291,9 @@ int main(){
  printf("PASS: %u FLODI command/source/status cases; production CPU/bus ECM, competing GOINO, nested byte service, response retention and reset sequences\n",checks);
 }
 '''
-with tempfile.TemporaryDirectory(prefix='p6066-flodi-protocol-') as tmp:
-    path=Path(tmp)/'test.cpp';path.write_text(source)
-    binary=Path(tmp)/'test'
-    subprocess.run(['c++','-std=c++17','-O2','-I',str(ROOT/'src/devices'),str(path),'-o',str(binary)],check=True)
-    subprocess.run([str(binary)],check=True)
+if __name__ == "__main__":
+    with tempfile.TemporaryDirectory(prefix='p6066-flodi-protocol-') as tmp:
+        path=Path(tmp)/'test.cpp';path.write_text(source)
+        binary=Path(tmp)/'test'
+        subprocess.run(['c++','-std=c++17','-O2','-I',str(ROOT/'src/devices'),str(path),'-o',str(binary)],check=True)
+        subprocess.run([str(binary)],check=True)

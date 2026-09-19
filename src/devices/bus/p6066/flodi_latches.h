@@ -33,14 +33,14 @@ struct p6066_flodi_latches
 		return effect::command;
 	}
 	void ecm3() { prico = false; }
-	bool busy() const { return (command & 0xb0) != 0; } // CATE, CADI, VIRI
-	std::uint8_t status(bool end, bool index, bool track_zero, std::uint8_t result) const
+	bool busy(bool changer_busy=false) const { return (command & 0x90) != 0 || changer_busy; } // K02 P6: CATE, VIRI, !CICO
+	std::uint8_t status(bool end, bool index, bool track_zero, std::uint8_t result, bool scan_found=false, bool different=false, bool operator_intervention=false) const
 	{
 		if (prico) return num;
 		// K07 E5/E6: TEVE = DIVE.RIFI + !CATE. DIVE/SCOK are
-		// not supplied until the scan datapath is implemented.
-		return (index ? 1 : 0) | (cote ? 2 : 0) | (!(command & 0x80) ? 4 : 0)
-			| (result & 0x80) | (end ? (result & 0x40) : (track_zero ? 0x40 : 0));
+		// qualified by the synchronized completion response.
+		return (index ? 1 : 0) | (cote ? 2 : 0) | ((!(command & 0x80) || (end && different)) ? 4 : 0) | (scan_found ? 8 : 0)
+			| (operator_intervention ? 0x20 : 0) | (result & 0x80) | (end ? (result & 0x40) : (track_zero ? 0x40 : 0));
 	}
 };
 #endif

@@ -6,11 +6,17 @@
 #include "p6066.h"
 #include "flodi_latches.h"
 #include "flodi_irq.h"
+#include "flodi_scan.h"
 #include "imagedev/floppy.h"
 class p6066_flodi_device : public device_t, public device_p6066_card_interface
 {
 public:
 	p6066_flodi_device(const machine_config &,const char *,device_t *,u32 clock=0);
+	// Optional automatic feeder input pins (logical asserted polarity).
+	void changer_door_w(bool closed);
+	void changer_busy_w(bool busy);
+	void changer_ack_w(bool asserted);
+	bool changer_request() const { return BIT(m_latches.command,5) && m_changer_door; }
 	virtual void select(u8 name) override;
 	virtual u8 irq_requests() const override { return m_irq.requests(); }
 	virtual void interrupt_sync(u8 mask) override;
@@ -40,8 +46,19 @@ protected:
 	virtual void device_add_mconfig(machine_config &config) override;
 private:
 	floppy_image_device *drive() const;
+	void media_loaded(floppy_image_device *floppy);
+	void operator_reset();
+	void media_unloaded(floppy_image_device *floppy);
+	bool m_changer_door=false, m_changer_busy=false, m_changer_ack=false, m_inop=false;
 	TIMER_CALLBACK_MEMBER(mechanical_tick);
-	emu_timer *m_timer=nullptr, *m_byte_timer=nullptr;
+	emu_timer *m_timer=nullptr, *m_byte_timer=nullptr, *m_erase_timer=nullptr, *m_write_timer=nullptr;
+	TIMER_CALLBACK_MEMBER(write_gate_tick);
+	attotime m_write_end_time;
+	bool m_write_close_pending=false, m_write_continue=false;
+	TIMER_CALLBACK_MEMBER(erase_tick);
+	void begin_recording(attotime when);
+	void end_recording(attotime when);
+	bool m_erase_active=false, m_erase_target=false;
 	TIMER_CALLBACK_MEMBER(byte_tick);
 	void load_track();
 	void next_id();
@@ -53,7 +70,20 @@ private:
 	void index_changed(floppy_image_device *floppy, int state);
 	std::array<u8,100000> m_bits{};
 	unsigned m_bit_count=0, m_cursor=0, m_id_pos=0, m_data_pos=0;
-	u8 m_header[5]{}, m_payload[1024]{};
+	u8 m_header[5]{};
+	p6066_flodi_scan m_scan;
+	u8 m_mask_pipe[2]{0xff,0xff}, m_input=0;
+	void advance_data();
+	void write_byte(u8 data,u8 clocks=0xff);
+	void format_tick();
+	bool m_format_wait=false, m_format_active=false, m_format_stream=false;
+	bool m_format_area=false, m_format_nrem=false;
+	u8 m_format_fsc=0, m_format_ser=0;
+	bool m_writing=false;
+	unsigned m_write_preamble=0;
+	u16 m_write_crc=0xffff;
+	u8 record_byte(unsigned index) const;
+	void finish_sector();
 	unsigned m_length=0, m_byte=0, m_id_byte=0;
 	bool m_reading=false, m_id_phase=false, m_data_irq=false, m_mismatch=false;
 	bool m_crc_gate=false, m_last_sector=false, m_id_crc=false, m_data_crc=false;
@@ -62,7 +92,7 @@ private:
 	int m_finish_byte=-1, m_crc_start=-1;
 	bool m_payload_start=false;
 	u32 m_sectors_read=0, m_bytes_read=0;
-	output_finder<> m_sector_output, m_byte_output;
+	output_finder<> m_sector_output, m_byte_output, m_write_output, m_erase_output, m_local0_output, m_local1_output, m_changer_output;
 	bool m_local[2]{}, m_motion=false, m_direction=false, m_settle=false;
 	bool m_index=false;
 	p6066_flodi_irq m_irq;

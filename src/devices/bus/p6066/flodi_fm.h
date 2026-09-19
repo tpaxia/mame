@@ -20,6 +20,13 @@ template <typename Bits> std::uint16_t word(const Bits &bits,unsigned count,unsi
 	for (unsigned i=0;i<16;++i) result=(result<<1)|bits[(pos+i)%count];
 	return result;
 }
+inline std::uint16_t encode(std::uint8_t value, std::uint8_t clocks=0xff)
+{
+	std::uint16_t result=0;
+	for (int bit=7;bit>=0;--bit)
+		result=(result<<2)|(((clocks>>bit)&1)<<1)|((value>>bit)&1);
+	return result;
+}
 inline std::uint8_t data(std::uint16_t word)
 {
 	std::uint8_t value=0;
