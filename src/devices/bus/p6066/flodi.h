@@ -46,6 +46,8 @@ private:
 	void load_track();
 	void next_id();
 	void request3(u8 type,u8 status=0);
+	void trace_event(const char *event, unsigned value=0);
+	bool m_trace_enabled=false;
 	void stop_read();
 	void schedule_byte(attotime when);
 	void index_changed(floppy_image_device *floppy, int state);

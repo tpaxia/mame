@@ -90,6 +90,7 @@ for sig in ('floppy_image_device *p6066_flodi_device::drive()',
             'TIMER_CALLBACK_MEMBER(p6066_flodi_device::mechanical_tick)',
             'TIMER_CALLBACK_MEMBER(p6066_flodi_device::byte_tick)'):
     source+=method('src/devices/bus/p6066/flodi.cpp',sig)+'\n'
+source+='void p6066_flodi_device::trace_event(const char *,unsigned){}\n'
 source+='void p6066_flodi_device::load_track(){++captures;}\nvoid p6066_flodi_device::next_id(){++searches;}\n'
 source+=r'''
 struct p6066_bus_device {

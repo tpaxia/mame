@@ -3,6 +3,8 @@
 #include "emu.h"
 #include "flodi.h"
 #include "flodi_fm.h"
+#include "flodi_rotation.h"
+#include <cstdlib>
 DEFINE_DEVICE_TYPE(P6066_FLODI,p6066_flodi_device,"p6066_flodi","Olivetti P6066 FLODI floppy controller")
 p6066_flodi_device::p6066_flodi_device(const machine_config &mconfig,const char *tag,device_t *owner,u32 clock)
 	: device_t(mconfig,P6066_FLODI,tag,owner,clock),device_p6066_card_interface(mconfig,*this),m_sector_output(*this,"sectors_read"),m_byte_output(*this,"bytes_read"),m_drives(*this,"%u",0U) { }
@@ -15,6 +17,7 @@ void p6066_flodi_device::device_add_mconfig(machine_config &config)
 floppy_image_device *p6066_flodi_device::drive() const { return m_drives[m_selected]->get_device(); }
 void p6066_flodi_device::device_start()
 {
+	m_trace_enabled=std::getenv("P6066_FLODI_TRACE")!=nullptr;
 	for (auto &connector : m_drives)
 		if (auto *f=connector->get_device()) f->setup_index_pulse_cb(floppy_image_device::index_pulse_cb(&p6066_flodi_device::index_changed,this));
 	save_item(NAME(m_track_epoch)); save_item(NAME(m_byte_time)); save_item(NAME(m_finish_byte)); save_item(NAME(m_crc_start)); save_item(NAME(m_payload_start));
@@ -34,6 +37,17 @@ void p6066_flodi_device::device_start()
 	save_item(NAME(m_irq.fogo)); save_item(NAME(m_irq.fine)); save_item(NAME(m_irq.rili));
 	save_item(NAME(m_irq.fugo)); save_item(NAME(m_irq.rifi)); save_item(NAME(m_irq.livi));
 	save_item(NAME(m_active_type)); save_item(NAME(m_reset));
+}
+// Opt-in diagnostic window around the first duplicated sector in boot066.
+// Pure observation: no emulated timing, latch or interrupt changes.
+void p6066_flodi_device::trace_event(const char *event, unsigned value)
+{
+	if (!m_trace_enabled || m_sectors_read<367 || m_sectors_read>371) return;
+	logerror("FLODI_TRACE ns=%lld event=%s value=%X completed=%u drive=%u chr=%u/%u/%u id=%u byte=%u reading=%u index=%u cote=%u active=%02X requests=%02X sele=%u coma=%u fogo=%u fugo=%u fine=%u rifi=%u rili=%u livi=%u\n",
+		(long long)machine().time().as_ticks(1000000000),event,value,m_sectors_read,m_selected+1,
+		m_header[1],m_header[2],m_header[3],m_id_phase,m_byte,m_reading,m_index,m_latches.cote,
+		m_active_type,m_irq.requests(),m_irq.sele,m_irq.coma,m_irq.fogo,m_irq.fugo,
+		m_irq.fine,m_irq.rifi,m_irq.rili,m_irq.livi);
 }
 void p6066_flodi_device::device_reset() { stop_read(); m_sectors_read=m_bytes_read=0; m_sector_output=0; m_byte_output=0; m_selected=0; m_reset=true; m_irq={}; m_active_type=0; m_index=false; m_latches={}; m_end_status=0; m_local[0]=m_local[1]=false; m_motion=false; m_settle=0; m_timer->adjust(attotime::never); }
 void p6066_flodi_device::controller_reset(bool asserted)
@@ -55,11 +69,14 @@ void p6066_flodi_device::select(u8 name)
 void p6066_flodi_device::interrupt_sync(u8 mask)
 {
 	if (m_reset) return;
+	trace_event("ECM-before",mask);
 	m_irq.synchronize(mask, m_active_type && !(m_active_type & 0x0c));
 	if (mask & 8) m_latches.ecm3();
+	trace_event("ECM-after",mask);
 }
 void p6066_flodi_device::irq_ack(unsigned source)
 {
+	trace_event("ECC-before",source);
 	if (source==0 && (m_irq.requests()&1) && !m_data_irq)
 	{
 		m_irq.byte_ack(); m_data_irq=true; return;
@@ -69,6 +86,7 @@ void p6066_flodi_device::irq_ack(unsigned source)
 	// ECC establishes ownership. ECOT clears FOGO/FINE; ECM updates
 	// FUGO/RIFI. Neither of those operations is an ECC side effect.
 	m_active_type=m_irq.type(source==3);
+	trace_event("ECC-after",source);
 }
 void p6066_flodi_device::irq_end(unsigned level)
 {
@@ -101,6 +119,7 @@ void p6066_flodi_device::irq_end(unsigned level)
 		else
 		{
 			m_end_status|=(m_data_crc && m_crc_start==int(m_length)-1) ? 0 : 0x40;
+			trace_event("sector-complete");
 			++m_sectors_read; m_sector_output=m_sectors_read;
 			logerror("FLODI sector complete C=%u H=%u R=%u bytes=%u CRC=%s\n",m_header[1],m_header[2],m_header[3],m_length,m_data_crc?"good":"BAD");
 			if (m_last_sector) { m_reading=false; request3(4,m_end_status); }
@@ -187,12 +206,14 @@ u8 p6066_flodi_device::input_data(unsigned level)
 	const u8 status=(m_active_type&0x0c)
 		? m_latches.status(BIT(m_active_type,2),m_index,f && !f->trk00_r(),m_end_status)
 		: (!f || !f->exists() ? 0x80 : 0) | (f && !f->trk00_r() ? 0x40 : 0) | (m_local[m_selected] ? 0x10 : 0) | (m_latches.busy() ? 6 : 0);
+	trace_event("status-read",status);
 	logerror("FLODI status %02X type %02X\n",status,m_active_type);
 	return status;
 }
 void p6066_flodi_device::command(unsigned level,u8 data)
 {
 	if (level!=3 || !m_active_type) fatalerror("FLODI command without interrupt ownership");
+	trace_event("command",data);
 	const u8 previous=m_latches.command;
 	const bool mema=(m_active_type&0x0c)!=0;
 	// K02 G6/G7: only drive 2 can load CADI from ECD5.
@@ -214,8 +235,10 @@ void p6066_flodi_device::strobe(unsigned level)
 	{
 		// K06 M2/M3 resets FOGO and FINE; FUGO/RIFI retain the
 		// function/completion type until ECM3.
+		trace_event("ECOT-before");
 		m_index=false;
 		m_irq.ecot(true);
+		trace_event("ECOT-after");
 	}
 }
 
@@ -232,6 +255,7 @@ void p6066_flodi_device::request3(u8 type,u8 status)
 	else if (type==4) m_irq.fine=true;
 	else fatalerror("FLODI invalid asynchronous level-3 source %u", type);
 	if (status&1) m_index=true;
+	trace_event("request3",(unsigned(type)<<8)|status);
 }
 void p6066_flodi_device::load_track()
 {
@@ -261,8 +285,7 @@ void p6066_flodi_device::next_id()
 	m_finish_byte=-1; m_crc_start=-1; m_payload_start=false;
 	if (m_bit_count)
 	{
-		const s64 elapsed=(machine().time()-m_track_epoch).as_ticks(500000);
-		m_cursor=((elapsed % s64(m_bit_count))+m_bit_count)%m_bit_count;
+		m_cursor=p6066_fm::rotational_cell(machine().time()-m_track_epoch,m_bit_count);
 	}
 	if (!m_bit_count) { m_byte_timer->adjust(attotime::from_hz(6)); return; }
 	unsigned distance=0;
@@ -302,7 +325,7 @@ TIMER_CALLBACK_MEMBER(p6066_flodi_device::byte_tick)
 
 	if (!m_bit_count || m_id_pos==m_bit_count) { m_byte_timer->adjust(attotime::from_hz(6)); return; }
 	if (m_data_irq || m_irq.rili || m_irq.livi) fatalerror("FLODI level-1 byte overrun");
-	if (m_payload_start) { m_payload_start=false; request3(8,0); }
+	if (m_payload_start) { trace_event("payload-start"); m_payload_start=false; request3(8,0); }
 	m_irq.rili=true;
 }
 void p6066_flodi_device::output_data(unsigned level,u16 value)
@@ -339,5 +362,6 @@ void p6066_flodi_device::index_changed(floppy_image_device *floppy,int state)
 {
 	// Printed p.31 / K04 G1: COTEN qualifies INDO, independently of
 	// the data engine. Index counting continues after data service stops.
+	if (floppy==drive()) trace_event("index-edge",state);
 	if (state && floppy==drive() && !m_latches.cote) request3(8,1);
 }
