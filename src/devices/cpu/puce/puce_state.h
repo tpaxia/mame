@@ -149,12 +149,15 @@ struct puce_state
 		// (US4032895 register selectors and TROM write enables). The manual
 		// prints canonical B2xF, but B2xy executes the same transfer.
 		if ((op & 0xff00) == 0xb200) { set_b(x, name_type >> 8); return true; }
+		// V2 p.5: EDA BFFF:13 and EDB 7FFF:1C write only Rx.
+		// RO3 selects EPD; RO0..2 affect no enabled path (US4032895
+		// cols.13-14,20,31,33). Accept all eight data-input aliases.
+		if ((op & 0xff08) == 0xb808) { set_a(x, data); return true; }
+		if ((op & 0xff08) == 0xa908) { set_b(x, data); return true; }
 		switch (op & 0xff0f)
 		{
 		case 0xaa00: l[x] = name_type; return true; // ENTL
 		case 0xb900: set_a(x, name_type); return true; // ENUA
-		case 0xb808: set_a(x, data); return true; // EDA
-		case 0xa908: set_b(x, data); return true; // EDB
 		}
 		return false;
 	}
@@ -395,7 +398,7 @@ struct puce_state
 		}
 		if ((op & 0xff00) == 0xb200 || code == 0xaa00 || code == 0xb900)
 			return execute_input(op, io.name_type(), 0);
-		if (code == 0xb808 || code == 0xa908)
+		if ((op & 0xff08) == 0xb808 || (op & 0xff08) == 0xa908)
 			return execute_input(op, 0, io.input());
 		if (code == 0xb402 || code == 0xb104)
 		{

@@ -105,7 +105,10 @@ puce_disassembler::offs_t puce_disassembler::disassemble(std::ostream &stream, o
 	}
 	const char *input = nullptr;
 	char input_reg = 'A';
-	switch ((op & 0xff00) == 0xb200 ? 0xb20f : (op & 0xff0f))
+	// EDA/EDB retain RO3 (EPD selection); RO0..2 are unused by their nanocode.
+	const u16 input_code = ((op & 0xff08) == 0xb808 || (op & 0xff08) == 0xa908)
+		? (op & 0xff08) : (op & 0xff0f);
+	switch ((op & 0xff00) == 0xb200 ? 0xb20f : input_code)
 	{
 	case 0xaa00: input = "ENTL"; input_reg = 'L'; break;
 	case 0xb900: input = "ENUA"; break;

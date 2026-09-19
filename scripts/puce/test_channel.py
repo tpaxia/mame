@@ -41,6 +41,26 @@ struct io_fixture {
 };
 int main(){
  unsigned cases=0;
+ // V2 p.5 EDA/EDB: all RO0..2 encodings, all registers/data, both CPUs,
+ // all interrupt levels. Distinct name/data catches accidental mux selection.
+ for(bool variant : {false,true}) for(unsigned level=1;level<=4;++level)
+ for(unsigned opcode : {0xb800U,0xa900U}) for(unsigned x=0;x<16;++x)
+ for(unsigned low=8;low<16;++low) for(unsigned data=0;data<256;++data) {
+  puce_state c;c.cpu19m=variant;c.level=level;c.di=data^0xa5;
+  for(unsigned i=0;i<16;++i)c.l[i]=(i*0x1123+data*0x101)&0xffff;
+  const auto before=c.l; const auto flags=c.di;
+  io_fixture io{c,{}};io.data=data;io.name=data^0xff;
+  assert(c.execute_channel(opcode|(x<<4)|low,io));
+  for(unsigned i=0;i<16;++i) {
+   unsigned want=before[i];
+   if(i==x)want=opcode==0xb800 ? (want&0xff00)|data : (want&0xff)|(data<<8);
+   assert(c.l[i]==want);
+  }
+  assert(c.di==flags && c.level==level);
+  assert(io.events==std::vector<std::string>{"input"}); // one read; no strobe
+  ++cases;
+ }
+
  struct transfer{unsigned op;bool input,word;int step;};
  const transfer transfers[]={
   {0x8d08,true,false,0},{0xa108,true,false,-1},{0xa208,true,false,1},

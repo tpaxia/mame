@@ -143,3 +143,14 @@ ALFA/RESE paths, VROM timing, simultaneous interrupt requests or board wiring.
 Track hardware evidence gaps in the parent repository's `TBD.md`, not inside
 MAME. Do not relabel these items as completed because another guest instruction
 or another boot checkpoint happens to work.
+
+## EDA/EDB aliases (2026-09-18)
+
+Canonical A9x8/B8x8 input operations also accept low nibble9–F. V2 p.5 rows43–44
+(CROM7FFF/BFFF, TROM1C/13) and US4032895 cols.13–14,20,31,33 establish that
+RO0–2 affect no enabled path, while RO3 selects EPD. The CPU and disassembler
+now use maskFF08 for these two families. This fixes the original066 startup
+wordA97F without changing guest bytes. Channel tests cover every alias, register,
+input byte, interrupt level and CPU variant, with one input read and no strobe.
+The parent repository's nanocode/input-aliases.md records the circuit argument
+and65,536 independent nanocode comparisons. This is not whole-ISA alias signoff.
