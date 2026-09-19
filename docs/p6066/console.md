@@ -35,18 +35,18 @@ the startup lamp word FFFF. See [FLODI results](flodi-evidence.md).
 ## Functional UI
 
 The embedded `p6066.lay` view includes the small display, console lamp labels,
-four LED indicators, and a clickable **RESTART** control. F3 restarts the
-machine; Tab opens MAME settings; Esc exits. The CPU STOPPED indicator is an
-emulator diagnostic. The other lamp labels follow the console manual.
+four LED indicators. There is no on-screen restart button. Esc restarts the
+machine in full keyboard mode. With `-uimodekey F12`, F12 toggles MAME UI controls; enable
+them to access MAME menus. Lamp labels follow the console manual;
+the emulator-only CPU status indicator has been removed.
 
 The seven console-labelled panels display lamp outputs and accept button
 clicks. GOINO button interrupts and keyboard signal conversion are implemented;
-the full keyboard device and host alphanumeric key mapping remain incomplete.
-See the current interrupt/input section below. RESTART is an emulator control, not a claim about a
-physical P6066 button. LED indicators currently expose the raw register bits;
+the keyboard peripheral and agreed host mapping are implemented below.
+See the current interrupt/input section below. LED indicators currently expose the raw register bits;
 the LER1 driver circuit/blink and the cicalino monostable/audio remain to be
-implemented. Calculator indication currently shows LAMX1; LAMX2 is preserved
-in the register but its visual/color relationship remains to be resolved.
+implemented. Calculator indication uses raw bit9 (LAMX2), corroborated by
+firmware output and interactive mode changes.
 
 The display is blank on the current cold CAROM path because firmware has not
 sent it a message before the floppy-controller timeout. The regression fixture separately exercises
@@ -100,7 +100,7 @@ Build using the command in [README.md](README.md). With the verified reference
 image installed as `p6066/carom.bin` in a ROM directory:
 
 ```sh
-./p6066 p6066 -rompath /path/to/roms -window -resolution 1100x520 -skip_gameinfo
+./p6066 p6066 -rompath /path/to/roms -window -resolution 1100x520 -uimodekey F12 -skip_gameinfo
 ```
 
 ROM-free tests and CPU regression:
@@ -126,7 +126,7 @@ The Lua test must print **three PASS lines**, with no Lua assertion errors:
    timeout loop with lamp pattern 8084 and the expected bootstrap parameters.
 2. Synthetic PUCE code verifies BMI byte lanes, selects from an odd memory
    byte, clocks lamp pattern A55A, and transmits 224 display bytes.
-3. The panel restart resets CPU/console and repeats the entire cold path.
+3. The Esc shortcut resets CPU/console and repeats the entire cold path.
 
 Snapshots `console-cold.png` and `console-fixture.png` capture the native MAME
 layout. MAME can return zero even after a Lua assertion, so check the PASS
@@ -156,8 +156,8 @@ now clear the documented asynchronous requests, disable PIPPO/timer, or release
 the ASPEO startup inhibit. Latch semantics follow printed pp.5,9,11,14–16;
 RECON also clears the button request described on printed p.14. Fields are saved.
 Timer and synchronized interrupt/input behavior is now implemented below.
-Printer motion and PIPPO start still stop explicitly; reset commands are not fake
-successful printer operations.
+Printer motion commands are intentional user-requested no-ops. PIPPO start
+still stops explicitly.
 
 ECD8–ECDB selects commands independently of the upper nibble. Data strobes
 use the documented destinations in figure 1.3 (printed GOINO p.5): `20xx`
@@ -223,15 +223,13 @@ RETIN is a separate request clear. The priority encoder implements fig.1.2,
 including live ARDIO selection of the synchronized MODE0 keyboard request.
 DEA selector 0 reads buttons and selector 1 reads the converted TAS1..9 code.
 The seven panel keys are clickable: Calculator, Print All, Trace, Break,
-No Print, Continue and Step. Numpad 1–7 map respectively to Calculator, Break,
-Continue, Trace, Step, Print All and No Print. Down supplies TASB; Caps Lock
-toggles Keyboard Mode. The normal host alphanumeric keyboard encoder is not
-implemented; `keyboard_w`/`keyboard_error_w` expose its peripheral signal boundary.
+No Print, Continue and Step. The old keypad/Caps Lock development bindings have been replaced by the
+agreed host keyboard below. Down supplies TASB; Alt toggles Keyboard Mode.
 
 Level-3 output now operates under this board's grant; level-2 output loads
 printer columns without decoding commands. Printer mechanics remain absent.
-Printer/decimal status and specialization PROM inputs require a verified source
-and stop explicitly if unbound. A partially specified ECD transfer propagates
+Printer/decimal status uses the explicitly approved stub described below;
+specialization PROM input still stops if unbound. A partially specified ECD transfer propagates
 validity masks to display/lamp state; unknown display columns are not drawn.
 Pulse stretching, physical timer phase and complete keyboard scanning remain
 unverified. The broader pre-boot gate remains closed.
@@ -241,3 +239,65 @@ New ROM-free tests: `test_goino_events.py`, `test_goino_transport.py`, and
 callback bodies and exercises timer, keyboard, buttons and nested level-2/3
 service. The parent project records source conflicts and limitations in
 `analysis/mame-p6066/goino-interrupt-input-audit.md`. No OS/firmware boot was run.
+
+
+## Host keyboard (2026-09-18)
+
+A separate `p6066_keyboard_device` beneath GOINO implements the agreed host
+layout, the four modifier encodings in TASTIERA fig.5/9, TAS9 on alphabetic
+keys, TASB for Down, ARDUA on Alt, and PRCAA/UTCAA plus ERSIA/RESIA handshakes.
+Console buttons remain mouse-operated and no longer consume keypad1-7.
+Windows/Command is REPEAT; the nine agreed chords select dedicated P6066 keys
+and suppress repeat and their ordinary host-key action. Press prefix first.
+Both Shift and Control variants are accepted. Caps Lock is unassigned.
+
+Inputs are sampled per nominal TM601 full scan (1ms, fig.6); host inputs are
+already debounced. Analog capacitive detection, internal multi-scan validation
+and subscan DAMAN/STOBO phases are not modeled. Repeat is nominal70ms for
+TM601, not the later TC601's18Hz. Simultaneous new keys report error; rollover
+after validation is allowed, and an unacknowledged previous code causes an
+overrun error. Hardware state is save-registered. Source table has some faded
+and inconsistent digits (notably F-key labels); sequential F1-F16 values follow
+the paired X0-X15 control-code rows. Physical encoder ROM recovery would give
+stronger verification of those table entries.
+
+`test_keyboard.py` executes production scan/emit callbacks, including all nine
+host-prefix mappings and normal/shift/control, repeat, overrun and TASB.
+Original ESE validation now clears ERROR187 using Shift+Insert and accepts
+letters through the keyboard interrupt/acknowledgement path. The early attempt
+exposed two older GOINO transcription errors: BASIC/normal type encodings and
+the keyboard versus printer input-mux selection. Runtime dispatch cross-checks
+are recorded in the parent project's keyboard implementation notes. The
+specialization PROM is still unsupported; printer/decimal input1 now has an
+explicitly user-approved zero-status stub, not a claim about physical wiring.
+
+### P6066 indicator labels and outstanding driver correction
+
+P6066 Manuale Generale, printed pp.1-13/1-14 (PDF27/28), identifies
+the four indicators top-to-bottom as RUNNING, LINE OVERFLOW, DEG GRAD,
+ON LINE. RUNNING is steady while waiting for keyboard input and blinks during
+operations or certain syntax errors. The layout now uses those names.
+
+The all-dark boot state was caused by discarded COM1 lamp transfers. Internal
+level-3 service asserts no external ECC grant; GOINO fig.1.2 and printed p.12
+base selection suppression on external acknowledgements. The channel adapter
+now retains direct selection during internal service, while external interrupts
+still route through their owner. An independent COM1/CPU/bus test checks this.
+Live 066/068: after Shift+CLEAR, lamp word 0080; NO PRINT toggles it to 8080
+and back to 0080. The original active-low button code is retained.
+
+Remaining limitation: RUNNING blink control is not yet implemented. GOINO p.11
+(PDF15) says it is steady or intermittent, never permanently off. CONDY
+pp.14/15 (PDF58/59), figs.17/18, assigns 4 Hz modulation to LER1N, whereas the
+P6066 panel places RUNNING first. Resolve the revision and driver mapping
+before claiming full lamp behavior. Steady keyboard-wait RUNNING is verified.
+
+Calculator lamp: the layout uses raw bit9 (LAMX2), matching the observed
+0280 output on calculator-mode entry. The earlier bit8 binding left its
+lamp dark despite successful mode changes. This mapping is corroborated
+by firmware output and interactive operation; board pin mapping remains
+qualified pending the P6066 schematic.
+
+The functional panel omits the emulator-only CPU RUNNING/STOPPED text and
+its diagnostic LED. CPU stop state remains available to the debugger and
+automated diagnostics; it is not an original P6066 console feature.

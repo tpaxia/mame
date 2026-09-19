@@ -138,6 +138,10 @@ struct puce_state
 		return true;
 	}
 
+	// Internal level-3 service does not assert an external ECC grant. The
+	// channel remains directly selected; external levels 1/2 retain priority.
+	unsigned external_channel_level() const { return level == 3 && internal_name ? 4 : level; }
+
 	// Read-only external buses, in logical CPU bit polarity. No ECOT strobe.
 	bool execute_input(std::uint16_t op, std::uint16_t name_type, std::uint8_t data)
 	{

@@ -36,6 +36,7 @@ using u16=unsigned short; using u32=unsigned; using offs_t=unsigned;
 template<typename... T> void fatalerror(const char *,T...){throw std::runtime_error("unsupported");}
 template<typename... T> void logerror(const char *,T...){}
 struct p6066_goino_device {
+ void keyboard_command(unsigned, u16) {}
  p6066_goino_state m_state;
  struct machine_stub {const char *describe_context(){return "fixture";}};
  machine_stub machine(){return {};}
@@ -81,7 +82,7 @@ int main(){
     io port{bus};
     const unsigned command=(word>>8)&15;
     // Current supported command inventory, not a claim that others are absent in HW.
-    const bool supported=command==0||(command>=4&&command<=9)||command==11||command==12||command==13||command==14;
+    const bool supported=command!=10; // VPIPN remains unimplemented; printer motion is a deliberate no-op.
     bool failed=false;
     try {assert(cpu.execute_channel(opcode,port));}catch(const std::runtime_error &){failed=true;}
     assert(failed==(selected&&!supported));
@@ -118,6 +119,21 @@ int main(){
  assert(bus.card.m_state.display_ready && bus.card.m_state.display_position==0);
  assert(bus.card.m_state.display_strobes==224);
  for(unsigned i=0;i<224;++i)assert(bus.card.m_state.display[i]==i);
+ // Printer motion is deliberately unsupported: accept all four documented
+ // commands through the CPU/bus callbacks without display/lamp/IRQ effects.
+ const auto irq_before=bus.card.m_state.irq_requests();
+ const auto lamps_value=bus.card.m_state.lamps;
+ for(unsigned upper=0;upper<16;++upper)
+  for(unsigned code:{1U,2U,3U,15U})
+   for(unsigned low=0;low<256;++low){
+    cpu.l[2]=(upper<<12)|(code<<8)|low;
+    assert(cpu.execute_channel(0xfc20,port));
+    assert(bus.card.m_state.irq_requests()==irq_before);
+    assert(!bus.card.m_state.matrix_request && !bus.card.m_state.column_request);
+    assert(bus.card.m_state.lamps==lamps_value);
+    assert(bus.card.m_state.lamp_strobes==lamps_before);
+    assert(bus.card.m_state.display_strobes==224 && bus.card.m_state.display_ready);
+   }
  // Actual board callback retains validation of unspecified ECD lanes.
  bool rejected=false;
  try{bus.card.command_word(4,0x4001,0x00ff);}catch(const std::runtime_error &){rejected=true;}

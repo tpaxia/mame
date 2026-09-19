@@ -9,6 +9,7 @@ p6066_goino_device::p6066_goino_device(const machine_config &mconfig, const char
 	: device_t(mconfig, P6066_GOINO, tag, owner, clock)
 	, device_p6066_card_interface(mconfig, *this)
 	, m_buttons(*this, "BUTTONS")
+	, m_keyboard(*this, "keyboard")
 	, m_auxiliary_input_cb(*this, 0)
 	, m_lamps(*this, "console_lamp%u", 0U)
 	, m_selected(*this, "console_selected")
@@ -23,20 +24,34 @@ p6066_goino_device::p6066_goino_device(const machine_config &mconfig, const char
 
 static INPUT_PORTS_START(goino)
 	PORT_START("BUTTONS")
-	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_NAME("Down arrow") PORT_CODE(KEYCODE_DOWN) PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
-	PORT_BIT(0x02, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_NAME("Calculator mode") PORT_CODE(KEYCODE_1_PAD) PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
-	PORT_BIT(0x04, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_NAME("Break") PORT_CODE(KEYCODE_2_PAD) PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
-	PORT_BIT(0x08, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_NAME("Continue") PORT_CODE(KEYCODE_3_PAD) PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
-	PORT_BIT(0x10, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_NAME("Trace") PORT_CODE(KEYCODE_4_PAD) PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
-	PORT_BIT(0x20, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_NAME("Step") PORT_CODE(KEYCODE_5_PAD) PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
-	PORT_BIT(0x40, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_NAME("Print all") PORT_CODE(KEYCODE_6_PAD) PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
-	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_NAME("No print") PORT_CODE(KEYCODE_7_PAD) PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
-	PORT_START("MODE")
-	PORT_BIT(1, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_NAME("Keyboard mode") PORT_CODE(KEYCODE_CAPSLOCK) PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::mode_changed), 0)
+	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Down arrow (TASB)") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
+	PORT_BIT(0x02, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Calculator mode") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
+	PORT_BIT(0x04, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Break") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
+	PORT_BIT(0x08, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Continue") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
+	PORT_BIT(0x10, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Trace") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
+	PORT_BIT(0x20, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Step") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
+	PORT_BIT(0x40, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Print all") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
+	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("No print") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_goino_device::buttons_changed), 0)
 INPUT_PORTS_END
 ioport_constructor p6066_goino_device::device_input_ports() const { return INPUT_PORTS_NAME(goino); }
-INPUT_CHANGED_MEMBER(p6066_goino_device::buttons_changed) { m_state.buttons_w(m_buttons->read()); }
-INPUT_CHANGED_MEMBER(p6066_goino_device::mode_changed) { if (newval && !oldval) m_state.basic_mode = !m_state.basic_mode; }
+INPUT_CHANGED_MEMBER(p6066_goino_device::buttons_changed) { m_state.buttons_w(m_buttons->read() | (m_keyboard_down ? 1 : 0)); }
+void p6066_goino_device::device_add_mconfig(machine_config &config)
+{
+ P6066_KEYBOARD(config,m_keyboard);
+ m_keyboard->data_cb().set([this](u16 data) { m_state.keyboard_code=data; });
+ m_keyboard->ready_cb().set([this](int state) { m_state.keyboard_request=bool(state); });
+ m_keyboard->error_cb().set([this](int state) { m_state.double_key_request=bool(state); });
+ m_keyboard->down_cb().set([this](int state) { m_keyboard_down=bool(state); m_state.buttons_w(m_buttons->read() | (state?1:0)); });
+ m_keyboard->mode_cb().set([this](int state) { if(state && !m_mode_down) m_state.basic_mode=!m_state.basic_mode; m_mode_down=bool(state); });
+}
+void p6066_goino_device::keyboard_command(unsigned level, u16 data)
+{
+ if (!m_state.enabled(level)) return;
+ switch ((data>>8)&15) {
+ case 7: m_keyboard->acknowledge(); break; // UTCAN
+ case 9: m_keyboard->reset_error(); break; // RESIN
+ }
+}
 TIMER_CALLBACK_MEMBER(p6066_goino_device::timer_tick) { m_state.timer_tick(); }
 void p6066_goino_device::irq_ack(unsigned source)
 {
@@ -46,6 +61,8 @@ void p6066_goino_device::irq_ack(unsigned source)
 void p6066_goino_device::device_start()
 {
 	m_timer = timer_alloc(FUNC(p6066_goino_device::timer_tick), this);
+	save_item(NAME(m_keyboard_down));
+	save_item(NAME(m_mode_down));
 	save_item(NAME(m_state.selected));
 	save_item(NAME(m_state.matrix_request));
 	save_item(NAME(m_state.column_request));
@@ -86,6 +103,7 @@ void p6066_goino_device::device_reset()
 {
 	// Deterministic development reset; physical latch reset coverage unverified.
 	m_state = p6066_goino_state{};
+	m_keyboard_down = m_mode_down = false;
 	// Nominal timer period specified in GOINO printed pp.11,15. The
 	// oscillator is free-running; TIMEN/FTIMN gate events, not its phase.
 	m_timer->adjust(attotime::from_usec(6300), 0, attotime::from_usec(6300));
@@ -117,13 +135,18 @@ u8 p6066_goino_device::input_data_r(offs_t level)
 	switch (m_state.input_select)
 	{
 	case 0: return m_state.button_code();
-	case 1: return m_state.key_data();
+	case 2: return m_state.key_data();
+	case 1:
+		// Explicit user-approved printer/decimal-status stub. This zero byte is
+		// an inert emulation policy, NOT recovered DISL006 wiring or proof of
+		// printer presence/readiness. Printer mechanics remain out of scope.
+		if (m_auxiliary_input_cb.isunset()) return 0;
+		return m_auxiliary_input_cb(1);
 	default:
-		// Fig.1.2 assigns selector 2 to printer/decimal-wheel status and
-		// selector 3 to the specialization PROM. Their source data must be
-		// supplied by verified wiring/dump, not a fabricated ready byte.
+		// Fig.1.2: selector 3 is the specialization PROM, not covered by
+		// the printer-status stub. It still requires a verified dump.
 		if (m_auxiliary_input_cb.isunset())
-			fatalerror("GOINO input %u requires printer/decimal wiring or specialization PROM", m_state.input_select);
+			fatalerror("GOINO input %u requires specialization PROM", m_state.input_select);
 		return m_auxiliary_input_cb(m_state.input_select);
 	}
 }
@@ -143,6 +166,7 @@ void p6066_goino_device::data_w(offs_t level, u16 data, u16 mask)
 		logerror("GOINO display strobe=%u column=%u data=%02X known=%02X ECD=%04X level=%u (%s)\n",
 			m_state.display_strobes, (m_state.display_position + 223) % 224,
 			data & 0xff, mask & 0xff, data, unsigned(level), machine().describe_context());
+	keyboard_command(level, data);
 	update_outputs();
 }
 

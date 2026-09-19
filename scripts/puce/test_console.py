@@ -36,7 +36,7 @@ int main()
     for (unsigned i = 0; i != 256; ++i) assert(c.data(0x40ff, 4));
     assert(c.lamps == 0xffff && c.lamp_bits == 0 && c.lamp_strobes == 512);
     assert(c.data(0, 4));
-    assert(!c.data(0x0100, 4)); // no invented printer success
+    assert(c.data(0x0100, 4)); // explicitly requested printer no-op
     assert(c.lamps == 0xffff && c.lamp_strobes == 512);
     // Two preparation bytes never appear as visible columns.
     assert(c.data(0x20ff, 4)); assert(c.data(0x20ff, 4));
@@ -79,7 +79,7 @@ int main()
         // Timer enable exists; PIPPO and printer motion still have no producers.
         assert(!q.data(prefix | 0x0a00, 4));
         assert(q.data(prefix | 0x0c00, 4) && q.timer_enabled);
-        assert(!q.data(prefix | 0x0100, 4));
+        assert(q.data(prefix | 0x0100, 4));
     }
     std::cout << "PASS: selection gating, serial lamp order/framing, CAROM lamp stream, display framing, four-bit command decode, reset latches and unsupported event producers\n";
 }

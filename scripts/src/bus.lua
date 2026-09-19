@@ -6622,6 +6622,8 @@ if BUSES["P6066"] then
         MAME_DIR .. "src/devices/bus/p6066/memory.h",
         MAME_DIR .. "src/devices/bus/p6066/goino.cpp",
         MAME_DIR .. "src/devices/bus/p6066/goino.h",
+        MAME_DIR .. "src/devices/bus/p6066/keyboard.cpp",
+        MAME_DIR .. "src/devices/bus/p6066/keyboard.h",
         MAME_DIR .. "src/devices/bus/p6066/goino_state.h",
     }
 end

@@ -36,6 +36,8 @@ struct device_p6066_card_interface {
  virtual void strobe(unsigned){}
 };
 struct p6066_goino_device:device_p6066_card_interface {
+ bool m_keyboard_down=false,m_mode_down=false;
+ void keyboard_command(unsigned, u16) {}
  p6066_goino_state m_state;
  struct machine_stub {const char *describe_context(){return "fixture";}};
  machine_stub machine(){return {};}
@@ -92,11 +94,11 @@ struct cpu_fixture {
   cpu_fixture &c;
   unsigned read_word(unsigned){return 0;}unsigned read_byte(unsigned){return 0;}
   void write_word(unsigned,unsigned){}void write_byte(unsigned,unsigned){}
-  unsigned name_type(){return c.bus.name_type_r(c.m_core.level);}
-  unsigned input(){return c.bus.input_data_r(c.m_core.level);}
-  void output(unsigned v,unsigned mask){c.bus.data_w(c.m_core.level,v,mask);}
-  void command(unsigned v,unsigned mask){c.bus.command_w(c.m_core.level,v,mask);}
-  void select(unsigned){}void strobe(){c.bus.strobe_w(c.m_core.level);}
+  unsigned name_type(){return c.bus.name_type_r(c.m_core.external_channel_level());}
+  unsigned input(){return c.bus.input_data_r(c.m_core.external_channel_level());}
+  void output(unsigned v,unsigned mask){c.bus.data_w(c.m_core.external_channel_level(),v,mask);}
+  void command(unsigned v,unsigned mask){c.bus.command_w(c.m_core.external_channel_level(),v,mask);}
+  void select(unsigned){}void strobe(){c.bus.strobe_w(c.m_core.external_channel_level());}
   void control(unsigned){}void console_control(unsigned){}void console_output(unsigned){}
   unsigned console_input(unsigned){return 0;}bool ecof(){return false;}
  };
@@ -127,11 +129,18 @@ int main(){
  assert(c.m_core.level==4 && g.m_state.synchronized3==4 && c.sync.back()==14);
  c.instruction(0xbd20);c.instruction(0xc900);assert(c.m_core.level==3);
  c.command(0x0800);c.instruction(0xbd00);c.command(0x0d00);
+ // Internal COM1 has no external ECC acknowledge: direct selection persists.
+ c.instruction(0xbd10);c.instruction(0xc900);
+ assert(c.m_core.level==3 && c.m_core.internal_name==2 && c.bus.m_irq.owners[3]<0);
+ c.instruction(0xaab0);assert((c.m_core.l[11]&255)==2);
+ for(int i=15;i>=0;--i)c.command(0x4000|((0x8421>>i)&1));
+ assert(g.m_state.lamps==0x8421);
+ c.instruction(0xbd00);assert(c.m_core.level==4);
  // Keyboard: async ready -> ECM3 -> grant -> DEA -> RECAN -> COM0.
  g.m_state.keyboard_code=0x165;g.m_state.keyboard_request=true;
  c.instruction(0xc900);assert(c.m_core.level==3);
- c.instruction(0xaab0);assert(c.m_core.l[11]==0x3000);
- c.m_core.l[2]=0x1000;c.instruction(0xfb28);assert(c.m_core.a(2)==0x65);
+ c.instruction(0xaab0);assert(c.m_core.l[11]==0x6000);
+ c.m_core.l[2]=0x2000;c.instruction(0xfb28);assert(c.m_core.a(2)==0x65);
  c.command(0x0700);assert(g.m_state.synchronized3==2);c.instruction(0xbd00);
  assert(c.m_core.level==4&&!g.irq_requests());
  // Button selection, read after RECON and lamp output at owned level 3.
@@ -146,8 +155,9 @@ int main(){
  c.m_core.l[2]=0x55;c.instruction(0xfc20);assert(g.m_state.printer_column==0x55);
  c.instruction(0xbd00);assert(c.m_core.level==3&&!g.m_state.owned2&&g.m_state.owned3);
  c.command(0x0800);c.instruction(0xbd00);assert(c.m_core.level==4);
- // Unwired auxiliary sources remain explicit, rather than "printer ready".
- bool stopped=false;g.m_state.input_select=2;
+ // Explicit printer-status stub; specialization PROM remains unsupported.
+ g.m_state.input_select=1;assert(g.input_data_r(4)==0);
+ bool stopped=false;g.m_state.input_select=3;
  try{g.input_data_r(4);}catch(const std::runtime_error&){stopped=true;}assert(stopped);
  std::puts("PASS: production CPU/bus/GOINO timer, masks, type, keyboard, buttons, lamp output and nested level-2/3 service");
 }

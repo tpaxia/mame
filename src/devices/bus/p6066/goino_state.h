@@ -56,8 +56,9 @@ struct p6066_goino_state
 	}
 	unsigned type() const
 	{
-		// Physical EPT6N..4N rows: 111,011,101,001,110,010,100.
-		constexpr unsigned logical[] = {0x00,0x40,0x20,0x60,0x10,0x50,0x30};
+		// Priority encoder inputs 0..6 map to logical EPT4..6 values 0..6.
+		// Fig.1.2 bit-order ambiguity is cross-checked with all firmware dispatches.
+		constexpr unsigned logical[] = {0x00,0x10,0x20,0x30,0x40,0x50,0x60};
 		const unsigned inputs = (synchronized3 & ~2U)
 			| ((synchronized3 & 2) ? (basic_mode ? 64 : 2) : 0);
 		for (int i = 6; i >= 0; --i) if (inputs & (1U << i)) return logical[i];
@@ -73,7 +74,8 @@ struct p6066_goino_state
 	unsigned button_code() const
 	{
 		// Fig.1.6: TASB, calculator, break, continue, trace, step,
-		// print all, no print. No pressed input => physical 111.
+		// print all, no print. Fig.1.6 gives active-low CON0N..2N;
+		// convert their electrical code to logical CPU input polarity.
 		for (unsigned i = 0; i < 8; ++i) if (buttons & (1U << i)) return 7-i;
 		return 0;
 	}
@@ -99,6 +101,13 @@ struct p6066_goino_state
 		switch (code)
 		{
 		case 0x0: break; // NOPPO
+		// Fig.1.3: printer mechanics are intentionally outside this machine's
+		// emulation scope. Accept their commands without motion or completion IRQs.
+		case 0x1: // VIASN: start printing
+		case 0x2: // FAINN: start line feed
+		case 0x3: // FINTN: end line feed
+		case 0xf: // FISTN: end printing
+			break;
 		case 0x4: matrix_request = false; break; // REMAN: FIT20
 		case 0x5: column_request = button_request = false; break; // RECON
 		case 0x6: pippo_request = false; break; // REPIN
@@ -109,7 +118,7 @@ struct p6066_goino_state
 		case 0xb: pippo_enabled = false; break; // FPIPN: DIRTO
 		case 0xd: timer_enabled = false; break; // FTIMN: VTIMO
 		case 0xe: interrupts_blocked = false; break; // SASPN: ASPEO
-		default: return false; // printer motion and PIPPO start still absent
+		default: return false; // PIPPO start still absent
 		}
 		commands_seen |= 1U << code;
 		return true;

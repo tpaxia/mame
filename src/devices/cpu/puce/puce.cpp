@@ -118,17 +118,25 @@ std::unique_ptr<util::disasm_interface> puce_device::create_disassembler()
 struct puce_device::channel_adapter
 {
 	puce_device &cpu;
+	// GOINO fig.1.2 / printed p.12: SETTO masks direct selection from
+	// external ECC10/ECC20/ECCA0/ECCB0 acknowledgements. Internal COM1/INV
+	// uses L1 without asserting those pins, so the external channel retains
+	// direct selection. Nested external levels 1/2 still use their owner.
+	unsigned channel_level() const
+	{
+		return cpu.m_core.external_channel_level();
+	}
 	u16 read_word(u16 address) { return cpu.m_program.read_word(address); }
 	void write_word(u16 address, u16 value) { cpu.m_program.write_word(address, value); }
 	u8 read_byte(u16 address) { return cpu.m_program.read_word(address >> 1, puce_state::byte_mask(address)) >> puce_state::byte_shift(address); }
 	void write_byte(u16 address, u8 value) { cpu.m_program.write_word(address >> 1, u16(value) << puce_state::byte_shift(address), puce_state::byte_mask(address)); }
-	u16 name_type() { return cpu.m_name_type_cb(cpu.m_core.level); }
-	u8 input() { return cpu.m_input_data_cb(cpu.m_core.level); }
-	void output(u16 value, u16 mask) { cpu.m_data_cb(cpu.m_core.level, value, mask); }
-	void command(u16 value, u16 mask) { cpu.m_command_cb(cpu.m_core.level, value, mask); }
+	u16 name_type() { return cpu.m_name_type_cb(channel_level()); }
+	u8 input() { return cpu.m_input_data_cb(channel_level()); }
+	void output(u16 value, u16 mask) { cpu.m_data_cb(channel_level(), value, mask); }
+	void command(u16 value, u16 mask) { cpu.m_command_cb(channel_level(), value, mask); }
 	void select(u8 value) { cpu.m_select_cb(value); }
-	void strobe() { cpu.m_strobe_cb(cpu.m_core.level); }
-	void control(u8 value) { cpu.m_control_cb(cpu.m_core.level, value); }
+	void strobe() { cpu.m_strobe_cb(channel_level()); }
+	void control(u8 value) { cpu.m_control_cb(channel_level(), value); }
 	void console_output(u16 value) { cpu.m_service_console_cb(value); }
 	u8 console_input(u8 selector)
 	{

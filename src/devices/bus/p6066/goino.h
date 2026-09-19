@@ -4,6 +4,7 @@
 #define MAME_MACHINE_P6066_GOINO_H
 #pragma once
 #include "goino_state.h"
+#include "keyboard.h"
 #include "p6066.h"
 #include "screen.h"
 
@@ -47,11 +48,11 @@ public:
 	void keyboard_w(u16 code, bool ready) { m_state.keyboard_code = code & 0x1ff; m_state.keyboard_request = ready; }
 	void keyboard_error_w(int asserted) { m_state.double_key_request = asserted; }
 	DECLARE_INPUT_CHANGED_MEMBER(buttons_changed);
-	DECLARE_INPUT_CHANGED_MEMBER(mode_changed);
 	auto auxiliary_input_cb() { return m_auxiliary_input_cb.bind(); }
 
 	u32 screen_update(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect);
 protected:
+	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
 	virtual ioport_constructor device_input_ports() const override;
@@ -60,6 +61,9 @@ private:
 	TIMER_CALLBACK_MEMBER(timer_tick);
 	emu_timer *m_timer = nullptr;
 	required_ioport m_buttons;
+	required_device<p6066_keyboard_device> m_keyboard;
+	bool m_keyboard_down = false, m_mode_down = false;
+	void keyboard_command(unsigned level, u16 data);
 	devcb_read8 m_auxiliary_input_cb;
 	p6066_goino_state m_state;
 	output_finder<16> m_lamps;

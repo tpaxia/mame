@@ -15,7 +15,7 @@ int main(){
  // Separate source table from encoder implementation: priority order follows
  // Fig.1.2 top priority BASIC,error,PIPPO,buttons,timer,normal,printer.
  const unsigned priority[]={64,32,16,8,4,2,1};
- const unsigned type[]={0x30,0x50,0x10,0x60,0x20,0x40,0};
+ const unsigned type[]={0x60,0x50,0x40,0x30,0x20,0x10,0};
  // The two keyboard modes cannot be pending together.
  for(unsigned sources=0;sources<128;++sources){
   if((sources&66)==66)continue;
@@ -38,8 +38,10 @@ int main(){
  }
  for(unsigned mask=0;mask<256;++mask){
   p6066_goino_state s;s.buttons_w(mask);
+  // GOINO fig.1.6 columns CON0N, CON1N, CON2N, transcribed LSB first.
+  static constexpr unsigned code[]={0b000,0b001,0b010,0b011,0b100,0b101,0b110,0b111};
   unsigned expected=0;
-  for(unsigned bit=0;bit<8;++bit)if(mask&(1<<bit)){expected=7-bit;break;}
+  for(unsigned bit=0;bit<8;++bit)if(mask&(1<<bit)){expected=(~code[bit])&7;break;}
   assert(s.button_code()==expected && s.button_request==bool(mask));
   s.command(5);assert(!s.button_request);s.buttons_w(mask);assert(!s.button_request);
   s.buttons_w(0);s.buttons_w(mask);assert(s.button_request==bool(mask));++checks;
@@ -54,9 +56,9 @@ int main(){
   assert(s.key_data()==result);++checks;
  }
  p6066_goino_state mode;
- mode.keyboard_request=true;mode.synchronize(8);assert(mode.type()==0x30);
- mode.basic_mode=false;assert(mode.type()==0x40); // ARDIO routes the same MODE0 latch
- mode.basic_mode=true;assert(mode.type()==0x30);
+ mode.keyboard_request=true;mode.synchronize(8);assert(mode.type()==0x60);
+ mode.basic_mode=false;assert(mode.type()==0x10); // ARDIO routes the same MODE0 latch
+ mode.basic_mode=true;assert(mode.type()==0x60);
  p6066_goino_state s;s.select(0);s.command(12);s.timer_tick();
  assert(s.timer_request && !s.irq_requests());s.synchronize(8);
  assert(!s.irq_requests());s.command(14);assert(s.irq_requests()==4);
