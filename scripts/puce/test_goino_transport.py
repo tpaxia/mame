@@ -48,6 +48,7 @@ source += method(header,'virtual void command_word(')+'\n};\n'
 source += method('src/devices/bus/p6066/goino.cpp','void p6066_goino_device::data_w(')+'\n'
 source += r'''
 struct p6066_bus_device {
+ void trace_io(const char *,unsigned,u16,u16,p6066_goino_device *) {} // diagnostic observer only
  p6066_goino_device card;
  p6066_goino_device *channel_card(unsigned level) {
   return level==4 && card.m_state.selected ? &card : nullptr;
@@ -82,7 +83,7 @@ int main(){
     io port{bus};
     const unsigned command=(word>>8)&15;
     // Current supported command inventory, not a claim that others are absent in HW.
-    const bool supported=command!=10; // VPIPN remains unimplemented; printer motion is a deliberate no-op.
+    const bool supported=command!=10; // VPIPN remains unimplemented; printer mechanics are replaced by a discard-output handshake.
     bool failed=false;
     try {assert(cpu.execute_channel(opcode,port));}catch(const std::runtime_error &){failed=true;}
     assert(failed==(selected&&!supported));
@@ -119,8 +120,8 @@ int main(){
  assert(bus.card.m_state.display_ready && bus.card.m_state.display_position==0);
  assert(bus.card.m_state.display_strobes==224);
  for(unsigned i=0;i<224;++i)assert(bus.card.m_state.display[i]==i);
- // Printer motion is deliberately unsupported: accept all four documented
- // commands through the CPU/bus callbacks without display/lamp/IRQ effects.
+ // Printer commands arm the discard-output handshake. Requests are timed;
+ // command delivery itself must not alter display/lamps or synchronous IRQs.
  const auto irq_before=bus.card.m_state.irq_requests();
  const auto lamps_value=bus.card.m_state.lamps;
  for(unsigned upper=0;upper<16;++upper)

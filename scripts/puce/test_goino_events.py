@@ -12,6 +12,35 @@ SOURCE=r'''
 #include <cstdio>
 int main(){
  unsigned checks=0;
+ // Discard-output printer: one line, three leading blanks, two matrices,
+ // then ten feed events. Real synchronization/ownership and command paths.
+ {
+  p6066_goino_state p;p.select(0);p.data(0x0e00,4);p.data(0x0100,4);
+  auto column=[&](){
+   p.printer_tick();assert(p.column_request);p.synchronize(4);
+   assert(p.acknowledge(1));p.printer_tick();assert(p.column_request);
+   p.data(0x55,2,0xff);p.synchronize(4);p.end(2);
+  };
+  for(unsigned n=0;n<3;++n)column();
+  for(unsigned matrix=0;matrix<2;++matrix){
+   p.printer_tick();assert(p.matrix_request);p.synchronize(8);
+   assert(p.acknowledge(2));assert(p.type()==0);
+   p.data(0xf400,3);p.synchronize(8);p.end(3);
+   for(unsigned n=0;n<7;++n)column();
+  }
+  p.printer_tick();p.synchronize(8);assert(p.acknowledge(2));
+  p.data(0xf400,3);p.data(0xff00,3);p.data(0xf200,3);
+  p.synchronize(8);p.end(3);
+  for(unsigned n=0;n<10;++n){
+   p.printer_tick();assert(p.matrix_request && !p.column_request);
+   p.synchronize(8);assert(p.acknowledge(2));p.data(0xf400,3);
+   if(n==9)p.data(0xf300,3);
+   p.synchronize(8);p.end(3);
+  }
+  for(unsigned n=0;n<100;++n){p.printer_tick();p.synchronize(12);assert(!p.irq_requests());}
+  assert(p.printer_columns_discarded==17 && p.printer_feed_events==10);
+ }
+
  // Separate source table from encoder implementation: priority order follows
  // Fig.1.2 top priority BASIC,error,PIPPO,buttons,timer,normal,printer.
  const unsigned priority[]={64,32,16,8,4,2,1};

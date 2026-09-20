@@ -10,6 +10,22 @@
 struct p6066_goino_state
 {
 	bool selected = false;
+	// Discard-output printer: handshake only, no paper/mechanical model.
+	bool printer_running = false, printer_feeding = false, printer_completion = false;
+	unsigned printer_columns_left = 0;
+	std::uint32_t printer_columns_discarded = 0, printer_feed_events = 0;
+	void printer_tick()
+	{
+		// Allow each request to be acknowledged and cleared before another.
+		if (column_request || matrix_request || synchronized2 || (synchronized3 & 1) || owned2 || owned3) return;
+		if (printer_feeding) { matrix_request = true; ++printer_feed_events; }
+		else if (printer_completion) matrix_request = true;
+		else if (printer_running)
+		{
+			if (printer_columns_left) column_request = true;
+			else matrix_request = true;
+		}
+	}
 	// Asynchronous request latches and controls reset by the documented commands.
 	// ECM samples source latches; acknowledgement does not clear them.
 	bool matrix_request = false, column_request = false, button_request = false;
@@ -101,14 +117,18 @@ struct p6066_goino_state
 		switch (code)
 		{
 		case 0x0: break; // NOPPO
-		// Fig.1.3: printer mechanics are intentionally outside this machine's
-		// emulation scope. Accept their commands without motion or completion IRQs.
-		case 0x1: // VIASN: start printing
-		case 0x2: // FAINN: start line feed
-		case 0x3: // FINTN: end line feed
-		case 0xf: // FISTN: end printing
+		case 0x1: // VIASN: start printing; fewer than seven initial blank columns.
+			printer_running = true;
+			printer_columns_left = 3;
 			break;
-		case 0x4: matrix_request = false; break; // REMAN: FIT20
+		case 0x2: printer_feeding = true; break; // FAINN
+		case 0x3: printer_feeding = false; break; // FINTN
+		case 0xf: printer_running = false; printer_completion = true; break; // FISTN
+		case 0x4: // REMAN acknowledges matrix or line-feed event.
+			matrix_request = false;
+			printer_completion = false;
+			if (printer_running && !printer_feeding) printer_columns_left = 7;
+			break;
 		case 0x5: column_request = button_request = false; break; // RECON
 		case 0x6: pippo_request = false; break; // REPIN
 		case 0x7: keyboard_request = false; break; // RECAN / UTCAN
@@ -142,6 +162,8 @@ struct p6066_goino_state
 		if (level == 2 && owned2)
 		{
 			printer_column = value & 0x7f;
+			if (printer_columns_left) --printer_columns_left;
+			++printer_columns_discarded;
 			column_request = false;
 			return true;
 		}

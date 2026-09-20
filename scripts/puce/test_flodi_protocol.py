@@ -103,6 +103,8 @@ source+='void p6066_flodi_device::trace_event(const char *,unsigned){}\n'
 source+='void p6066_flodi_device::load_track(){++captures;}\nvoid p6066_flodi_device::next_id(){++searches;}\n'
 source+=r'''
 struct p6066_bus_device {
+ bool m_trace_io=false;u8 m_trace_selection=0;
+ void trace_io(const char *,unsigned,u16,u16,device_p6066_card_interface *) {} // diagnostic observer only
  std::array<device_p6066_card_interface*,16> m_cards{};p6066_irq_arbiter m_irq;
  device_p6066_card_interface*channel_card(unsigned);void refresh_requests();
  void interrupt_sync_w(u8);u8 irq_r(offs_t);void irq_ack_w(u8);void irq_end_w(u8);

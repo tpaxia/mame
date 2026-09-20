@@ -82,6 +82,10 @@ private:
 	u32 m_floppy_selects = 0;
 	output_finder<> m_floppy_select_output;
 	void update_outputs();
+	// Optional diagnostic observer; never supplies or changes a bus response.
+	bool m_trace_io = false;
+	u8 m_trace_selection = 0;
+	void trace_io(const char *operation, unsigned level, u16 data, u16 mask, device_p6066_card_interface *card);
 };
 
 class p6066_slot_device : public device_t, public device_single_card_slot_interface<device_p6066_card_interface>

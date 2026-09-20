@@ -64,6 +64,7 @@ for sig in ('void p6066_goino_device::device_reset()', 'void p6066_goino_device:
 source+=method('src/devices/bus/p6066/goino.cpp','TIMER_CALLBACK_MEMBER(p6066_goino_device::timer_tick)','void p6066_goino_device::tick()')+'\n'
 source+=r'''
 struct p6066_bus_device {
+ void trace_io(const char *,unsigned,u16,u16,device_p6066_card_interface *) {} // diagnostic observer only
  std::array<device_p6066_card_interface*,16> m_cards{};p6066_irq_arbiter m_irq;
  device_p6066_card_interface*channel_card(unsigned);void refresh_requests();
  void interrupt_sync_w(u8);u8 irq_r(offs_t);void irq_ack_w(u8);void irq_end_w(u8);
@@ -155,7 +156,29 @@ int main(){
  c.m_core.l[2]=0x55;c.instruction(0xfc20);assert(g.m_state.printer_column==0x55);
  c.instruction(0xbd00);assert(c.m_core.level==3&&!g.m_state.owned2&&g.m_state.owned3);
  c.command(0x0800);c.instruction(0xbd00);assert(c.m_core.level==4);
- // Explicit printer-status stub; specialization PROM remains unsupported.
+ // Discard printer traverses real CPU arbitration and board callbacks.
+ c.command(0xff00);g.m_state.printer_tick();c.instruction(0xc900);
+ assert(c.m_core.level==3 && g.m_state.owned3);
+ assert(g.input_data_r(3)==0); // incidental PROM-mux read in printer prologue
+ c.command(0xf400);c.command(0xf100);c.instruction(0xbd00);
+ for(unsigned n=0;n<3;++n){
+  g.m_state.printer_tick();c.instruction(0xc900);assert(c.m_core.level==2);
+  c.m_core.l[2]=n;c.instruction(0xfc20);c.instruction(0xbd00);
+ }
+ g.m_state.printer_tick();c.instruction(0xc900);assert(c.m_core.level==3);
+ c.command(0xf400);c.instruction(0xbd00);
+ for(unsigned n=0;n<7;++n){
+  g.m_state.printer_tick();c.instruction(0xc900);assert(c.m_core.level==2);
+  c.m_core.l[2]=0x7f-n;c.instruction(0xfc20);c.instruction(0xbd00);
+ }
+ c.command(0xff00);c.command(0xf200);
+ for(unsigned n=0;n<10;++n){
+  g.m_state.printer_tick();c.instruction(0xc900);assert(c.m_core.level==3);
+  c.command(0xf400);if(n==9)c.command(0xf300);c.instruction(0xbd00);
+ }
+ assert(g.m_state.printer_columns_discarded==11); // includes earlier nested test
+ g.m_state.printer_tick();assert(!g.irq_requests());
+ // Explicit printer-status stub; deliberate specialization PROM remains unsupported.
  g.m_state.input_select=1;assert(g.input_data_r(4)==0);
  bool stopped=false;g.m_state.input_select=3;
  try{g.input_data_r(4);}catch(const std::runtime_error&){stopped=true;}assert(stopped);

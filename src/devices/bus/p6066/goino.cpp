@@ -52,7 +52,7 @@ void p6066_goino_device::keyboard_command(unsigned level, u16 data)
  case 9: m_keyboard->reset_error(); break; // RESIN
  }
 }
-TIMER_CALLBACK_MEMBER(p6066_goino_device::timer_tick) { m_state.timer_tick(); }
+TIMER_CALLBACK_MEMBER(p6066_goino_device::timer_tick) { m_state.timer_tick(); m_state.printer_tick(); }
 void p6066_goino_device::irq_ack(unsigned source)
 {
 	if (!m_state.acknowledge(source)) fatalerror("GOINO interrupt acknowledgement without request");
@@ -64,6 +64,12 @@ void p6066_goino_device::device_start()
 	save_item(NAME(m_keyboard_down));
 	save_item(NAME(m_mode_down));
 	save_item(NAME(m_state.selected));
+	save_item(NAME(m_state.printer_running));
+	save_item(NAME(m_state.printer_feeding));
+	save_item(NAME(m_state.printer_completion));
+	save_item(NAME(m_state.printer_columns_left));
+	save_item(NAME(m_state.printer_columns_discarded));
+	save_item(NAME(m_state.printer_feed_events));
 	save_item(NAME(m_state.matrix_request));
 	save_item(NAME(m_state.column_request));
 	save_item(NAME(m_state.button_request));
@@ -143,10 +149,17 @@ u8 p6066_goino_device::input_data_r(offs_t level)
 		if (m_auxiliary_input_cb.isunset()) return 0;
 		return m_auxiliary_input_cb(1);
 	default:
+		// The common printer IRQ prologue reads EPD without issuing DEA;
+		// a preceding Fxxx command can leave the PROM mux selected. This
+		// is an explicit inert response of the discard-output printer, not
+		// recovered PROM data. Direct PROM access remains unsupported.
+		if (level == 3 && m_state.owned3 && m_state.synchronized3 == 1)
+			return 0;
 		// Fig.1.2: selector 3 is the specialization PROM, not covered by
 		// the printer-status stub. It still requires a verified dump.
 		if (m_auxiliary_input_cb.isunset())
-			fatalerror("GOINO input %u requires specialization PROM", m_state.input_select);
+			fatalerror("GOINO input %u requires specialization PROM: level=%u selected=%u (%s)\n",
+				m_state.input_select, unsigned(level), unsigned(m_state.selected), machine().describe_context());
 		return m_auxiliary_input_cb(m_state.input_select);
 	}
 }
@@ -162,6 +175,9 @@ void p6066_goino_device::data_w(offs_t level, u16 data, u16 mask)
 	const u32 display_before = m_state.display_strobes;
 	if (!m_state.data(data, level, mask))
 		fatalerror("GOINO bring-up: unsupported output %04X at level %u (%s)\n", data, unsigned(level), machine().describe_context());
+	if (level != 2 && (((data >> 8) & 15) == 1 || ((data >> 8) & 15) == 2 || ((data >> 8) & 15) == 3 || ((data >> 8) & 15) == 15))
+		logerror("GOINO discard printer: command=%X columns=%u feed_events=%u (%s)\n",
+			(data >> 8) & 15, m_state.printer_columns_discarded, m_state.printer_feed_events, machine().describe_context());
 	if (m_state.display_strobes != display_before)
 		logerror("GOINO display strobe=%u column=%u data=%02X known=%02X ECD=%04X level=%u (%s)\n",
 			m_state.display_strobes, (m_state.display_position + 223) % 224,

@@ -2,6 +2,7 @@
 // copyright-holders: Salvatore Paxia
 #include "emu.h"
 #include "p6066.h"
+#include <cstdlib>
 DEFINE_DEVICE_TYPE(P6066_BUS, p6066_bus_device, "p6066_bus", "Olivetti P6066 backplane")
 DEFINE_DEVICE_TYPE(P6066_SLOT, p6066_slot_device, "p6066_slot", "Olivetti P6066 board slot")
 device_p6066_card_interface::device_p6066_card_interface(const machine_config &mconfig, device_t &device)
@@ -19,11 +20,19 @@ void p6066_bus_device::add_card(unsigned position, u16 base, device_p6066_card_i
 }
 void p6066_bus_device::device_start()
 {
+	m_trace_io = std::getenv("P6066_TRACE_IO") != nullptr;
 	save_item(NAME(m_irq.owners)); save_item(NAME(m_floppy_selects));
 	machine().save().register_postload(save_prepost_delegate(FUNC(p6066_bus_device::update_outputs), this));
 }
 void p6066_bus_device::update_outputs() { m_floppy_select_output = m_floppy_selects; }
-void p6066_bus_device::device_reset() { m_irq.reset(); m_floppy_selects = 0; update_outputs(); }
+void p6066_bus_device::device_reset() { m_irq.reset(); m_floppy_selects = 0; m_trace_selection = 0; update_outputs(); }
+void p6066_bus_device::trace_io(const char *operation, unsigned level, u16 data, u16 mask, device_p6066_card_interface *card)
+{
+	if (m_trace_io && level == 4)
+		logerror("IOBUS t=%s %s op=%s level=%u select=%02X data=%04X mask=%04X responder=%s\n",
+			machine().time().as_string(), machine().describe_context(), operation, level,
+			m_trace_selection, data, mask, card ? card->device().tag() : "none");
+}
 device_p6066_card_interface *p6066_bus_device::memory_card(u16 address)
 {
 	device_p6066_card_interface *owner = nullptr;
@@ -47,7 +56,9 @@ void p6066_bus_device::memory_w(offs_t address, u16 data, u16 mask)
 }
 void p6066_bus_device::select_w(u8 name)
 {
+	m_trace_selection = name;
 	for (auto *card : m_cards) if (card) card->select(name);
+	if (m_trace_io) trace_io("select", 4, name, 0x00ff, channel_card(4));
 	if (name == 0xe0) { ++m_floppy_selects; update_outputs(); }
 }
 device_p6066_card_interface *p6066_bus_device::channel_card(unsigned level)
@@ -62,10 +73,10 @@ device_p6066_card_interface *p6066_bus_device::channel_card(unsigned level)
 	}
 	return selected;
 }
-u16 p6066_bus_device::name_type_r(offs_t level) { auto *card=channel_card(level); return card ? card->name_type(level) : 0; }
-u8 p6066_bus_device::input_data_r(offs_t level) { auto *card=channel_card(level); return card ? card->input_data(level) : 0; }
-void p6066_bus_device::data_w(offs_t level, u16 data, u16 mask) { if (auto *card=channel_card(level)) card->output_data_masked(level, data, mask); }
-void p6066_bus_device::command_w(offs_t level, u16 data, u16 mask) { if (auto *card=channel_card(level)) card->command_word(level, data, mask); }
+u16 p6066_bus_device::name_type_r(offs_t level) { auto *card=channel_card(level); const u16 data=card ? card->name_type(level) : 0; trace_io("type",level,data,0xffff,card); return data; }
+u8 p6066_bus_device::input_data_r(offs_t level) { auto *card=channel_card(level); const u8 data=card ? card->input_data(level) : 0; trace_io("input",level,data,0x00ff,card); return data; }
+void p6066_bus_device::data_w(offs_t level, u16 data, u16 mask) { auto *card=channel_card(level); trace_io("data",level,data,mask,card); if (card) card->output_data_masked(level, data, mask); }
+void p6066_bus_device::command_w(offs_t level, u16 data, u16 mask) { auto *card=channel_card(level); trace_io("command",level,data,mask,card); if (card) card->command_word(level, data, mask); }
 void p6066_bus_device::strobe_w(u8 level) { if (auto *card=channel_card(level)) card->strobe(level); }
 void p6066_bus_device::control_w(offs_t level, u8 signal) { if (auto *card=channel_card(level)) card->control(level, signal); }
 void p6066_bus_device::ecorn_w(int state)

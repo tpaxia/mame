@@ -13,6 +13,7 @@
 #include "bus/p6066/memory.h"
 #include "bus/p6066/flodi.h"
 #include "bus/p6066/goino.h"
+#include "bus/p6066/go011.h"
 #include "p6066.lh"
 
 namespace {
@@ -36,6 +37,7 @@ private:
 };
 static void console_cards(device_slot_interface &device) { device.option_add("goino",P6066_GOINO); }
 static void peripheral_cards(device_slot_interface &device) { device.option_add("flodi",P6066_FLODI); }
+static void video_cards(device_slot_interface &device) { device.option_add("go011",P6066_GO011); }
 void p6066_state::p6066(machine_config &config)
 {
 	PUCE(config,m_maincpu,1'000'000); // provisional scheduling clock
@@ -71,6 +73,9 @@ void p6066_state::p6066(machine_config &config)
 	// ME006 pp.2.01-2.02: microprogram storage in the CPU zone; one
 	// excluded 2-Kword bank leaves the merged CAROM at 8000-87FF.
 	auto &microprogram=P6066_SLOT(config,"bus:microcode",p6066_microprogram_cards,"me006"); microprogram.set_position(7);
+	// STAC-2 printed31: non-DMA video has minimum expansion priority.
+	// Development index8 is not a recovered physical connector number.
+	auto &video=P6066_SLOT(config,"bus:video",video_cards,nullptr); video.set_position(8);
 	screen_device &screen(SCREEN(config,"screen"));
 	screen.set_refresh_hz(60); screen.set_size(888,28); screen.set_visarea_full();
 	screen.set_screen_update(FUNC(p6066_state::screen_update));
