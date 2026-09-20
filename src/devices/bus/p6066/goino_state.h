@@ -11,7 +11,7 @@ struct p6066_goino_state
 {
 	bool selected = false;
 	// Discard-output printer: handshake only, no paper/mechanical model.
-	bool printer_running = false, printer_feeding = false, printer_completion = false;
+	bool printer_running = false, printer_feeding = false;
 	unsigned printer_columns_left = 0;
 	std::uint32_t printer_columns_discarded = 0, printer_feed_events = 0;
 	void printer_tick()
@@ -19,7 +19,6 @@ struct p6066_goino_state
 		// Allow each request to be acknowledged and cleared before another.
 		if (column_request || matrix_request || synchronized2 || (synchronized3 & 1) || owned2 || owned3) return;
 		if (printer_feeding) { matrix_request = true; ++printer_feed_events; }
-		else if (printer_completion) matrix_request = true;
 		else if (printer_running)
 		{
 			if (printer_columns_left) column_request = true;
@@ -117,16 +116,15 @@ struct p6066_goino_state
 		switch (code)
 		{
 		case 0x0: break; // NOPPO
-		case 0x1: // VIASN: start printing; fewer than seven initial blank columns.
+		case 0xf: // Functional ESE print-transfer start; see discard-printer.md.
 			printer_running = true;
 			printer_columns_left = 3;
 			break;
 		case 0x2: printer_feeding = true; break; // FAINN
 		case 0x3: printer_feeding = false; break; // FINTN
-		case 0xf: printer_running = false; printer_completion = true; break; // FISTN
+		case 0x1: printer_running = false; break; // ESE ends column transfer
 		case 0x4: // REMAN acknowledges matrix or line-feed event.
 			matrix_request = false;
-			printer_completion = false;
 			if (printer_running && !printer_feeding) printer_columns_left = 7;
 			break;
 		case 0x5: column_request = button_request = false; break; // RECON

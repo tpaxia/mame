@@ -66,7 +66,6 @@ void p6066_goino_device::device_start()
 	save_item(NAME(m_state.selected));
 	save_item(NAME(m_state.printer_running));
 	save_item(NAME(m_state.printer_feeding));
-	save_item(NAME(m_state.printer_completion));
 	save_item(NAME(m_state.printer_columns_left));
 	save_item(NAME(m_state.printer_columns_discarded));
 	save_item(NAME(m_state.printer_feed_events));
@@ -143,17 +142,17 @@ u8 p6066_goino_device::input_data_r(offs_t level)
 	case 0: return m_state.button_code();
 	case 2: return m_state.key_data();
 	case 1:
-		// Explicit user-approved printer/decimal-status stub. This zero byte is
-		// an inert emulation policy, NOT recovered DISL006 wiring or proof of
-		// printer presence/readiness. Printer mechanics remain out of scope.
-		if (m_auxiliary_input_cb.isunset()) return 0;
+		// Discard-output printer: GTL3.2 BE08-BE68 tests bit4 before
+		// submitting another request. Other status/decimal bits remain inert.
+		// Functional firmware evidence, not a DISL006 wiring reconstruction.
+		if (m_auxiliary_input_cb.isunset()) return (m_state.printer_running || m_state.printer_feeding) ? 0x10 : 0;
 		return m_auxiliary_input_cb(1);
 	default:
-		// The common printer IRQ prologue reads EPD without issuing DEA;
+		// The common GOINO IRQ prologue reads EPD without issuing DEA;
 		// a preceding Fxxx command can leave the PROM mux selected. This
 		// is an explicit inert response of the discard-output printer, not
 		// recovered PROM data. Direct PROM access remains unsupported.
-		if (level == 3 && m_state.owned3 && m_state.synchronized3 == 1)
+		if (level == 3 && m_state.owned3 && m_state.synchronized3 != 0)
 			return 0;
 		// Fig.1.2: selector 3 is the specialization PROM, not covered by
 		// the printer-status stub. It still requires a verified dump.

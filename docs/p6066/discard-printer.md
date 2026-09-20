@@ -2,45 +2,68 @@
 
 <!-- copyright-holders: Salvatore Paxia -->
 
-The user explicitly requested a printer that completes requests while discarding
-output. GOINO's previous VIASN/FAINN/FINTN/FISTN no-ops could leave ESE waiting
-forever; accepting a command was not equivalent to completing it.
+The user requested a printer that completes requests while discarding output.
+This is a functional ESE-facing stub, not a faithful ASTAM mechanical model.
+It uses normal GOINO request latches, synchronization, arbitration, and level2/3
+ownership. No paper, output file, motor or thermal head is rendered.
 
-The functional stub now supplies asynchronous printer events through the normal
-GOINO source latches, synchronization, arbitration and level2/3 ownership:
+## Current functional contract
 
-- VIASN starts with three blank columns (the manual specifies fewer than seven),
-  then matrix requests alternating with seven discarded columns per matrix.
-- REMAN acknowledges matrix/line-feed events.
-- FISTN stops column generation and schedules a functional carriage-return
-  completion event, including when used to prepare a new line.
-- FAINN supplies line-feed events until FINTN stops them. ESE decides the count.
-- Events use the existing6.3ms scheduler, independently of the CPU timer-enable
-  command. This is functional pacing, not printer speed emulation. An outstanding
-  request/grant is serviced and cleared before another event is emitted.
+- Command F starts column transfer: three leading blank columns, then matrix
+  requests alternating with seven columns per matrix.
+- Command 1 ends column transfer. It does not create an extra completion IRQ.
+- Command 2 produces feed interrupts until command 3 stops them.
+- Command 4 acknowledges matrix/feed requests. Level2 ECOT clears column requests.
+- The existing6.3ms scheduler supplies functional pacing, independently of TIMEN.
+  A pending request/grant is serviced before another event is generated.
+- Status selector1 returns bit4 (`10`) while printing or feeding, zero when idle.
+  Other printer/decimal status bits remain inert.
+- A stale selector3 during owned level3 GOINO service returns inert0, including
+  keyboard/timer overlap. Direct level4 PROM access still fails without a dump.
 
-No printer file, rendered paper, motor, thermal head or consumable is modeled.
-The previous user-approved inert printer/decimal status byte remains0. Counts,
-phase and remaining columns are saved with GOINO state. Diagnostic log lines
-report start/end commands and cumulative discarded columns/feed events.
+## Evidence and unresolved conflict
 
-The native common IRQ prologue reads EPD at A125 without a preceding DEA.
-F27E can leave the input mux at3, which used to terminate as a missing PROM.
-The discard printer now supplies inert0 only for that mux during exclusively
-printer-owned level3 service. This is a stub policy, not recovered PROM data;
-deliberate direct PROM reads still fail explicitly.
+The GOINO description, figure1.3 (PDF9, printed5), explicitly labels command1
+VIASN/start and commandF FISTN/end. Printed7–8 and16–18 describe printing,
+seven columns per matrix, feed completion, and STOCN busy conditions. Those
+labels are **opposite to the transfer phases observed in GTL3.2 firmware**.
+The stub deliberately follows the observed software contract. This is not a
+claim that the manual is wrong or that the physical command decoding is solved.
+The prior implementation followed those labels, then added an invented return
+completion IRQ; that combination did not implement the firmware's transfer.
 
-Sources: GOINO description printed7–8 (PDF11–12), printed11/15–17
-(PDF15/19–21), including figures1.4/1.6. Matrix/column ratio and handshake
-sequence are documented; discard policy, timing and carriage completion are
-functional abstractions. User authorization supersedes the former no-op policy.
+In SYSTEM_DISK_R_3_2_GTL3, PUCE BE08–BE68 probes status with DEA90. The SDIA/SDIB
+exchanges matter: status bit4 branches to BE5C and returns a busy/retry result.
+Bit3 tested later belongs to saved software flags, not this hardware busy bit.
+BE38 emits FF after installing the matrix count/buffer. A403 acknowledges each
+matrix; A427 decrements the remaining count and A42E–A444 prepares its buffer.
+After the count reaches zero, A418 emits F1, and the state changes to feeding.
+A410 emits F2; A447 emits F3 when the feed count is exhausted.
 
-Validation: production CPU/bus/GOINO integration exercises return completion,
-initial columns, matrix acknowledgement, seven data columns and ten feed events,
-then verifies no remaining printer IRQ. State-level tests and all existing
-GOINO transport/event tests pass. Live native CATALOG exercised line-feed
-completion; the GTL3.2 program `10 PRINT 12345 / 20 END` was RUN twice with
-NO PRINT off and returned to READY each time. Native PRINT ALL/CATALOG ran
-110 seconds without a crash. Live logs did not establish nonzero column output
-for those configured images; the actual column path is covered by the production
-integration fixture, not claimed as observed guest output.
+The earlier constant-zero status admitted new requests during an existing feed,
+overwriting its software state. The old F1-start/F-stop model then generated
+repeating start/feed cycles or stalled after a single fabricated completion.
+Busy bit4 and the observed transfer direction are both necessary corrections.
+
+A124 EDB (next PC A125) reads the previously selected input before the shared
+GOINO interrupt dispatch. An Fxxx output can leave selector3 selected even for
+a keyboard interrupt. Restricting the inert read to printer-only source bits
+caused the earlier PROM exception. The level3 fallback is explicit stub policy;
+real PROM access during such service is not implemented or distinguished here.
+
+## Validation
+
+Production CPU/bus/GOINO integration checks active/idle status, column and matrix
+handshakes, feeding, nested service, incidental selector3 reads on a timer IRQ,
+and rejection of a direct level4 PROM read. Event and transport suites pass.
+
+The live regression sends CATALOG three times, then enters NEW / 10 DISP 12345 /
+20 END and RUN twice, without pressing NO PRINT. All three catalogue transfers
+finish (3,216 discarded columns,300 feed events); both BASIC runs display12345
+and return READY. Final CPU is running at level4, with no subsequent printer
+commands. Observer, transcript and reproduction notes are in the outer repo at
+`analysis/mame-p6066/discard-printer/catalog-regression/`.
+
+The earlier PRINT-only test did not observe column transfer and was insufficient
+to establish CATALOG completion. Physical timing, status wiring, the command
+polarity conflict, and PROM contents remain unresolved.

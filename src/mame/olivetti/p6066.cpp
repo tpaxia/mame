@@ -15,6 +15,8 @@
 #include "bus/p6066/goino.h"
 #include "bus/p6066/go011.h"
 #include "p6066.lh"
+#include "p6066_video.lh"
+#include "emuopts.h"
 
 namespace {
 class p6066_state : public driver_device
@@ -79,7 +81,8 @@ void p6066_state::p6066(machine_config &config)
 	screen_device &screen(SCREEN(config,"screen"));
 	screen.set_refresh_hz(60); screen.set_size(888,28); screen.set_visarea_full();
 	screen.set_screen_update(FUNC(p6066_state::screen_update));
-	config.set_default_layout(layout_p6066);
+	const auto *video_option = config.options().find_slot_option("bus:video");
+	config.set_default_layout(video_option && video_option->value() == "go011" ? layout_p6066_video : layout_p6066);
 }
 
 static INPUT_PORTS_START(p6066)

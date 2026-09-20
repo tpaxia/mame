@@ -15,7 +15,7 @@ int main(){
  // Discard-output printer: one line, three leading blanks, two matrices,
  // then ten feed events. Real synchronization/ownership and command paths.
  {
-  p6066_goino_state p;p.select(0);p.data(0x0e00,4);p.data(0x0100,4);
+  p6066_goino_state p;p.select(0);p.data(0x0e00,4);p.data(0xff00,4);
   auto column=[&](){
    p.printer_tick();assert(p.column_request);p.synchronize(4);
    assert(p.acknowledge(1));p.printer_tick();assert(p.column_request);
@@ -29,7 +29,7 @@ int main(){
    for(unsigned n=0;n<7;++n)column();
   }
   p.printer_tick();p.synchronize(8);assert(p.acknowledge(2));
-  p.data(0xf400,3);p.data(0xff00,3);p.data(0xf200,3);
+  p.data(0xf400,3);p.data(0xf100,3);p.data(0xf200,3);
   p.synchronize(8);p.end(3);
   for(unsigned n=0;n<10;++n){
    p.printer_tick();assert(p.matrix_request && !p.column_request);

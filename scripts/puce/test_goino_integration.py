@@ -157,10 +157,12 @@ int main(){
  c.instruction(0xbd00);assert(c.m_core.level==3&&!g.m_state.owned2&&g.m_state.owned3);
  c.command(0x0800);c.instruction(0xbd00);assert(c.m_core.level==4);
  // Discard printer traverses real CPU arbitration and board callbacks.
- c.command(0xff00);g.m_state.printer_tick();c.instruction(0xc900);
- assert(c.m_core.level==3 && g.m_state.owned3);
- assert(g.input_data_r(3)==0); // incidental PROM-mux read in printer prologue
- c.command(0xf400);c.command(0xf100);c.instruction(0xbd00);
+ // Printer/keyboard overlap must allow an incidental stale PROM-mux read.
+ g.m_state.timer_request=true;c.command(0xf000);c.instruction(0xc900);
+ assert(c.m_core.level==3 && g.input_data_r(3)==0);
+ c.command(0xf800);c.instruction(0xbd00);
+ c.command(0xff00);
+ g.m_state.input_select=1;assert(g.input_data_r(4)==0x10);
  for(unsigned n=0;n<3;++n){
   g.m_state.printer_tick();c.instruction(0xc900);assert(c.m_core.level==2);
   c.m_core.l[2]=n;c.instruction(0xfc20);c.instruction(0xbd00);
@@ -171,7 +173,8 @@ int main(){
   g.m_state.printer_tick();c.instruction(0xc900);assert(c.m_core.level==2);
   c.m_core.l[2]=0x7f-n;c.instruction(0xfc20);c.instruction(0xbd00);
  }
- c.command(0xff00);c.command(0xf200);
+ c.command(0xf100);c.command(0xf200);
+ g.m_state.input_select=1;assert(g.input_data_r(4)==0x10);
  for(unsigned n=0;n<10;++n){
   g.m_state.printer_tick();c.instruction(0xc900);assert(c.m_core.level==3);
   c.command(0xf400);if(n==9)c.command(0xf300);c.instruction(0xbd00);
