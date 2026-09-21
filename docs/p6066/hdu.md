@@ -83,3 +83,15 @@ software. It formats a track and tests write/read/scan/verify through the actual
 CPU, bus, timers, shared RAM and completion interrupt. Successful execution
 prints three `PASS:` lines and exits. Check that there are no Lua assertions or
 MAME exceptions; process exit status alone does not establish a passing test.
+
+## Functional activity indicators
+
+Both console layouts display FD1, FD2, HD and SHD activity. Green means
+read/search (including verify/scan), red write/format/erase, amber seek, and
+dark idle. These are emulator indicators, not claims about original lamp
+wiring. Controller state is sampled every1ms with a100ms release hold;
+absent boards remain dark. No disk status or guest timing depends on them.
+
+`test_disk_activity_mame.lua`, run on disposable generated two-HD media with
+SYSBTS in FD2 and FD1 empty, checks independent read indications, HD write,
+empty-drive isolation and expiry after startup. The real-boot test passed.

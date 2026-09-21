@@ -25,13 +25,37 @@ class p6066_state : public driver_device
 {
 public:
 	p6066_state(const machine_config &mconfig, device_type type, const char *tag)
-		: driver_device(mconfig,type,tag), m_maincpu(*this,"maincpu"), m_bus(*this,"bus"), m_console(*this,"bus:console:goino") { }
+		: driver_device(mconfig,type,tag), m_maincpu(*this,"maincpu"), m_bus(*this,"bus"), m_console(*this,"bus:console:goino"), m_floppy(*this,"bus:floppy:flodi"), m_hdu(*this,"bus:hdu:difo"), m_activity(*this,"disk_activity%u",0U) { }
 	void p6066(machine_config &config);
 	INPUT_CHANGED_MEMBER(restart) { if (newval) machine().schedule_soft_reset(); }
 private:
+	virtual void machine_start() override
+	{
+		save_item(NAME(m_activity_hold)); save_item(NAME(m_activity_state));
+		machine().save().register_postload(save_prepost_delegate(FUNC(p6066_state::activity_outputs),this));
+		timer_alloc(FUNC(p6066_state::activity_tick),this)->adjust(attotime::zero,0,attotime::from_msec(1));
+	}
+	virtual void machine_reset() override { m_activity_hold.fill(0); m_activity_state.fill(0); activity_outputs(); }
+	void activity_outputs() { for (unsigned i=0;i<4;++i) m_activity[i]=m_activity_state[i]; }
+	TIMER_CALLBACK_MEMBER(activity_tick)
+	{
+		// Functional panel, not a model of physical drive lamps. Hold for 100 ms.
+		for (unsigned i=0;i<4;++i)
+		{
+			const unsigned state=i<2 ? (m_floppy ? m_floppy->activity(i) : 0) : (m_hdu ? m_hdu->activity(i-2) : 0);
+			if (state) { m_activity_state[i]=state; m_activity_hold[i]=100; }
+			else if (m_activity_hold[i] && !--m_activity_hold[i]) m_activity_state[i]=0;
+		}
+		activity_outputs();
+	}
 	required_device<puce_device> m_maincpu;
 	required_device<p6066_bus_device> m_bus;
 	optional_device<p6066_goino_device> m_console;
+	optional_device<p6066_flodi_device> m_floppy;
+	optional_device<p6066_difo_device> m_hdu;
+	output_finder<4> m_activity;
+	std::array<u8,4> m_activity_hold{},m_activity_state{};
+
 	void memory_map(address_map &map) { map(0x0000,0xffff).rw(m_bus,FUNC(p6066_bus_device::memory_r),FUNC(p6066_bus_device::memory_w)); }
 	u32 screen_update(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect)
 	{

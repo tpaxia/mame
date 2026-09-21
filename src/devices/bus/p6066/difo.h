@@ -11,6 +11,13 @@ class p6066_difo_device : public device_t, public device_p6066_card_interface
 {
 public:
 	p6066_difo_device(const machine_config &,const char *,device_t *,u32 clock=0);
+	// Emulator UI activity only; does not participate in controller status.
+	unsigned activity(unsigned unit) const
+	{
+		if (unit != m_active_unit || !m_phase) return 0;
+		if (m_phase == 1 || m_phase == 7) return 3;
+		return (m_state.operation_bits() & (p6066_difo_state::WRITE | p6066_difo_state::FORMAT)) ? 2 : 1;
+	}
 	virtual void select(u8 name) override { m_state.select(name); }
 	virtual bool direct_selected() const override { return m_state.selected; }
 	virtual u16 name_type(unsigned level) override { return m_state.type(m_state.servicing); }
