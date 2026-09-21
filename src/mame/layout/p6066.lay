@@ -9,6 +9,7 @@ copyright-holders: Salvatore Paxia
 <element name="key"><rect><color red="0.23" green="0.28" blue="0.29"/></rect></element>
 <element name="lamp"><rect state="0"><color red="0.12" green="0.15" blue="0.12"/></rect><rect state="1"><color red="0.78" green="0.92" blue="0.36"/></rect></element>
 <element name="status"><disk state="0"><color red="0.16" green="0.17" blue="0.15"/></disk><disk state="1"><color red="1" green="0.55" blue="0.15"/></disk></element>
+<element name="kbmode_label"><text string="KB MODE"><color red="0.85" green="0.89" blue="0.88"/></text></element>
 <element name="title"><text string="olivetti P6066"><color red="0.85" green="0.89" blue="0.88"/></text></element>
 <element name="sub"><text string="CONSOLE"><color red="0.85" green="0.89" blue="0.88"/></text></element>
 <element name="display"><text string="DISPLAY"><color red="0.85" green="0.89" blue="0.88"/></text></element>
@@ -60,6 +61,8 @@ copyright-holders: Salvatore Paxia
 <element ref="ledtext2" ><bounds x="83" y="29.4" width="14" height="1.4"/></element>
 <element ref="status" name="bus:console:goino:console_lamp4" ><bounds x="81" y="32.6" width="1.4" height="1.4"/></element>
 <element ref="ledtext3" ><bounds x="83" y="32.6" width="14" height="1.4"/></element>
+<element ref="status" name="bus:console:goino:keyboard_mode"><bounds x="5" y="38" width="1.4" height="1.4"/></element>
+<element ref="kbmode_label"><bounds x="8" y="38" width="13" height="1.5"/></element>
 <element ref="footer" ><bounds x="40" y="39" width="55" height="1.5"/></element>
 </view>
 </mamelayout>
