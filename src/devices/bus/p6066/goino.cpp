@@ -19,6 +19,7 @@ p6066_goino_device::p6066_goino_device(const machine_config &mconfig, const char
 	, m_lamp_word(*this, "console_lamps")
 	, m_display_strobes(*this, "display_strobes")
 	, m_display_ready(*this, "display_ready")
+	, m_keyboard_mode(*this, "keyboard_mode")
 {
 }
 
@@ -42,7 +43,7 @@ void p6066_goino_device::device_add_mconfig(machine_config &config)
  m_keyboard->ready_cb().set([this](int state) { m_state.keyboard_request=bool(state); });
  m_keyboard->error_cb().set([this](int state) { m_state.double_key_request=bool(state); });
  m_keyboard->down_cb().set([this](int state) { m_keyboard_down=bool(state); m_state.buttons_w(m_buttons->read() | (state?1:0)); });
- m_keyboard->mode_cb().set([this](int state) { if(state && !m_mode_down) m_state.basic_mode=!m_state.basic_mode; m_mode_down=bool(state); });
+ m_keyboard->mode_cb().set([this](int state) { if(state && !m_mode_down) m_state.basic_mode=!m_state.basic_mode; m_mode_down=bool(state); update_outputs(); });
 }
 void p6066_goino_device::keyboard_command(unsigned level, u16 data)
 {
@@ -125,6 +126,8 @@ void p6066_goino_device::update_outputs()
 	m_lamp_word = m_state.lamps;
 	m_display_strobes = m_state.display_strobes;
 	m_display_ready = m_state.display_ready;
+	// General Manual PDF21: lamp on means typewriter mode, not BASIC keywords.
+	m_keyboard_mode = !m_state.basic_mode;
 }
 
 
