@@ -12,6 +12,14 @@ class p6066_flodi_device : public device_t, public device_p6066_card_interface
 {
 public:
 	p6066_flodi_device(const machine_config &,const char *,device_t *,u32 clock=0);
+	// Emulator UI activity only: 0 idle, 1 read/search, 2 write/erase, 3 seek.
+	unsigned activity(unsigned unit) const
+	{
+		if (unit != m_selected) return 0;
+		if (m_writing || m_erase_active || m_format_active) return 2;
+		if (m_motion || m_settle) return 3;
+		return m_reading ? 1 : 0;
+	}
 	// Optional automatic feeder input pins (logical asserted polarity).
 	void changer_door_w(bool closed);
 	void changer_busy_w(bool busy);
