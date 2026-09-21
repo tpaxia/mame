@@ -40,10 +40,10 @@ TIMER_CALLBACK_MEMBER(p6066_keyboard_device::scan)
 #include "keyboard_chords.inc"
  default:return -1;
  } };
- const bool win=BIT(mods,3);
- // Down is TASB, not a character. Win+Down instead selects keypad '='.
+ const bool prefix_held=BIT(mods,5);
+ // Down is TASB, not a character. Chord prefix+Down instead selects keypad '='.
  if (!held(53)) m_down_chord=false;
- else if (!BIT(m_previous[53/32],53%32)) m_down_chord=win;
+ else if (!BIT(m_previous[53/32],53%32)) m_down_chord=prefix_held;
  m_down_cb(held(53) && !m_down_chord);
  m_mode_cb(BIT(mods,4));
  unsigned count=0, candidate=0;
@@ -51,7 +51,7 @@ TIMER_CALLBACK_MEMBER(p6066_keyboard_device::scan)
  for(unsigned key=0;key<84;++key)
  {
   if(!held(key) || BIT(m_previous[key/32],key%32)) continue;
-  const int alternate=win?chord(key):-1;
+  const int alternate=prefix_held?chord(key):-1;
   if(alternate>=0) { candidate=alternate; is_chord=true; ++count; }
   else if(key<82 && key!=53) { candidate=key; is_chord=false; ++count; }
  }
@@ -64,7 +64,7 @@ TIMER_CALLBACK_MEMBER(p6066_keyboard_device::scan)
  if(m_repeat_key>=0)
  {
   if(!held(m_repeat_key)) { m_repeat_key=-1; m_repeat_ticks=0; }
-  else if(!win || chord(m_repeat_key)>=0) m_repeat_ticks=0;
+  else if(!BIT(mods,3) || prefix_held) m_repeat_ticks=0;
   else if(count==0 && ++m_repeat_ticks>=70) { emit(m_repeat_key,mods); m_repeat_ticks=0; }
  }
  m_previous=now;

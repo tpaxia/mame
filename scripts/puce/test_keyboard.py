@@ -47,7 +47,7 @@ int main(){
  const unsigned host[]={82,54,55,83,39,50,51,53,52};
  const unsigned want[]={0xf0,0xf4,0xf6,0xf1,0xfa,0xe3,0xe7,0xe0,0xe4};
  for(unsigned i=0;i<9;++i){
-  k.m_modifiers.value=8;k.key(host[i],true);unsigned n=k.emitted;k.scan();
+  k.m_modifiers.value=32;k.key(host[i],true);unsigned n=k.emitted;k.scan();
   assert(k.emitted==n+1 && (k.last&255)==want[i] && !k.down);k.ack();
   for(int t=0;t<150;++t)k.scan();assert(k.emitted==n+1);
   k.m_modifiers.value=0;k.scan();assert(!k.down);
@@ -60,7 +60,15 @@ int main(){
  k.key(1,true);k.scan();k.ack();n=k.emitted;
  for(int t=0;t<69;++t)k.scan();assert(k.emitted==n);k.scan();assert(k.emitted==n+1);k.ack();
  k.key(1,false);k.scan();k.m_modifiers.value=0;
- k.key(2,true);k.scan();k.key(3,true);k.scan();assert(k.error);
+ // Alt alone and Alt+ordinary letter must not trigger repeat.
+ k.m_modifiers.value=32;n=k.emitted;k.scan();assert(k.emitted==n);
+ k.key(0,true);k.scan();k.ack();n=k.emitted;
+ for(int t=0;t<150;++t)k.scan();assert(k.emitted==n);
+ k.key(0,false);k.scan();
+ // Repeat+Delete is ordinary Delete, not the Alt+Delete command.
+ k.m_modifiers.value=8;k.key(54,true);k.scan();assert((k.last&255)==(p6066_keys[54].code[0]&255));k.ack();n=k.emitted;
+ for(int t=0;t<70;++t)k.scan();assert(k.emitted==n+1);k.ack();k.key(54,false);k.scan();
+ k.m_modifiers.value=0;k.key(2,true);k.scan();k.key(3,true);k.scan();assert(k.error);
  p6066_keyboard_device s;s.key(0,true);s.key(1,true);s.scan();assert(s.error && !s.emitted);
  std::puts("PASS: production keyboard modifiers, nine chords, EOL, repeat, TASB and error paths");
 }
@@ -74,8 +82,8 @@ for i in range(1,9): assert bindings[f'F{i}']==f'F{i}'
 for i in range(10): assert bindings[f'Keypad {i}']==f'{i}_PAD'
 for name,host in {'Clear Recall':'INSERT','Char delete':'DEL','At':'EQUALS',
  'Colon':'QUOTE','Semicolon':'COLON','Backslash':'BACKSLASH','Up character':'TILDE',
- 'End of line':'ENTER','Keypad end of line':'ENTER_PAD','KB Mode':'LALT',
- 'Repeat / chord prefix':'LWIN','Left Shift':'LSHIFT','Right Shift':'RSHIFT'}.items():
+ 'End of line':'ENTER','Keypad end of line':'ENTER_PAD','KB Mode':'F9',
+ 'Repeat':'LWIN','Chord Prefix':'LALT','Left Shift':'LSHIFT','Right Shift':'RSHIFT'}.items():
  assert bindings[name]==host
 assert 'KEYCODE_CAPSLOCK' not in ports
 board=(root/'src/devices/bus/p6066/goino.cpp').read_text()
