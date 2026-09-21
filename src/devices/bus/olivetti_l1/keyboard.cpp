@@ -8,7 +8,8 @@
 
 // US/ANSI host profile. Alt is a host-only layer, translated on key make:
 // its release cannot retrigger a still-held base key. Shift and Control are
-// independent ANK inputs. F12 and Scroll Lock are left free for host UI use.
+// independent ANK inputs. F9 is KB MODE across the M40 and P6066 host maps;
+// F12 is reserved for host UI use by the shared m40-ui controller profile.
 // Photo legends differ between ANK1402 and ANK1426; BCOS assigns functions.
 // Digit PORT_CHARs remain on the keypad for natural-keyboard monitor input.
 INPUT_PORTS_START( olivetti_l1_keyboard )
@@ -64,14 +65,14 @@ INPUT_PORTS_START( olivetti_l1_keyboard )
 	PORT_BIT(0x0400, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_P) PORT_CHAR('p')
 	PORT_BIT(0x0800, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_TILDE) PORT_NAME("@ ' (2A)") PORT_CHAR('@')
 	PORT_BIT(0x1000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_OPENBRACE) PORT_NAME("[ { (36)") PORT_CHAR('[')
-	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F9) PORT_NAME("CLEAR (37)") PORT_CHAR(UCHAR_MAMEKEY(F9))
+	PORT_BIT(0x2000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_NAME("CLEAR (37) [Alt+F9]")
 	// The alpha RETURN is a plain typing key: the boot prompt and the monitor menus
 	// read the KEYPAD terminator (0x61), not this one, so char 13 lives there.
 	PORT_BIT(0x4000, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_ENTER) PORT_NAME("RETURN (35)")
 	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_UNUSED)
 
 	PORT_START("K2")  // KB-MODE A..L ;+ *: ]}
-	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F11) PORT_NAME("KB MODE (02)") PORT_CHAR(UCHAR_MAMEKEY(F11))
+	PORT_BIT(0x0001, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_F9) PORT_NAME("KB MODE (02)") PORT_CHAR(UCHAR_MAMEKEY(F9))
 	PORT_BIT(0x0002, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_A) PORT_CHAR('a')
 	PORT_BIT(0x0004, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_S) PORT_CHAR('s')
 	PORT_BIT(0x0008, IP_ACTIVE_HIGH, IPT_KEYBOARD) PORT_CODE(KEYCODE_D) PORT_CHAR('d')
@@ -250,6 +251,7 @@ void olivetti_l1_keyboard_device::key_make(uint8_t row, uint8_t column)
 		// avoids a spurious base key when Alt is released before the letter.
 		switch (code)
 		{
+		case 0x02: code = 0x37; break; // Alt+F9: red CLEAR position
 		case 0x22: code = 0x54; break; // Alt+L: LIST
 		case 0x0f: code = 0x3d; break; // Alt+S: SAVE / EXIT
 		case 0x26: code = 0x66; break; // Alt+O: OLD / S4
