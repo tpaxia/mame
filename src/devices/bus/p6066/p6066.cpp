@@ -2,6 +2,7 @@
 // copyright-holders: Salvatore Paxia
 #include "emu.h"
 #include "p6066.h"
+#include "rodma.h"
 #include <cstdlib>
 DEFINE_DEVICE_TYPE(P6066_BUS, p6066_bus_device, "p6066_bus", "Olivetti P6066 backplane")
 DEFINE_DEVICE_TYPE(P6066_SLOT, p6066_slot_device, "p6066_slot", "Olivetti P6066 board slot")
@@ -107,3 +108,49 @@ void p6066_bus_device::interrupt_sync_w(u8 mask)
 {
 	for (auto *card : m_cards) if (card) card->interrupt_sync(mask);
 }
+
+void p6066_bus_device::set_dma_bridge(p6066_rodma_device &bridge)
+{
+	if (m_dma_bridge) fatalerror("P6066 multiple DMA bridges");
+	m_dma_bridge = &bridge;
+}
+device_p6066_card_interface &p6066_bus_device::dma_card(unsigned position)
+{
+	device_p6066_card_interface *found = nullptr;
+	for (auto *card : m_cards) if (card && card->m_dma_position == int(position))
+	{
+		if (found) fatalerror("P6066 duplicate DMA chain position %u", position);
+		found = card;
+	}
+	if (!found) fatalerror("P6066 DMA grant without card at %u", position);
+	return *found;
+}
+void p6066_bus_device::dma_request(device_p6066_card_interface &card, bool state)
+{
+	if (!m_dma_bridge || card.m_dma_position < 0) fatalerror("P6066 DMA request without connected bridge/chain");
+	m_dma_bridge->request(card.m_dma_position, state);
+}
+p6066_dma_cycle p6066_bus_device::dma_grant(unsigned position) { return dma_card(position).dma_grant(); }
+void p6066_bus_device::dma_done(unsigned position, u16 data, bool invalid) { dma_card(position).dma_done(data, invalid); }
+u16 p6066_bus_device::dma_memory_cycle(const p6066_dma_cycle &cycle, bool &invalid)
+{
+	device_p6066_card_interface *owner = nullptr;
+	for (auto *card : m_cards) if (card && card->m_dma_memory && card->memory_claims(cycle.address))
+	{
+		if (owner) fatalerror("P6066 DMA memory decode collision at %04X", cycle.address);
+		owner = card;
+	}
+	invalid = !owner;
+	if (!owner) return 0; // data unspecified, invalid indication is separate
+	if (cycle.write) { owner->memory_w(cycle.address, cycle.data, cycle.mask); return 0; }
+	return owner->memory_r(cycle.address, cycle.mask);
+}
+u8 p6066_bus_device::shared_memory_r(offs_t address) { return m_dma_bridge && m_dma_bridge->shared(address); }
+void p6066_bus_device::cpu_memory_begin(offs_t address, u16 data, u16 mask)
+{
+	if (!m_dma_bridge) fatalerror("P6066 CPU DMA cycle without bridge");
+	m_dma_bridge->cpu_begin(address, data, mask);
+}
+int p6066_bus_device::cpu_memory_ready() { return m_dma_bridge && m_dma_bridge->cpu_ready(); }
+u16 p6066_bus_device::cpu_memory_data() { return m_dma_bridge->cpu_data(); }
+void p6066_bus_device::cpu_phase_w(u8 beta) { if (m_dma_bridge) m_dma_bridge->phase(beta); }

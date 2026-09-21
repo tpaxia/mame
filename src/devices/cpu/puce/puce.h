@@ -12,6 +12,11 @@ class puce_device : public cpu_device
 public:
 	puce_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
 
+	auto shared_memory_cb() { return m_shared_memory_cb.bind(); }
+	auto memory_begin_cb() { return m_memory_begin_cb.bind(); }
+	auto memory_ready_cb() { return m_memory_ready_cb.bind(); }
+	auto memory_data_cb() { return m_memory_data_cb.bind(); }
+	auto phase_cb() { return m_phase_cb.bind(); }
 	auto select_cb() { return m_select_cb.bind(); }
 	auto data_cb() { return m_data_cb.bind(); }
 	auto ecorn_cb() { return m_ecorn_cb.bind(); }
@@ -66,6 +71,18 @@ private:
 	devcb_read8 m_service_console_input_cb;
 	devcb_write8 m_service_console_control_cb;
 	devcb_read_line m_ecof_cb;
+	devcb_read8 m_shared_memory_cb;
+	devcb_write16 m_memory_begin_cb;
+	devcb_read_line m_memory_ready_cb;
+	devcb_read16 m_memory_data_cb;
+	devcb_write8 m_phase_cb;
+	bool m_memory_active = false;
+	u8 m_sampled = 0, m_sample_input = 0;
+	u16 m_sample_type = 0;
+	u32 m_fetch_invalid_before = 0;
+	u16 memory_read(u16 address, u16 mask = 0xffff);
+	void memory_write(u16 address, u16 data, u16 mask = 0xffff);
+	struct memory_wait { };
 	struct channel_adapter;
 	void update_ecorn();
 	bool m_hold_on_unsupported = false;

@@ -4,8 +4,8 @@
 // Development-only P6066 CPU bring-up configuration.
 // The merged reference CAROM is verified as an analysis input, but physical
 // chip mapping/revision and installed RAM population remain unresolved.
-// Removable memory, ROMCA, GOINO/CONDY and partial FLODI cards.
-// DMA and serial boards are not implemented.
+// Removable memory, ROMCA, GOINO/CONDY, FLODI, video and DIFO/RODMA cards.
+// HDU uses sector-level media and approximate mechanical timing. Serial is absent.
 
 #include "emu.h"
 #include "cpu/puce/puce.h"
@@ -14,6 +14,8 @@
 #include "bus/p6066/flodi.h"
 #include "bus/p6066/goino.h"
 #include "bus/p6066/go011.h"
+#include "bus/p6066/rodma.h"
+#include "bus/p6066/difo.h"
 #include "p6066.lh"
 #include "p6066_video.lh"
 #include "emuopts.h"
@@ -39,6 +41,20 @@ private:
 };
 static void console_cards(device_slot_interface &device) { device.option_add("goino",P6066_GOINO); }
 static void peripheral_cards(device_slot_interface &device) { device.option_add("flodi",P6066_FLODI); }
+static void hdu_cards(device_slot_interface &device)
+{
+	device.option_add("difo", P6066_DIFO).machine_config([](device_t *card) {
+		downcast<p6066_difo_device &>(*card).set_dma_position(0);
+	});
+}
+static void dma_cards(device_slot_interface &device)
+{
+	device.option_add("rodma", P6066_RODMA).machine_config([](device_t *card) {
+		// Development topology: low 32 Kwords shared, upper CPU RAM private.
+		// RODMA fig.1.25 documents this partition; not a recovered fitted chassis.
+		downcast<p6066_rodma_device &>(*card).set_partition(p6066_dma_arbiter::LOW, 0x8000);
+	});
+}
 static void video_cards(device_slot_interface &device) { device.option_add("go011",P6066_GO011); }
 void p6066_state::p6066(machine_config &config)
 {
@@ -48,6 +64,11 @@ void p6066_state::p6066(machine_config &config)
 	m_maincpu->set_addrmap(AS_PROGRAM,&p6066_state::memory_map);
 	m_bus->invalid_cb().set([this](int state) { if (state) m_maincpu->invalid_memory_access(); });
 	m_bus->ecorn_output_cb().set_output("ecorn");
+	m_maincpu->shared_memory_cb().set(m_bus, FUNC(p6066_bus_device::shared_memory_r));
+	m_maincpu->memory_begin_cb().set(m_bus, FUNC(p6066_bus_device::cpu_memory_begin));
+	m_maincpu->memory_ready_cb().set(m_bus, FUNC(p6066_bus_device::cpu_memory_ready));
+	m_maincpu->memory_data_cb().set(m_bus, FUNC(p6066_bus_device::cpu_memory_data));
+	m_maincpu->phase_cb().set(m_bus, FUNC(p6066_bus_device::cpu_phase_w));
 	m_maincpu->select_cb().set(m_bus,FUNC(p6066_bus_device::select_w));
 	m_maincpu->data_cb().set(m_bus,FUNC(p6066_bus_device::data_w));
 	m_maincpu->ecorn_cb().set(m_bus,FUNC(p6066_bus_device::ecorn_w));
@@ -78,6 +99,10 @@ void p6066_state::p6066(machine_config &config)
 	// STAC-2 printed31: non-DMA video has minimum expansion priority.
 	// Development index8 is not a recovered physical connector number.
 	auto &video=P6066_SLOT(config,"bus:video",video_cards,nullptr); video.set_position(8);
+	auto &dma=P6066_SLOT(config,"bus:dma",dma_cards,nullptr); dma.set_position(9);
+	// DIFO assembly consumes development position10 plus reserved position11.
+	// Historical physical connectors are DIFO1=03,DIFO2=02, not these indices.
+	auto &hdu=P6066_SLOT(config,"bus:hdu",hdu_cards,nullptr); hdu.set_position(10);
 	screen_device &screen(SCREEN(config,"screen"));
 	screen.set_refresh_hz(60); screen.set_size(888,28); screen.set_visarea_full();
 	screen.set_screen_update(FUNC(p6066_state::screen_update));

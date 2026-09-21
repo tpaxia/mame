@@ -103,6 +103,12 @@ struct cpu_fixture {
   void control(unsigned){}void console_control(unsigned){}void console_output(unsigned){}
   unsigned console_input(unsigned){return 0;}bool ecof(){return false;}
  };
+ // This existing fixture tests the non-DMA synchronous configuration.
+ bool m_memory_active=false; unsigned m_sampled=0,m_fetch_invalid_before=0;
+ struct memory_wait {};
+ bool m_memory_ready_cb(){return true;} void m_phase_cb(unsigned){}
+ u16 memory_read(u16 a,u16 mask=65535){return m_program.read_word(a,mask);}
+ void memory_write(u16 a,u16 v,u16 mask=65535){m_program.write_word(a,v,mask);}
  void execute_run();
  void instruction(unsigned op){assert(m_phase==0);word=op;m_icount=2;execute_run();assert(m_phase==0);}
  cpu_fixture(){m_core.level=4;m_core.active=16;m_core.cpu19m=true;m_core.l[0]=0x2000;m_core.l[1]=0x3000;}

@@ -5,13 +5,21 @@
 #pragma once
 #include "dislot.h"
 #include "arbiter.h"
+#include "dma.h"
 #include <array>
 
 class p6066_bus_device;
+class p6066_rodma_device;
 class device_p6066_card_interface : public device_interface
 {
 	friend class p6066_bus_device;
+class p6066_rodma_device;
 public:
+	// DMA segment/chain membership is physical configuration, independent of IRQ priority.
+	void set_dma_memory(bool shared) { m_dma_memory = shared; }
+	void set_dma_position(int position) { m_dma_position = position; }
+	virtual p6066_dma_cycle dma_grant() { fatalerror("DMA grant to non-DMA card"); }
+	virtual void dma_done(u16 data, bool invalid) { }
 	virtual bool memory_claims(u16 address) const { return false; }
 	virtual u16 memory_r(u16 address, u16 mask) { return 0; }
 	virtual void memory_w(u16 address, u16 data, u16 mask) { }
@@ -46,6 +54,8 @@ protected:
 	p6066_bus_device *m_bus = nullptr;
 private:
 	u16 m_base = 0;
+	bool m_dma_memory = false;
+	int m_dma_position = -1;
 };
 
 class p6066_bus_device : public device_t
@@ -54,6 +64,17 @@ public:
 	p6066_bus_device(const machine_config &, const char *, device_t *, u32 clock = 0);
 	auto invalid_cb() { return m_invalid_cb.bind(); }
 	auto ecorn_output_cb() { return m_ecorn_output_cb.bind(); }
+	void set_dma_bridge(p6066_rodma_device &bridge);
+	void dma_request(device_p6066_card_interface &card, bool state);
+	p6066_dma_cycle dma_grant(unsigned position);
+	void dma_done(unsigned position, u16 data, bool invalid);
+	u16 dma_memory_cycle(const p6066_dma_cycle &cycle, bool &invalid);
+	void dma_cpu_invalid() { m_invalid_cb(1); }
+	u8 shared_memory_r(offs_t address);
+	void cpu_memory_begin(offs_t address, u16 data, u16 mask);
+	int cpu_memory_ready();
+	u16 cpu_memory_data();
+	void cpu_phase_w(u8 beta);
 	void add_card(unsigned position, u16 base, device_p6066_card_interface &card);
 	u16 memory_r(offs_t address, u16 mask = 0xffff);
 	void memory_w(offs_t address, u16 data, u16 mask = 0xffff);
@@ -77,6 +98,8 @@ private:
 	device_p6066_card_interface *channel_card(unsigned level);
 	std::array<device_p6066_card_interface *, 16> m_cards{};
 	p6066_irq_arbiter m_irq;
+	p6066_rodma_device *m_dma_bridge = nullptr;
+	device_p6066_card_interface &dma_card(unsigned position);
 	void refresh_requests();
 	devcb_write_line m_invalid_cb, m_ecorn_output_cb;
 	u32 m_floppy_selects = 0;

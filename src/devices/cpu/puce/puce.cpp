@@ -34,6 +34,11 @@ puce_device::puce_device(const machine_config &mconfig, const char *tag, device_
 	, m_service_console_input_cb(*this, 0)
 	, m_service_console_control_cb(*this)
 	, m_ecof_cb(*this, 0)
+	, m_shared_memory_cb(*this, 0)
+	, m_memory_begin_cb(*this)
+	, m_memory_ready_cb(*this, 0)
+	, m_memory_data_cb(*this, 0)
+	, m_phase_cb(*this)
 {
 }
 
@@ -55,6 +60,9 @@ void puce_device::device_start()
 	save_item(NAME(m_core.ecorn));
 	save_item(NAME(m_core.inhibit_level3));
 	machine().save().register_postload(save_prepost_delegate(FUNC(puce_device::update_ecorn), this));
+	save_item(NAME(m_memory_active)); save_item(NAME(m_sampled));
+	save_item(NAME(m_sample_input)); save_item(NAME(m_sample_type));
+	save_item(NAME(m_fetch_invalid_before));
 	save_item(NAME(m_ir));
 	save_item(NAME(m_fetch_pc));
 	save_item(NAME(m_phase));
@@ -82,6 +90,7 @@ void puce_device::update_ecorn()
 void puce_device::device_reset()
 {
 	m_core.reset();
+	m_memory_active = false; m_sampled = 0;
 	update_ecorn();
 	m_stopped = false;
 	m_invalid_pending = false;
@@ -126,14 +135,26 @@ struct puce_device::channel_adapter
 	{
 		return cpu.m_core.external_channel_level();
 	}
-	u16 read_word(u16 address) { return cpu.m_program.read_word(address); }
-	void write_word(u16 address, u16 value) { cpu.m_program.write_word(address, value); }
-	u8 read_byte(u16 address) { return cpu.m_program.read_word(address >> 1, puce_state::byte_mask(address)) >> puce_state::byte_shift(address); }
-	void write_byte(u16 address, u8 value) { cpu.m_program.write_word(address >> 1, u16(value) << puce_state::byte_shift(address), puce_state::byte_mask(address)); }
-	u16 name_type() { return cpu.m_name_type_cb(channel_level()); }
-	u8 input() { return cpu.m_input_data_cb(channel_level()); }
+	u16 read_word(u16 address) { return cpu.memory_read(address); }
+	void write_word(u16 address, u16 value) { cpu.memory_write(address, value); }
+	u8 read_byte(u16 address) { return cpu.memory_read(address >> 1, puce_state::byte_mask(address)) >> puce_state::byte_shift(address); }
+	void write_byte(u16 address, u8 value) { cpu.memory_write(address >> 1, u16(value) << puce_state::byte_shift(address), puce_state::byte_mask(address)); }
+	u16 name_type()
+	{
+		if (!(cpu.m_sampled & 2)) { cpu.m_sample_type = cpu.m_name_type_cb(channel_level()); cpu.m_sampled |= 2; }
+		return cpu.m_sample_type;
+	}
+	u8 input()
+	{
+		if (!(cpu.m_sampled & 1)) { cpu.m_sample_input = cpu.m_input_data_cb(channel_level()); cpu.m_sampled |= 1; }
+		return cpu.m_sample_input;
+	}
 	void output(u16 value, u16 mask) { cpu.m_data_cb(channel_level(), value, mask); }
-	void command(u16 value, u16 mask) { cpu.m_command_cb(channel_level(), value, mask); }
+	void command(u16 value, u16 mask) {
+		if (std::getenv("P6066_TRACE_IO"))
+			cpu.logerror("PUCE command PC=%04X data=%04X L2=%04X L7=%04X L8=%04X L9=%04X L10=%04X L11=%04X L12=%04X L14=%04X\n",cpu.m_fetch_pc,value,cpu.m_core.l[2],cpu.m_core.l[7],cpu.m_core.l[8],cpu.m_core.l[9],cpu.m_core.l[10],cpu.m_core.l[11],cpu.m_core.l[12],cpu.m_core.l[14]);
+		cpu.m_command_cb(channel_level(), value, mask);
+	}
 	void select(u8 value) { cpu.m_select_cb(value); }
 	void strobe() { cpu.m_strobe_cb(channel_level()); }
 	void control(u8 value) { cpu.m_control_cb(channel_level(), value); }
@@ -156,13 +177,43 @@ struct puce_device::channel_adapter
 	}
 };
 
+// Each documented memory/channel-memory BETA has one memory cycle. When that
+// cycle waits, restore only CPU register state and replay with the captured
+// result. Channel inputs preceding a write are latched; their strobe follows
+// the completed write and is never issued twice. ALFA arbitration is not replayed.
+u16 puce_device::memory_read(u16 address, u16 mask)
+{
+	if (!m_shared_memory_cb(address)) return m_program.read_word(address, mask);
+	if (!m_memory_active)
+	{
+		m_memory_active = true;
+		m_memory_begin_cb(address, 0, mask);
+		throw memory_wait{};
+	}
+	if (!m_memory_ready_cb()) throw memory_wait{};
+	return m_memory_data_cb();
+}
+void puce_device::memory_write(u16 address, u16 data, u16 mask)
+{
+	if (!m_shared_memory_cb(address)) { m_program.write_word(address, data, mask); return; }
+	if (!m_memory_active)
+	{
+		m_memory_active = true;
+		m_memory_begin_cb(0x10000U | address, data, mask);
+		throw memory_wait{};
+	}
+	if (!m_memory_ready_cb()) throw memory_wait{};
+}
+
 void puce_device::execute_run()
 {
 	while (m_icount > 0)
 	{
 		if (m_stopped) { m_icount = 0; return; }
+		if (m_memory_active && !m_memory_ready_cb()) { --m_icount; continue; }
 		if (m_phase == 0)
 		{
+			m_phase_cb(0);
 			// US4032895 table 16: ALFA strobes only higher levels.
 			m_interrupt_sync_cb(((1U << m_core.level) - 1) & 0x0e);
 			const u8 irq=m_irq_request_cb(m_core.external_irq_poll_level());
@@ -194,14 +245,24 @@ void puce_device::execute_run()
 			debugger_instruction_hook(m_fetch_pc);
 			// An older invalid data cycle can remain pending while level 1/2
 			// runs. Only a new fault from this read is an invalid fetch.
-			const u32 invalid_before_fetch = m_invalid_cycles;
-			m_ir = m_program.read_word(m_fetch_pc);
-			if (m_invalid_cycles != invalid_before_fetch) fatalerror("PUCE: invalid instruction fetch at %04X is not implemented", m_fetch_pc);
+			m_fetch_invalid_before = m_invalid_cycles;
+			m_phase = 2; // fetch continuation: interrupt arbitration already happened
+		}
+		if (m_phase == 2)
+		{
+			try { m_ir = memory_read(m_fetch_pc); }
+			catch (const memory_wait &) { --m_icount; continue; }
+			m_memory_active = false;
+			if (m_invalid_cycles != m_fetch_invalid_before) fatalerror("PUCE: invalid instruction fetch at %04X is not implemented", m_fetch_pc);
 			m_core.advance();
 			m_phase = 1;
 		}
 		else
 		{
+			if (!m_memory_active) m_phase_cb(1);
+			const puce_state before_memory = m_core;
+			try
+			{
 			const bool previous_ecorn = m_core.ecorn;
 			const unsigned previous_level = m_core.level;
 			bool done = m_core.execute_register(m_ir);
@@ -215,12 +276,12 @@ void puce_device::execute_run()
 			}
 			if (!done)
 				done = m_core.execute_word(m_ir,
-					[this] (u16 address) { return m_program.read_word(address); },
-					[this] (u16 address, u16 value) { m_program.write_word(address, value); });
+					[this] (u16 address) { return memory_read(address); },
+					[this] (u16 address, u16 value) { memory_write(address, value); });
 			if (!done)
 				done = m_core.execute_byte(m_ir,
-					[this] (u16 address) { return m_program.read_word(address >> 1, puce_state::byte_mask(address)) >> puce_state::byte_shift(address); },
-					[this] (u16 address, u8 value) { m_program.write_word(address >> 1, u16(value) << puce_state::byte_shift(address), puce_state::byte_mask(address)); });
+					[this] (u16 address) { return memory_read(address >> 1, puce_state::byte_mask(address)) >> puce_state::byte_shift(address); },
+					[this] (u16 address, u8 value) { memory_write(address >> 1, u16(value) << puce_state::byte_shift(address), puce_state::byte_mask(address)); });
 			if (!done)
 			{
 				channel_adapter channel{*this};
@@ -236,6 +297,9 @@ void puce_device::execute_run()
 				m_stopped_cb(1);
 			}
 
+			}
+			catch (const memory_wait &) { m_core = before_memory; --m_icount; continue; }
+			m_memory_active = false; m_sampled = 0;
 			m_phase = 0;
 		}
 		--m_icount;

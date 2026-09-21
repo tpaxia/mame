@@ -24,6 +24,9 @@ p6066_ram_device::p6066_ram_device(const machine_config &mconfig, const char *ta
 	: device_t(mconfig,P6066_RAM,tag,owner,clock), device_p6066_card_interface(mconfig,*this), m_address(*this,"BASE") { }
 void p6066_ram_device::device_start()
 {
+	// Development chassis places these RAM cards on the shared side.
+	// ME006 and ROMCA remain on the private CPU segment.
+	set_dma_memory(true);
 	if (!m_words || m_words>m_ram.size()) fatalerror("Invalid P6066 RAM board capacity");
 	save_item(NAME(m_ram));
 }
