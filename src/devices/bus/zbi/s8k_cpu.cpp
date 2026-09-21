@@ -115,7 +115,8 @@ void s8k_cpu_base::base_device_resolve_objects()
 
 	m_maincpu->ns().append(*m_bus, FUNC(zbi_bus_device::ns_w));
 	m_maincpu->busack().append(*m_bus, FUNC(zbi_bus_device::busack_w));
-	m_maincpu->viack().set(*m_bus, FUNC(zbi_bus_device::viack_r));
+	m_maincpu->viack().set(*this, FUNC(s8k_cpu_base::viack_r));
+	m_maincpu->nviack().set(*this, FUNC(s8k_cpu_base::nviack_r));
 }
 
 //**************************************************************************
@@ -170,8 +171,29 @@ uint16_t s8k_cpu_base::segtack_r()
 	return code;
 }
 
+void s8k_cpu_base::mmu_instruction_end()
+{
+	m_mmu_code->instruction_end();
+	m_mmu_data->instruction_end();
+	m_mmu_stck->instruction_end();
+}
+
+uint16_t s8k_cpu_base::viack_r()
+{
+	mmu_instruction_end();
+	return m_bus->viack_r();
+}
+
+uint16_t s8k_cpu_base::nviack_r()
+{
+	mmu_instruction_end();
+	return 0xffff;
+}
+
 uint16_t s8k_cpu_base::nmiack_r()
 {
+	mmu_instruction_end();
+
 	uint16_t code = m_nmi_code;
 
 	m_nmi_code = 0;
@@ -557,30 +579,33 @@ bool zbi_s8k_cpu10_card_device::translate_addr(int spacenum, bool write, offs_t 
 		m_ctc[0]->trg3(0);
 	}
 
-	if (m_reg_scr & SCR_MMU_ONH)
+	bool const code_access = (spacenum == AS_PROGRAM);
+	int const st = code_access ?
+				(m_maincpu->is_ifetch1() ?
+					z8002_device::ST_IFETCH_1 :
+					z8002_device::ST_IFETCH_N) :
+				(stack_access ?
+					z8002_device::ST_REQ_STACK :
+					z8002_device::ST_REQ_DATA);
+
+	observe_bus_cycle(offset, !m_dma_on && st == z8002_device::ST_IFETCH_1);
+	// SUP is shared by all three MMUs, not just the selected address driver.
+	if (!machine().side_effects_disabled() && !m_dma_on &&
+		(m_mmu_code->cpu_suppressed() || m_mmu_data->cpu_suppressed() || m_mmu_stck->cpu_suppressed()))
+		return false;
+
+	z8010_device *const mmu = code_access ?
+						select_code_mmu(offset) : select_data_mmu(offset, m_reg_sbr, m_reg_nbr);
+
+	if (mmu)
 	{
-		bool code_access = (spacenum == AS_PROGRAM);
-		int st = code_access ?
-					(m_maincpu->is_ifetch1() ?
-						z8002_device::ST_IFETCH_1 :
-						z8002_device::ST_IFETCH_N) :
-					(stack_access ?
-						z8002_device::ST_REQ_STACK :
-						z8002_device::ST_REQ_DATA);
+		LOG("%s MMU MEM REQ (space %d): %06x\n", machine().describe_context(), spacenum, offset);
 
-		observe_bus_cycle(offset, st == z8002_device::ST_IFETCH_1);
-
-		z8010_device *mmu = code_access ?
-							select_code_mmu(offset) : select_data_mmu(offset, m_reg_sbr, m_reg_nbr);
-
-		if (mmu)
-		{
-			LOG("%s MMU MEM REQ (space %d): %06x\n", machine().describe_context(), spacenum, offset);
-
-			offset &= 0x3f'ffff;    // Mask off seg bit 7 to disable URS checking in MMUs
-
-			return mmu->translate(offset, write, true, m_dma_on, st);
-		}
+		auto const result = mmu->translate(offset & 0x3f'ffff, write, true, m_dma_on, st);
+		if (result.suppress || ((m_reg_scr & SCR_MMU_ONH) && !result.address_driven))
+			return false;
+		if (m_reg_scr & SCR_MMU_ONH)
+			offset = result.address;
 	}
 
 	return true;
@@ -1018,32 +1043,35 @@ bool zbi_s8k_hpcpu_card_device::translate_addr(int spacenum, bool write, offs_t 
 
 	offset <<= 1;
 
-	if (m_reg_scr & SCR_MMU_ONH)
+	bool const code_access = (spacenum == AS_PROGRAM);
+	int const st = code_access ?
+				(m_maincpu->is_ifetch1() ?
+					z8002_device::ST_IFETCH_1 :
+					z8002_device::ST_IFETCH_N) :
+				(stack_access ?
+					z8002_device::ST_REQ_STACK :
+					z8002_device::ST_REQ_DATA);
+
+	// Board latches and MMU bus snoop see the cycle before any
+	// violation can be raised for it.
+	observe_bus_cycle(offset, !m_dma_on && st == z8002_device::ST_IFETCH_1);
+	// SUP is shared by all three MMUs, not just the selected address driver.
+	if (!machine().side_effects_disabled() && !m_dma_on &&
+		(m_mmu_code->cpu_suppressed() || m_mmu_data->cpu_suppressed() || m_mmu_stck->cpu_suppressed()))
+		return false;
+
+	z8010_device *const mmu = code_access ?
+						select_code_mmu(offset) : select_data_mmu(offset, 0, m_reg_ubr);
+
+	if (mmu)
 	{
-		bool code_access = (spacenum == AS_PROGRAM);
-		int st = code_access ?
-					(m_maincpu->is_ifetch1() ?
-						z8002_device::ST_IFETCH_1 :
-						z8002_device::ST_IFETCH_N) :
-					(stack_access ?
-						z8002_device::ST_REQ_STACK :
-						z8002_device::ST_REQ_DATA);
+		LOG("%s MMU MEM REQ (space %d): %06x\n", machine().describe_context(), spacenum, offset);
 
-		// Board latches and MMU bus snoop see the cycle before any
-		// violation can be raised for it.
-		observe_bus_cycle(offset, st == z8002_device::ST_IFETCH_1);
-
-		z8010_device *mmu = code_access ?
-							select_code_mmu(offset) : select_data_mmu(offset, 0, m_reg_ubr);
-
-		if (mmu)
-		{
-			LOG("%s MMU MEM REQ (space %d): %06x\n", machine().describe_context(), spacenum, offset);
-
-			offset &= 0x3f'ffff;    // Mask off seg bit 7 to disable URS checking in MMUs
-
-			return mmu->translate(offset, write, true, m_dma_on, st);
-		}
+		auto const result = mmu->translate(offset & 0x3f'ffff, write, true, m_dma_on, st);
+		if (result.suppress || ((m_reg_scr & SCR_MMU_ONH) && !result.address_driven))
+			return false;
+		if (m_reg_scr & SCR_MMU_ONH)
+			offset = result.address;
 	}
 
 	return true;

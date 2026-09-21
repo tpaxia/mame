@@ -109,9 +109,21 @@ public:
 	uint8_t read(offs_t offset);
 	void write(offs_t offset, uint8_t data);
 
-	bool translate(offs_t &offset, bool write, bool sys, bool dma, int st);
+	struct memory_result
+	{
+		offs_t address;       // valid only when address_driven is true
+		bool address_driven;  // false when the address outputs are high impedance
+		bool suppress;        // SUP asserted for this memory cycle
+	};
+
+	memory_result translate(offs_t offset, bool write, bool sys, bool dma, int st);
 
 	void ifetch1_observed(offs_t offset);
+	// Acknowledge cycles end the current instruction before trap-entry memory
+	// accesses.  A genuine IFETCH1 also ends it; DMA must not call this hook.
+	void instruction_end() { m_cpu_suppress = false; }
+	// CPU SUP contribution, for boards combining outputs from several MMUs.
+	bool cpu_suppressed() const { return m_cpu_suppress; }
 
 protected:
 	virtual void device_start() override ATTR_COLD;
@@ -153,6 +165,7 @@ protected:
 	/* running latch of the last IFETCH1 cycle observed on the bus */
 	uint8_t m_if1_seg;
 	uint8_t m_if1_hoffs;
+	bool m_cpu_suppress = false;
 };
 
 // device type definition
