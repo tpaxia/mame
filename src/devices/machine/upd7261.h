@@ -21,6 +21,8 @@ public:
 	// input lines
 	void tc_w(int state);
 	void head_w(u8 data) { m_head = data; }
+	u8 read(offs_t offset);
+	void write(offs_t offset, u8 data);
 
 	void map(address_map &map) ATTR_COLD;
 
