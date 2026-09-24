@@ -49,17 +49,6 @@ struct p6066_go011_state
 		return written[offset] && (ram[offset] & (0x80 >> (x & 7)));
 	}
 
-	bool text_cursor_pixel(unsigned x, unsigned y, bool blink_on) const
-	{
-		if (blanked || !blink_on || !pointer_x_known || !pointer_y_known)
-			return false;
-		// Text firmware emits 119A and (1026 - 7*column) modulo 1024.
-		// Undo its three-pixel bias; graphics coordinates use another origin.
-		const unsigned left = (pointer_x() + 3) & 1023;
-		return pointer_y() == 400 && y == 400 && x < visible_width
-			&& x >= left && x - left < 5;
-	}
-
 	void reset()
 	{
 		selected = false;

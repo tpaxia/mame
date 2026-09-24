@@ -37,14 +37,22 @@ struct device_p6066_card_interface {
 };
 struct p6066_goino_device:device_p6066_card_interface {
  bool m_keyboard_down=false,m_mode_down=false;
+ u8 m_decimal_position=15;
+ struct printer_device {void tick(p6066_goino_state &state){state.printer_tick();} u8 status(const p6066_goino_state &state)const{return (state.printer_running||state.printer_feeding)?0x10:0;}} printer;
+ struct printer_slot {printer_device *card=nullptr;printer_device *get_card_device(){return card;}printer_slot *operator->(){return this;}} slot;
+ printer_slot *m_printer_slot=&slot;
+ struct beeper_device {int state=0;void set_state(int value){state=value;}beeper_device *operator->(){return this;}} beeper;
+ beeper_device *m_beeper=&beeper;
  void keyboard_command(unsigned, u16) {}
  p6066_goino_state m_state;
- struct machine_stub {const char *describe_context(){return "fixture";}};
- machine_stub machine(){return {};}
+ std::array<u8,16> m_lamps{};
+ unsigned ticks=0;
+ struct machine_stub {unsigned ticks;const char *describe_context(){return "fixture";}struct time_stub {unsigned ticks;unsigned as_ticks(unsigned)const{return ticks;}};time_stub time(){return {ticks};}};
+ machine_stub machine(){return {ticks};}
  struct auxiliary {bool isunset(){return true;} unsigned operator()(unsigned){assert(false);return 0;}}m_auxiliary_input_cb;
- struct time_value {int us;static time_value from_usec(int v){return {v};}};
- struct timer_stub {int first=0,period=0;void adjust(time_value a,int,time_value b){first=a.us;period=b.us;}}timer;
- using attotime=time_value;timer_stub *m_timer=&timer;
+ struct time_value {int us;static time_value from_usec(int v){return {v};}static time_value from_msec(int v){return {v*1000};}};
+ struct timer_stub {int first=0,period=0;bool enabled=true;void adjust(time_value a,int=0,time_value b={0}){first=a.us;period=b.us;enabled=true;}void enable(bool value){enabled=value;}}timer,beep_timer;
+ using attotime=time_value;timer_stub *m_timer=&timer,*m_beep_timer=&beep_timer;
  void device_reset();void update_outputs(){}
  bool direct_selected()const override{return m_state.selected;}
  unsigned irq_requests()const override{return m_state.irq_requests();}
@@ -54,7 +62,7 @@ struct p6066_goino_device:device_p6066_card_interface {
  u8 input_data(unsigned level)override{return input_data_r(level);}
  void data_w(offs_t,u16,u16=0xffff);
  void irq_ack(unsigned)override;u16 name_type_r(offs_t);u8 input_data_r(offs_t);
- void tick();
+ void tick();void beep_off();
 '''
 for sig in ('virtual void output_data_masked(', 'virtual void command_word(', 'virtual void strobe('):
     source+=method(header,sig)+'\n'
@@ -62,6 +70,7 @@ source+='};\n'
 for sig in ('void p6066_goino_device::device_reset()', 'void p6066_goino_device::data_w(', 'void p6066_goino_device::irq_ack(', 'u16 p6066_goino_device::name_type_r(', 'u8 p6066_goino_device::input_data_r('):
     source+=method('src/devices/bus/p6066/goino.cpp',sig)+'\n'
 source+=method('src/devices/bus/p6066/goino.cpp','TIMER_CALLBACK_MEMBER(p6066_goino_device::timer_tick)','void p6066_goino_device::tick()')+'\n'
+source+=method('src/devices/bus/p6066/goino.cpp','TIMER_CALLBACK_MEMBER(p6066_goino_device::beep_off)','void p6066_goino_device::beep_off()')+'\n'
 source+=r'''
 struct p6066_bus_device {
  void trace_io(const char *,unsigned,u16,u16,device_p6066_card_interface *) {} // diagnostic observer only
@@ -121,8 +130,33 @@ int main(){
  cpu_fixture c;p6066_goino_device g;
  g.m_state.owned3=true;g.m_state.timer_request=true;g.m_state.basic_mode=false;
  g.device_reset();assert(!g.m_state.owned3&&!g.m_state.timer_request&&g.m_state.basic_mode);
+ assert(g.beeper.state==0&&!g.beep_timer.enabled);
+ assert(!g.m_state.printer_attached);
+ g.m_state.select(0);g.m_state.data(0xff00,4);g.tick();g.m_state.synchronize(12);
+ assert(!g.m_state.printer_running&&!g.m_state.column_request&&!g.m_state.matrix_request);
+ assert(g.m_lamps[7]==1);g.ticks=1;g.tick();assert(g.m_lamps[7]==0);
+ g.m_state.input_select=1;assert(g.input_data_r(4)==0x4f);
+ c.bus.m_cards[4]=&g;c.m_core.l[2]=0x9000;c.instruction(0xfb28);
+ assert(c.m_core.a(2)==0x4f);
+ for(unsigned position=0;position<16;++position){
+  g.m_decimal_position=position;c.m_core.l[2]=0x9000;c.instruction(0xfb28);
+  assert(c.m_core.a(2)==(0x40|position));
+ }
+ g.m_decimal_position=3;g.slot.card=&g.printer;g.device_reset();
+ assert(g.m_state.printer_attached && g.m_decimal_position==3);
+ g.m_state.select(0);g.m_state.input_select=1;assert(g.input_data_r(4)==3);
+ g.m_decimal_position=15;
  assert(g.timer.first==6300&&g.timer.period==6300);
  c.bus.m_cards[4]=&g;g.m_state.select(0);
+ g.m_state.input_select=1;c.instruction(0xfb28);assert(c.m_core.a(2)==15);
+ for(int bit=15;bit>=0;--bit)c.command(0x4000|((0x80>>bit)&1));
+ assert(g.m_state.lamps==0x80 && g.beeper.state==0);g.tick();assert(g.m_lamps[7]==1);
+ for(int bit=15;bit>=0;--bit)c.command(0x4001);
+ assert(g.m_state.lamps==0xffff && g.beeper.state==1 && g.beep_timer.first==200000);
+ g.beep_off();assert(g.beeper.state==0);
+ for(int bit=15;bit>=0;--bit)c.command(0x4000|((0x8084>>bit)&1));
+ assert(g.m_state.lamps==0x8084 && g.beeper.state==1 && g.beep_timer.first==200000);
+ g.beep_off();assert(g.beeper.state==0);
  c.command(0x0c00);assert(g.m_state.timer_enabled);g.tick();
  c.instruction(0xc900);assert(c.m_core.level==4 && g.m_state.synchronized3==4); // ASPEO
  c.command(0x0e00);c.instruction(0xc900);
@@ -146,8 +180,8 @@ int main(){
  // Keyboard: async ready -> ECM3 -> grant -> DEA -> RECAN -> COM0.
  g.m_state.keyboard_code=0x165;g.m_state.keyboard_request=true;
  c.instruction(0xc900);assert(c.m_core.level==3);
- c.instruction(0xaab0);assert(c.m_core.l[11]==0x6000);
- c.m_core.l[2]=0x2000;c.instruction(0xfb28);assert(c.m_core.a(2)==0x65);
+ c.instruction(0xaab0);assert(c.m_core.l[11]==0x1000);
+ c.m_core.l[2]=0x2000;c.instruction(0xfb28);assert(c.m_core.a(2)==0x45);
  c.command(0x0700);assert(g.m_state.synchronized3==2);c.instruction(0xbd00);
  assert(c.m_core.level==4&&!g.irq_requests());
  // Button selection, read after RECON and lamp output at owned level 3.
@@ -168,7 +202,7 @@ int main(){
  assert(c.m_core.level==3 && g.input_data_r(3)==0);
  c.command(0xf800);c.instruction(0xbd00);
  c.command(0xff00);
- g.m_state.input_select=1;assert(g.input_data_r(4)==0x10);
+ g.m_state.input_select=1;assert(g.input_data_r(4)==0x1f);
  for(unsigned n=0;n<3;++n){
   g.m_state.printer_tick();c.instruction(0xc900);assert(c.m_core.level==2);
   c.m_core.l[2]=n;c.instruction(0xfc20);c.instruction(0xbd00);
@@ -180,15 +214,15 @@ int main(){
   c.m_core.l[2]=0x7f-n;c.instruction(0xfc20);c.instruction(0xbd00);
  }
  c.command(0xf100);c.command(0xf200);
- g.m_state.input_select=1;assert(g.input_data_r(4)==0x10);
+ g.m_state.input_select=1;assert(g.input_data_r(4)==0x1f);
  for(unsigned n=0;n<10;++n){
   g.m_state.printer_tick();c.instruction(0xc900);assert(c.m_core.level==3);
   c.command(0xf400);if(n==9)c.command(0xf300);c.instruction(0xbd00);
  }
  assert(g.m_state.printer_columns_discarded==11); // includes earlier nested test
  g.m_state.printer_tick();assert(!g.irq_requests());
- // Explicit printer-status stub; deliberate specialization PROM remains unsupported.
- g.m_state.input_select=1;assert(g.input_data_r(4)==0);
+ // Decimal bits remain readable independently of printer status.
+ g.m_state.input_select=1;assert(g.input_data_r(4)==15);
  bool stopped=false;g.m_state.input_select=3;
  try{g.input_data_r(4);}catch(const std::runtime_error&){stopped=true;}assert(stopped);
  std::puts("PASS: production CPU/bus/GOINO timer, masks, type, keyboard, buttons, lamp output and nested level-2/3 service");

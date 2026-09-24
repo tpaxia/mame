@@ -5,8 +5,8 @@
 #pragma once
 #include <cstdint>
 // TASTIERA fig.5/9: no modifier, SHIFT, CONTROL, SHIFT+CONTROL.
-// TAS9 is derived with GOINO fig.1.12: nonalphabetic codes must survive
-// NORMAL-mode TES6 conversion; alphabetic codes switch case. BASIC gets
+// TAS9 is derived from the GOINO bit relations: nonalphabetic codes must survive
+// BASIC-mode TES6 conversion; alphabetic codes switch case. BASIC gets
 // modifier variants from the key table; firmware interprets the mode type.
 // 0x200 is the separate TASB down-arrow line; this is not an encoder ROM dump.
 struct p6066_key_definition { const char *name; std::uint16_t code[4]; };

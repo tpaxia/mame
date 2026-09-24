@@ -30,8 +30,7 @@ struct p6066_keyboard_device {
 };
 '''+methods+r'''
 int main(){
- // NORMAL-mode must preserve every nonalphabetic code; BASIC keeps its
- // encoded byte. Independent behavioral check of the ninth-bit derivation.
+ // NORMAL-mode must preserve every nonalphabetic code.
  for(unsigned key=26;key<91;++key)for(unsigned m=0;m<4;++m){
   if(key==53)continue;
   p6066_goino_state g;g.basic_mode=false;g.keyboard_code=p6066_keys[key].code[m];

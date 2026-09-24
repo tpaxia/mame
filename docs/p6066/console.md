@@ -39,14 +39,40 @@ four LED indicators. There is no on-screen restart button. Esc restarts the
 machine in full keyboard mode. With `-uimodekey F12`, F12 toggles MAME UI controls; enable
 them to access MAME menus. Lamp labels follow the console manual;
 the emulator-only CPU status indicator has been removed.
+Both console layouts place the stacked `olivetti` and `P 6066` plaques to the
+left of the narrow display, matching the supplied `P6066.jpg` front-panel
+photograph rather than adding a duplicate title above the console.
+The original-panel area uses the blue surround and dark inset visible in
+`P6066_2`; a thin horizontal rule separates it from the emulator-only KB MODE
+and drive-activity diagnostics below. There is no `CONSOLE` caption above it.
 
-The seven console-labelled panels display lamp outputs and accept button
-clicks. GOINO button interrupts and keyboard signal conversion are implemented;
+The seven console-labelled panels are translucent pushbuttons illuminated from
+within, not buttons with separate LEDs underneath. Both layouts illuminate the
+whole key face: BREAK red, the other six warm yellow, following `PANNELLO_ON.jpg`
+and `PANNELLO_ON2.jpg`. The buttons still display the same GOINO lamp outputs
+and accept clicks. GOINO button interrupts and keyboard signal conversion are implemented;
 the keyboard peripheral and agreed host mapping are implemented below.
-See the current interrupt/input section below. LED indicators currently expose the raw register bits;
-the LER1 driver circuit/blink and the cicalino monostable/audio remain to be
-implemented. Calculator indication uses raw bit9 (LAMX2), corroborated by
+See the current interrupt/input section below. RUNNING has a functional 4 Hz
+blink; its revision-specific LED wiring remains unverified. Calculator
+indication uses raw bit9 (LAMX2), corroborated by
 firmware output and interactive mode changes.
+
+The lamp word also retriggers the CONDY cicalino when its functional bit 2 is
+set. It sounds at approximately 1200 Hz for 0.2 s, as specified by the combined
+manual's GOINO p.11 (PDF15) and CONDY p.14 (PDF58). Original startup word
+`FFFF` produces the first short beep; the no-disk/timeout word `8084` produces
+the second. `0000` and READY `0080` do not. The sound follows completed serial
+lamp transfers, not a boot-time or floppy-error shortcut. The exact CONDY
+shift-register pin and 15th-strobe timing remain to be confirmed on the
+P6066 board revision.
+
+KB MODE starts unlit in BASIC mode: an unshifted alphabetic key supplies its
+uppercase character, and Shift supplies the BASIC-keyword code. Pressing F9
+lights KB MODE and selects typewriter mode, with lowercase unshifted and
+uppercase shifted. The host key bindings are unchanged. The functional GOINO
+type/TES6 routing follows the P6066 General Manual printed pp.1-5/1-6
+(PDF19/20) and combined GOINO printed p.9 (PDF13); the conflict with the
+older fig.1.12 transcription is recorded in the parent project's `TBD.md`.
 
 The display is blank on the current cold CAROM path because firmware has not
 sent it a message before the floppy-controller timeout. The regression fixture separately exercises
@@ -92,7 +118,7 @@ The device uses deterministic reset values without claiming verified physical
 reset behavior. Direct level-4 selection and interrupt-owned level-3 selection are now
 separate. A level-2 printer column uses its own buffer/strobe path.
 Save items cover partial transfers and outputs, but save/load integration has
-not yet been tested. Sound is still flagged unemulated.
+not yet been tested.
 
 ## Reproduce
 
@@ -228,7 +254,7 @@ agreed host keyboard below. Down supplies TASB; Alt toggles Keyboard Mode.
 
 Level-3 output now operates under this board's grant; level-2 output loads
 printer columns without decoding commands. Printer mechanics remain absent.
-Printer/decimal status uses the explicitly approved stub described below;
+Printer status and the decimal-wheel code share DEA selector 1;
 specialization PROM input still stops if unbound. A partially specified ECD transfer propagates
 validity masks to display/lamp state; unknown display columns are not drawn.
 Pulse stretching, physical timer phase and complete keyboard scanning remain
@@ -268,15 +294,44 @@ letters through the keyboard interrupt/acknowledgement path. The early attempt
 exposed two older GOINO transcription errors: BASIC/normal type encodings and
 the keyboard versus printer input-mux selection. Runtime dispatch cross-checks
 are recorded in the parent project's keyboard implementation notes. The
-specialization PROM is still unsupported; printer/decimal input1 now has an
-explicitly user-approved zero-status stub, not a claim about physical wiring.
+specialization PROM is still unsupported; printer presence and busy status
+remain separate from the decimal-wheel nibble.
+
+### Decimal wheel
+
+The wheel at the right of the four console LEDs has sixteen positions: 0–13,
+Flt and ST. The panel's upper/lower controls advance it in either direction,
+and the window shows its current position. It resets to ST, matching the
+provided `P6066_2.jpg` photograph. DEA selector 1 now returns the wheel's
+four-bit code alongside printer absence/busy status, whether or not a printer
+card is installed. Changing the wheel does not require a reset. The General
+Manual, printed pp.1-15 and 6-12/6-13 (PDF pp.29, 570–571), says 0 suppresses
+fractional digits, 1–13 select that many places, Flt displays internal
+scientific notation, and ST selects up to eight significant digits.
+
+GOINO fig.1.2 (PDF p.7, printed p.3) shows four decimal-wheel wires on the
+shared input path. The mapping of their electrical polarity to EPD bits is
+not present in that block diagram; nibble values 0–13/Flt=14/ST=15 remain a
+functional coding pending DISL006 confirmation. The integration test reads
+all sixteen values through the production CPU/bus/GOINO callbacks.
 
 ### P6066 indicator labels and outstanding driver correction
 
 P6066 Manuale Generale, printed pp.1-13/1-14 (PDF27/28), identifies
 the four indicators top-to-bottom as RUNNING, LINE OVERFLOW, DEG GRAD,
 ON LINE. RUNNING is steady while waiting for keyboard input and blinks during
-operations or certain syntax errors. The layout now uses those names.
+operations or certain syntax errors. The layout now uses those names. The
+panel photographs `reference/DocumentazioneP6060_P6066/Foto & video/PANNELLO_ON.jpg`
+and `PANNELLO_ON2.jpg` show RUNNING green, LINE OVERFLOW red, and DEG GRAD and
+ON LINE yellow, with all four inscriptions aligned on the left. `PANNELLO_ON2.jpg`
+also shows RUNNING and ON LINE lit while the other two indicators are dark.
+The layout reflects the visible colours and alignment; photographic brightness
+does not establish LED electrical polarity or blink timing.
+
+`POWERON.mp4` shows the assembled machine with its printer and paper installed:
+the console indicators and button lamps illuminate during startup, the display
+later reaches `READY`, and the printer produces paper output. It is not evidence
+for the printer-absent `PRINT`/`CONTINUE` path or for exact lamp-driver timing.
 
 The all-dark boot state was caused by discarded COM1 lamp transfers. Internal
 level-3 service asserts no external ECC grant; GOINO fig.1.2 and printed p.12
@@ -286,17 +341,61 @@ still route through their owner. An independent COM1/CPU/bus test checks this.
 Live 066/068: after Shift+CLEAR, lamp word 0080; NO PRINT toggles it to 8080
 and back to 0080. The original active-low button code is retained.
 
-Remaining limitation: RUNNING blink control is not yet implemented. GOINO p.11
-(PDF15) says it is steady or intermittent, never permanently off. CONDY
-pp.14/15 (PDF58/59), figs.17/18, assigns 4 Hz modulation to LER1N, whereas the
-P6066 panel places RUNNING first. Resolve the revision and driver mapping
-before claiming full lamp behavior. Steady keyboard-wait RUNNING is verified.
+RUNNING now renders steadily when raw lamp bit 7 is set and blinks at 4 Hz
+otherwise. GOINO p.11 (PDF15) says it is steady or intermittent, never
+permanently off; CONDY pp.14/15 (PDF58/59), figs.17/18, specifies the 4 Hz
+modulation. The user confirms that RUNNING blinks during floppy activity, while
+FD1, FD2, HD and SHD are separate emulator activity indicators and must remain
+unchanged. FLODI activity does not drive RUNNING in the model: the CPU/ESE lamp
+word selects its mode, and GOINO supplies the blink phase. No extra blink is
+imposed on the other three console LEDs. The READY lamp word `0080` supports raw bit 7 as the steady
+selection. This is a functional panel mapping, not a resolved P6066 circuit
+trace: the older CONDY diagram assigns modulation to LER1N, whereas the P6066
+panel places RUNNING first. In that P6060 diagram (PDF p.59, fig.18), LED0 is
+shift-register bit 8 and LED1 bit 9; reversing the serial order maps them to
+transmitted word bits 7 and 6 respectively. The text on PDF
+p.58 identifies LED1/LER1N as the modulated output, not LED0. Thus `0080` at
+READY and a blinking physical RUNNING corroborate the functional P6066 rule,
+but do not prove that the P6066 CONDY wires RUNNING to raw bit 7 or uses the
+same LED numbering. Confirm the revision-specific driver connection before
+electrical sign-off.
+
+A read-only boot trace of disposable `067.IMD` (P6060 system) and `119.IMD`
+(P6066 assembler system), with the printer slot empty, captured completed
+16-bit GOINO lamp transfers through the production CPU/bus path. Both execute
+the same sequence: `FFFF` at PC `808F` during startup, `0000` at PC `81D6`
+during FD1 reading, and `0080` twice at PC `A462` after loading. The `0000`
+transfer occurs at 10.48 s on 067 and 12.28 s on 119; `0080` occurs at 15.53 s
+and 18.15 s respectively. The rendered RUNNING output alternates at 4 Hz for
+the entire `0000` interval, with no repeated lamp-word writes, then remains on
+for `0080`. Thus the guest selects a blink/steady mode; it does not generate
+individual blink edges through repeated register writes. This is emulation
+trace evidence for the functional mapping, not independent proof of P6066
+CONDY wiring or oscillator polarity.
 
 Calculator lamp: the layout uses raw bit9 (LAMX2), matching the observed
 0280 output on calculator-mode entry. The earlier bit8 binding left its
 lamp dark despite successful mode changes. This mapping is corroborated
 by firmware output and interactive operation; board pin mapping remains
 qualified pending the P6066 schematic.
+
+CONDY printed p.14 (PDF58), figs.16–17, places CONTINUE below TRACE and STEP
+below BREAK, but the lower-row lamp signals are not labelled in that figure.
+On the GO011-configured compilation disk, pressing either key at READY changes
+the guest lamp word from `0080` to `0086`, without setting the layout's
+CONTINUE or STEP lamp bits. Pressing a key does not light its lamp directly:
+the guest controls the serial CONDY lamp word. Whether the guest lights those
+lamps in a paused/stepping program state remains untested; do not infer a
+wiring change from the READY-state observation.
+
+A separate no-GO011 `067` run entered twelve BASIC lines and LIST through
+ordinary keyboard input. Ten CONTINUE presses each caused a new 224-column
+display transfer, confirming the paging path, but the sampled lamp word did
+not acquire a distinct CONTINUE or STEP bit. The General Manual printed
+pp.1-14/1-15 says an active function lights its key; it does not explicitly
+equate each LIST page request with the interrupted-program CONTINUE state.
+The mapping and function-state distinction remain unresolved, rather than
+being masked by a button-driven presentation lamp.
 
 The functional panel omits the emulator-only CPU RUNNING/STOPPED text and
 its diagnostic LED. CPU stop state remains available to the debugger and

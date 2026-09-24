@@ -6,68 +6,96 @@ copyright-holders: Salvatore Paxia
 <mamelayout version="2">
 <element name="panel_background"><rect><color red="0.075" green="0.085" blue="0.09"/></rect></element>
 <element name="divider"><rect><color red="0.35" green="0.39" blue="0.40"/></rect></element>
-<element name="case"><rect><color red="0.12" green="0.15" blue="0.16"/></rect></element>
+<element name="case"><rect><color red="0.18" green="0.27" blue="0.42"/></rect></element>
+<element name="panel_insert"><rect><color red="0.17" green="0.19" blue="0.22"/></rect></element>
+<element name="diagnostics"><rect><color red="0.09" green="0.11" blue="0.14"/></rect></element>
+<element name="diagnostic_divider"><rect><color red="0.53" green="0.57" blue="0.61"/></rect></element>
 <element name="glass"><rect><color red="0.025" green="0.035" blue="0.035"/></rect></element>
+<element name="logo_plate"><rect><color red="0.78" green="0.77" blue="0.70"/></rect></element>
+<element name="logo_olivetti"><text string="olivetti"><color red="0.19" green="0.20" blue="0.19"/></text></element>
+<element name="logo_model"><text string="P 6066"><color red="0.27" green="0.28" blue="0.27"/></text></element>
 <element name="key"><rect><color red="0.23" green="0.28" blue="0.29"/></rect></element>
-<element name="lamp"><rect state="0"><color red="0.12" green="0.15" blue="0.12"/></rect><rect state="1"><color red="0.78" green="0.92" blue="0.36"/></rect></element>
+<element name="key_yellow"><rect state="0"><color red="0.68" green="0.66" blue="0.60"/></rect><rect state="1"><color red="1" green="0.76" blue="0.36"/></rect></element>
+<element name="key_red"><rect state="0"><color red="0.32" green="0.07" blue="0.09"/></rect><rect state="1"><color red="1" green="0.16" blue="0.27"/></rect></element>
 <element name="status"><disk state="0"><color red="0.16" green="0.17" blue="0.15"/></disk><disk state="1"><color red="1" green="0.55" blue="0.15"/></disk></element>
+<element name="status_green"><disk state="0"><color red="0.12" green="0.18" blue="0.12"/></disk><disk state="1"><color red="0.2" green="0.9" blue="0.3"/></disk></element>
+<element name="status_red"><disk state="0"><color red="0.2" green="0.1" blue="0.1"/></disk><disk state="1"><color red="1" green="0.25" blue="0.1"/></disk></element>
+<element name="status_yellow"><disk state="0"><color red="0.19" green="0.17" blue="0.08"/></disk><disk state="1"><color red="1" green="0.82" blue="0.12"/></disk></element>
 <element name="disk_led"><disk state="0"><color red="0.16" green="0.17" blue="0.15"/></disk><disk state="1"><color red="0.2" green="0.9" blue="0.3"/></disk><disk state="2"><color red="1" green="0.25" blue="0.1"/></disk><disk state="3"><color red="1" green="0.75" blue="0.1"/></disk></element>
 <element name="disk_label0"><text string="FD1"><color red="0.85" green="0.89" blue="0.88"/></text></element>
 <element name="disk_label1"><text string="FD2"><color red="0.85" green="0.89" blue="0.88"/></text></element>
 <element name="disk_label2"><text string="HD"><color red="0.85" green="0.89" blue="0.88"/></text></element>
 <element name="disk_label3"><text string="SHD"><color red="0.85" green="0.89" blue="0.88"/></text></element>
 <element name="kbmode_label"><text string="KB MODE"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="title"><text string="olivetti P6066"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="sub"><text string="CONSOLE"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="display"><text string="DISPLAY"><color red="0.85" green="0.89" blue="0.88"/></text></element>
 <element name="footer"><text string="Esc  Restart     F12  UI controls"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="label0"><text string="CALCULATOR"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="label1"><text string="PRINT ALL"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="label2"><text string="TRACE"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="label3"><text string="BREAK"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="label4"><text string="NO PRINT"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="label5"><text string="CONTINUE"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="label6"><text string="STEP"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="ledtext0"><text string="RUNNING"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="ledtext1"><text string="LINE OVERFLOW"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="ledtext2"><text string="DEG GRAD"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<element name="ledtext3"><text string="ON LINE"><color red="0.85" green="0.89" blue="0.88"/></text></element>
-<group name="console"><bounds x="0" y="0" width="100" height="44"/>
-<element ref="case" ><bounds x="0" y="0" width="100" height="44"/></element>
-<element ref="title" ><bounds x="5" y="3" width="40" height="4"/></element>
-<element ref="sub" ><bounds x="80" y="4" width="15" height="2"/></element>
+<element name="label_calc"><text string="CALC"><color red="0.12" green="0.10" blue="0.08"/></text></element>
+<element name="label_mode"><text string="MODE"><color red="0.12" green="0.10" blue="0.08"/></text></element>
+<element name="label_print"><text string="PRINT"><color red="0.12" green="0.10" blue="0.08"/></text></element>
+<element name="label_all"><text string="ALL"><color red="0.12" green="0.10" blue="0.08"/></text></element>
+<element name="label_trace"><text string="TRACE"><color red="0.12" green="0.10" blue="0.08"/></text></element>
+<element name="label_break"><text string="BREAK"><color red="0.12" green="0.04" blue="0.05"/></text></element>
+<element name="label_no"><text string="NO"><color red="0.12" green="0.10" blue="0.08"/></text></element>
+<element name="label_continue1"><text string="CON-"><color red="0.12" green="0.10" blue="0.08"/></text></element>
+<element name="label_continue2"><text string="TINUE"><color red="0.12" green="0.10" blue="0.08"/></text></element>
+<element name="label_step"><text string="STEP"><color red="0.12" green="0.10" blue="0.08"/></text></element>
+<element name="ledtext0"><text string="RUNNING" align="1"><color red="0.85" green="0.89" blue="0.88"/></text></element>
+<element name="ledtext1"><text string="LINE OVERFLOW" align="1"><color red="0.85" green="0.89" blue="0.88"/></text></element>
+<element name="ledtext2"><text string="DEG GRAD" align="1"><color red="0.85" green="0.89" blue="0.88"/></text></element>
+<element name="ledtext3"><text string="ON LINE" align="1"><color red="0.85" green="0.89" blue="0.88"/></text></element>
+<element name="decimal_wheel"><rect><color red="0.04" green="0.05" blue="0.06"/></rect></element>
+<element name="decimal_window"><rect><color red="0.35" green="0.37" blue="0.39"/></rect></element>
+<element name="decimal_arrow_up"><text string="+"><color red="0.86" green="0.87" blue="0.86"/></text></element>
+<element name="decimal_arrow_down"><text string="-"><color red="0.86" green="0.87" blue="0.86"/></text></element>
+<element name="decimal_value"><text string="0" state="0"><color red="0.96" green="0.96" blue="0.95"/></text><text string="1" state="1"><color red="0.96" green="0.96" blue="0.95"/></text><text string="2" state="2"><color red="0.96" green="0.96" blue="0.95"/></text><text string="3" state="3"><color red="0.96" green="0.96" blue="0.95"/></text><text string="4" state="4"><color red="0.96" green="0.96" blue="0.95"/></text><text string="5" state="5"><color red="0.96" green="0.96" blue="0.95"/></text><text string="6" state="6"><color red="0.96" green="0.96" blue="0.95"/></text><text string="7" state="7"><color red="0.96" green="0.96" blue="0.95"/></text><text string="8" state="8"><color red="0.96" green="0.96" blue="0.95"/></text><text string="9" state="9"><color red="0.96" green="0.96" blue="0.95"/></text><text string="10" state="10"><color red="0.96" green="0.96" blue="0.95"/></text><text string="11" state="11"><color red="0.96" green="0.96" blue="0.95"/></text><text string="12" state="12"><color red="0.96" green="0.96" blue="0.95"/></text><text string="13" state="13"><color red="0.96" green="0.96" blue="0.95"/></text><text string="Flt" state="14"><color red="0.96" green="0.96" blue="0.95"/></text><text string="ST" state="15"><color red="0.96" green="0.96" blue="0.95"/></text></element>
+<group name="console"><bounds x="0" y="0" width="112" height="44"/>
+<element ref="case" ><bounds x="0" y="0" width="112" height="44"/></element>
+<element ref="panel_insert"><bounds x="4" y="9" width="104" height="27"/></element>
+<element ref="diagnostics"><bounds x="0" y="36.5" width="112" height="7.5"/></element>
+<element ref="diagnostic_divider"><bounds x="0" y="36.2" width="112" height="0.3"/></element>
 <element ref="glass" ><bounds x="4" y="10" width="92" height="10"/></element>
-<element ref="display" ><bounds x="6" y="10.5" width="10" height="1.2"/></element>
-<screen tag="screen"><bounds x="6" y="13" width="88" height="2.775"/></screen>
+<element ref="logo_plate"><bounds x="5.2" y="11" width="15.5" height="3.5"/></element>
+<element ref="logo_plate"><bounds x="5.2" y="15" width="15.5" height="3.5"/></element>
+<element ref="logo_olivetti"><bounds x="6" y="11.65" width="13.9" height="2.2"/></element>
+<element ref="logo_model"><bounds x="6" y="15.65" width="13.9" height="2.2"/></element>
+<screen tag="screen"><bounds x="24" y="13.3" width="70" height="2.2"/></screen>
 <element ref="key" inputtag="bus:console:goino:BUTTONS" inputmask="0x02"><bounds x="5" y="23" width="16" height="5"/></element>
-<element ref="label0" ><bounds x="5.5" y="23.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="bus:console:goino:console_lamp9" ><bounds x="7" y="26" width="12" height="1"/></element>
+<element ref="key_yellow" name="bus:console:goino:console_lamp9"><bounds x="5.7" y="23.55" width="14.6" height="3.9"/></element>
+<element ref="label_calc"><bounds x="6.5" y="24" width="13" height="1.25"/></element>
+<element ref="label_mode"><bounds x="6.5" y="25.5" width="13" height="1.25"/></element>
 <element ref="key" inputtag="bus:console:goino:BUTTONS" inputmask="0x40"><bounds x="23" y="23" width="16" height="5"/></element>
-<element ref="label1" ><bounds x="23.5" y="23.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="bus:console:goino:console_lamp14" ><bounds x="25" y="26" width="12" height="1"/></element>
+<element ref="key_yellow" name="bus:console:goino:console_lamp14"><bounds x="23.7" y="23.55" width="14.6" height="3.9"/></element>
+<element ref="label_print"><bounds x="24.5" y="24" width="13" height="1.25"/></element>
+<element ref="label_all"><bounds x="24.5" y="25.5" width="13" height="1.25"/></element>
 <element ref="key" inputtag="bus:console:goino:BUTTONS" inputmask="0x10"><bounds x="41" y="23" width="16" height="5"/></element>
-<element ref="label2" ><bounds x="41.5" y="23.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="bus:console:goino:console_lamp12" ><bounds x="43" y="26" width="12" height="1"/></element>
+<element ref="key_yellow" name="bus:console:goino:console_lamp12"><bounds x="41.7" y="23.55" width="14.6" height="3.9"/></element>
+<element ref="label_trace"><bounds x="42.5" y="24.85" width="13" height="1.3"/></element>
 <element ref="key" inputtag="bus:console:goino:BUTTONS" inputmask="0x04"><bounds x="59" y="23" width="16" height="5"/></element>
-<element ref="label3" ><bounds x="59.5" y="23.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="bus:console:goino:console_lamp10" ><bounds x="61" y="26" width="12" height="1"/></element>
+<element ref="key_red" name="bus:console:goino:console_lamp10"><bounds x="59.7" y="23.55" width="14.6" height="3.9"/></element>
+<element ref="label_break"><bounds x="60.5" y="24.85" width="13" height="1.3"/></element>
 <element ref="key" inputtag="bus:console:goino:BUTTONS" inputmask="0x80"><bounds x="23" y="30" width="16" height="5"/></element>
-<element ref="label4" ><bounds x="23.5" y="30.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="bus:console:goino:console_lamp15" ><bounds x="25" y="33" width="12" height="1"/></element>
+<element ref="key_yellow" name="bus:console:goino:console_lamp15"><bounds x="23.7" y="30.55" width="14.6" height="3.9"/></element>
+<element ref="label_no"><bounds x="24.5" y="31" width="13" height="1.25"/></element>
+<element ref="label_print"><bounds x="24.5" y="32.5" width="13" height="1.25"/></element>
 <element ref="key" inputtag="bus:console:goino:BUTTONS" inputmask="0x08"><bounds x="41" y="30" width="16" height="5"/></element>
-<element ref="label5" ><bounds x="41.5" y="30.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="bus:console:goino:console_lamp11" ><bounds x="43" y="33" width="12" height="1"/></element>
+<element ref="key_yellow" name="bus:console:goino:console_lamp11"><bounds x="41.7" y="30.55" width="14.6" height="3.9"/></element>
+<element ref="label_continue1"><bounds x="42.5" y="31" width="13" height="1.25"/></element>
+<element ref="label_continue2"><bounds x="42.5" y="32.5" width="13" height="1.25"/></element>
 <element ref="key" inputtag="bus:console:goino:BUTTONS" inputmask="0x20"><bounds x="59" y="30" width="16" height="5"/></element>
-<element ref="label6" ><bounds x="59.5" y="30.5" width="15" height="1.5"/></element>
-<element ref="lamp" name="bus:console:goino:console_lamp13" ><bounds x="61" y="33" width="12" height="1"/></element>
-<element ref="status" name="bus:console:goino:console_lamp7" ><bounds x="81" y="23.0" width="1.4" height="1.4"/></element>
+<element ref="key_yellow" name="bus:console:goino:console_lamp13"><bounds x="59.7" y="30.55" width="14.6" height="3.9"/></element>
+<element ref="label_step"><bounds x="60.5" y="31.85" width="13" height="1.3"/></element>
+<element ref="status_green" name="bus:console:goino:console_lamp7" ><bounds x="81" y="23.0" width="1.4" height="1.4"/></element>
 <element ref="ledtext0" ><bounds x="83" y="23.0" width="14" height="1.4"/></element>
-<element ref="status" name="bus:console:goino:console_lamp6" ><bounds x="81" y="26.2" width="1.4" height="1.4"/></element>
+<element ref="status_red" name="bus:console:goino:console_lamp6" ><bounds x="81" y="26.2" width="1.4" height="1.4"/></element>
 <element ref="ledtext1" ><bounds x="83" y="26.2" width="14" height="1.4"/></element>
-<element ref="status" name="bus:console:goino:console_lamp5" ><bounds x="81" y="29.4" width="1.4" height="1.4"/></element>
+<element ref="status_yellow" name="bus:console:goino:console_lamp5" ><bounds x="81" y="29.4" width="1.4" height="1.4"/></element>
 <element ref="ledtext2" ><bounds x="83" y="29.4" width="14" height="1.4"/></element>
-<element ref="status" name="bus:console:goino:console_lamp4" ><bounds x="81" y="32.6" width="1.4" height="1.4"/></element>
+<element ref="status_yellow" name="bus:console:goino:console_lamp4" ><bounds x="81" y="32.6" width="1.4" height="1.4"/></element>
 <element ref="ledtext3" ><bounds x="83" y="32.6" width="14" height="1.4"/></element>
+<element ref="decimal_wheel"><bounds x="99" y="22.5" width="8" height="12.5"/></element>
+<element ref="decimal_window"><bounds x="99.6" y="27.1" width="6.8" height="3"/></element>
+<element ref="decimal_value" name="bus:console:goino:decimal_position"><bounds x="100" y="27.6" width="6" height="2"/></element>
+<element ref="decimal_arrow_up" inputtag="bus:console:goino:DECIMAL_TURN" inputmask="0x01"><bounds x="101" y="23" width="4" height="2.4"/></element>
+<element ref="decimal_arrow_down" inputtag="bus:console:goino:DECIMAL_TURN" inputmask="0x02"><bounds x="101" y="31.5" width="4" height="2.4"/></element>
 <element ref="status" name="bus:console:goino:keyboard_mode"><bounds x="5" y="38" width="1.4" height="1.4"/></element>
 <element ref="kbmode_label"><bounds x="8" y="38" width="13" height="1.5"/></element>
 <element ref="disk_led" name="disk_activity0"><bounds x="30" y="38" width="1.4" height="1.4"/></element>
@@ -87,7 +115,7 @@ copyright-holders: Salvatore Paxia
 <group ref="console"><bounds x="10" y="75" width="80" height="35.2"/></group>
 </view>
 <view name="Console">
-<group ref="console"><bounds x="0" y="0" width="100" height="44"/></group>
+<group ref="console"><bounds x="0" y="0" width="112" height="44"/></group>
 </view>
 <view name="Video">
 <screen tag="bus:video:go011:framebuffer"><bounds x="0" y="0" width="560" height="410"/></screen>

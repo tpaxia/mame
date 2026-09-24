@@ -99,21 +99,6 @@ int main(){
   assert(pointer.card.m_state.pointer_x_known && pointer.card.m_state.pointer_y_known);
   assert(pointer.card.m_state.pointer_x()==x && pointer.card.m_state.pointer_y()==y);
  }
- // Text firmware encoding is independently expressed in character columns.
- for(unsigned column=0;column<80;++column){
-  pointer.bus.data_w(4,0x119a,0xffff);
-  pointer.bus.data_w(4,0x0c00|((1026-7*column)&1023),0xffff);
-  for(unsigned x=0;x<560;++x){
-   assert(pointer.card.m_state.text_cursor_pixel(x,400,true)==(x>=7*column && x<7*column+5));
-   assert(!pointer.card.m_state.text_cursor_pixel(x,400,false));
-   assert(!pointer.card.m_state.text_cursor_pixel(x,399,true));
-  }
-  pointer.card.m_state.blanked=true;
-  assert(!pointer.card.m_state.text_cursor_pixel(column*7,400,true));
-  pointer.card.m_state.blanked=false;
- }
- pointer.bus.data_w(4,0x100a,0xffff); // Graphics position is not a text cursor.
- assert(!pointer.card.m_state.text_cursor_pixel(553,400,true));
  // Test every counter encoding, including off-screen values; no clamping.
  for(unsigned n=0;n<1024;++n){
   pointer.bus.data_w(4,0x0c00|n,0xffff);
