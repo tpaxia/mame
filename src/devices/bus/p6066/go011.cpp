@@ -22,8 +22,8 @@ u32 p6066_go011_device::screen_update(screen_device &screen, bitmap_rgb32 &bitma
 {
 	for (int y = cliprect.min_y; y <= cliprect.max_y; ++y)
 		for (int x = cliprect.min_x; x <= cliprect.max_x; ++x)
-			bitmap.pix(y, x) = (!m_state.blanked && ((m_state.diagnostic_pixel(x, y) != m_state.inverted)
-				|| m_state.text_cursor_pixel(x, y, ((screen.frame_number() / 21) & 1) == 0))) ? rgb_t::white() : rgb_t::black();
+			bitmap.pix(y, x) = (!m_state.blanked && (m_state.diagnostic_pixel(x, y) != m_state.inverted))
+				? rgb_t(80, 240, 112) : rgb_t::black();
 	return 0;
 }
 

@@ -15,7 +15,10 @@ int main(){
  // Discard-output printer: one line, three leading blanks, two matrices,
  // then ten feed events. Real synchronization/ownership and command paths.
  {
-  p6066_goino_state p;p.select(0);p.data(0x0e00,4);p.data(0xff00,4);
+  p6066_goino_state absent;absent.select(0);absent.data(0x0e00,4);
+  absent.data(0xff00,4);absent.data(0xf200,4);absent.printer_tick();absent.synchronize(12);
+  assert(!absent.printer_running && !absent.printer_feeding && !absent.irq_requests());
+  p6066_goino_state p;p.printer_attached=true;p.select(0);p.data(0x0e00,4);p.data(0xff00,4);
   auto column=[&](){
    p.printer_tick();assert(p.column_request);p.synchronize(4);
    assert(p.acknowledge(1));p.printer_tick();assert(p.column_request);
@@ -41,8 +44,7 @@ int main(){
   assert(p.printer_columns_discarded==17 && p.printer_feed_events==10);
  }
 
- // Separate source table from encoder implementation: priority order follows
- // Fig.1.2 top priority BASIC,error,PIPPO,buttons,timer,normal,printer.
+ // Separate source table from encoder implementation.
  const unsigned priority[]={64,32,16,8,4,2,1};
  const unsigned type[]={0x60,0x50,0x40,0x30,0x20,0x10,0};
  // The two keyboard modes cannot be pending together.
@@ -52,7 +54,7 @@ int main(){
    for(unsigned sync_mask=0;sync_mask<16;++sync_mask){
     p6066_goino_state s;
     s.matrix_request=sources&1;s.keyboard_request=sources&66;
-    s.basic_mode=sources&64;s.timer_request=sources&4;
+    s.basic_mode=sources&2;s.timer_request=sources&4;
     s.button_request=sources&8;s.pippo_request=sources&16;
     s.double_key_request=sources&32;s.column_request=true;
     s.interrupts_blocked=blocked;
@@ -80,14 +82,22 @@ int main(){
   unsigned result=raw&255;
   // Work in physical pin polarity, independently of the implementation.
   const unsigned tas6n=!(raw&32),tas7n=!(raw&64),tas9n=!(raw&256);
-  const unsigned tes6n=mode||tas7n!=tas9n?tas6n:!tas6n;
+  const unsigned tes6n=!mode||tas7n!=tas9n?tas6n:!tas6n;
   result=(result&~32)|(!tes6n<<5);
   assert(s.key_data()==result);++checks;
  }
  p6066_goino_state mode;
- mode.keyboard_request=true;mode.synchronize(8);assert(mode.type()==0x60);
- mode.basic_mode=false;assert(mode.type()==0x10); // ARDIO routes the same MODE0 latch
- mode.basic_mode=true;assert(mode.type()==0x60);
+ mode.keyboard_request=true;mode.synchronize(8);assert(mode.type()==0x10);
+ mode.keyboard_code=0x169;assert(mode.key_data()==0x49);
+ mode.keyboard_code=0x149;assert(mode.key_data()==0x69);
+ mode.basic_mode=false;assert(mode.type()==0x60);
+ mode.keyboard_code=0x169;assert(mode.key_data()==0x69);
+ mode.keyboard_code=0x149;assert(mode.key_data()==0x49);
+ mode.basic_mode=true;assert(mode.type()==0x10);
+ p6066_goino_state running;
+ assert(running.running_lamp(true) && !running.running_lamp(false));
+ running.lamps=0x80;
+ assert(running.running_lamp(true) && running.running_lamp(false));
  p6066_goino_state s;s.select(0);s.command(12);s.timer_tick();
  assert(s.timer_request && !s.irq_requests());s.synchronize(8);
  assert(!s.irq_requests());s.command(14);assert(s.irq_requests()==4);

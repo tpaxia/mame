@@ -7,6 +7,14 @@ This is a functional ESE-facing stub, not a faithful ASTAM mechanical model.
 It uses normal GOINO request latches, synchronization, arbitration, and level2/3
 ownership. No paper, output file, motor or thermal head is rendered.
 
+The integrated printer connector under GOINO is empty by default. Attach this
+functional model at startup with `-bus:console:goino:options printer`. The
+printer was optional in the P6066 General Manual, printed p.1-25 (PDF p.39).
+With the connector empty, printer commands are accepted by GOINO but cannot
+produce printer requests. Selector 1 reports printer absent (`40`), rather than
+the attached printer's idle status (`00`). This does not by itself establish a
+printer-free installed-system configuration.
+
 ## Current functional contract
 
 - Command F starts column transfer: three leading blank columns, then matrix
@@ -16,8 +24,10 @@ ownership. No paper, output file, motor or thermal head is rendered.
 - Command 4 acknowledges matrix/feed requests. Level2 ECOT clears column requests.
 - The existing6.3ms scheduler supplies functional pacing, independently of TIMEN.
   A pending request/grant is serviced before another event is generated.
-- Status selector1 returns bit4 (`10`) while printing or feeding, zero when idle.
-  Other printer/decimal status bits remain inert.
+- With the printer attached, status selector 1 returns bit 4 (`10`) while
+  printing or feeding, zero when idle. With the slot empty, it returns bit 6
+  (`40`) for printer absent. The low nibble independently carries the decimal
+  wheel position, including when the printer is absent.
 - A stale selector3 during owned level3 GOINO service returns inert0, including
   keyboard/timer overlap. Direct level4 PROM access still fails without a dump.
 
@@ -67,3 +77,18 @@ commands. Observer, transcript and reproduction notes are in the outer repo at
 The earlier PRINT-only test did not observe column transfer and was insufficient
 to establish CATALOG completion. Physical timing, status wiring, the command
 polarity conflict, and PROM contents remain unresolved.
+
+The P6066 General Manual, printed pp.5-180–5-181 (PDF pp.432–433), says that
+`PRINT` displays its text on the integrated display and waits for `CONTINUE`
+when the installed system configuration has neither integrated nor auxiliary
+printer. Printed pp.3-25–3-26 (PDF pp.91–92) say `CONFIGURE` settings are
+stored on the system disk and omitting `EP` selects the integrated printer;
+physical detachment alone therefore does not establish a printer-free software
+configuration. The GOINO description, printed p.7 (PDF p.11) and printed p.18
+(PDF p.22), says the CPU probes `ALBAA`, `STOCN`, and `OPTON` before printing;
+`OPTON` indicates absence. The GTL3.2 printer probe at BE09–BE10 tests input
+bit 6 on the absent branch, bit 4 on the busy branch, and bit 5 on the other
+printer-condition branch. The empty slot now supplies bit 6 as a functional
+`OPTON` model; the exact DISL006 electrical mapping remains unverified. The
+documented `PRINT`/`CONTINUE` fallback still needs a verified printer-free
+configured system disk and independent integration coverage.

@@ -10,12 +10,14 @@
 struct p6066_goino_state
 {
 	bool selected = false;
+	bool printer_attached = false;
 	// Discard-output printer: handshake only, no paper/mechanical model.
 	bool printer_running = false, printer_feeding = false;
 	unsigned printer_columns_left = 0;
 	std::uint32_t printer_columns_discarded = 0, printer_feed_events = 0;
 	void printer_tick()
 	{
+		if (!printer_attached) return;
 		// Allow each request to be acknowledged and cleared before another.
 		if (column_request || matrix_request || synchronized2 || (synchronized3 & 1) || owned2 || owned3) return;
 		if (printer_feeding) { matrix_request = true; ++printer_feed_events; }
@@ -31,7 +33,7 @@ struct p6066_goino_state
 	bool pippo_request = false, keyboard_request = false, timer_request = false;
 	bool double_key_request = false;
 	bool pippo_enabled = false, timer_enabled = false, interrupts_blocked = true;
-	// Fig.1.2: encoder priority 1 (BASIC keyboard) is highest.
+	// Fig.1.2: encoder priority 1 is highest; mode-to-input wiring is qualified.
 	// Stored bits 0..5: printer, MODE0 (character ready), timer, buttons,
 	// PIPPO, keyboard error. ARDIO routes MODE0 to either encoder input.
 	std::uint8_t synchronized3 = 0;
@@ -75,7 +77,7 @@ struct p6066_goino_state
 		// Fig.1.2 bit-order ambiguity is cross-checked with all firmware dispatches.
 		constexpr unsigned logical[] = {0x00,0x10,0x20,0x30,0x40,0x50,0x60};
 		const unsigned inputs = (synchronized3 & ~2U)
-			| ((synchronized3 & 2) ? (basic_mode ? 64 : 2) : 0);
+			| ((synchronized3 & 2) ? (basic_mode ? 2 : 64) : 0);
 		for (int i = 6; i >= 0; --i) if (inputs & (1U << i)) return logical[i];
 		return 0;
 	}
@@ -96,10 +98,10 @@ struct p6066_goino_state
 	}
 	unsigned key_data() const
 	{
-		// Fig.1.12: TAS1..8 are active-low; complementing both compared
-		// inputs preserves equality. TES6 changes only in NORMAL mode.
+		// TAS1..8 are active-low; complementing both compared inputs
+		// preserves equality.
 		return (keyboard_code & 255)
-			^ ((!basic_mode && ((keyboard_code >> 6) & 1) == ((keyboard_code >> 8) & 1)) ? 0x20 : 0);
+			^ ((basic_mode && ((keyboard_code >> 6) & 1) == ((keyboard_code >> 8) & 1)) ? 0x20 : 0);
 	}
 	std::uint16_t commands_seen = 0; // diagnostic, not a hardware register
 
@@ -117,15 +119,14 @@ struct p6066_goino_state
 		{
 		case 0x0: break; // NOPPO
 		case 0xf: // Functional ESE print-transfer start; see discard-printer.md.
-			printer_running = true;
-			printer_columns_left = 3;
+			if (printer_attached) { printer_running = true; printer_columns_left = 3; }
 			break;
-		case 0x2: printer_feeding = true; break; // FAINN
-		case 0x3: printer_feeding = false; break; // FINTN
-		case 0x1: printer_running = false; break; // ESE ends column transfer
+		case 0x2: if (printer_attached) printer_feeding = true; break; // FAINN
+		case 0x3: if (printer_attached) printer_feeding = false; break; // FINTN
+		case 0x1: if (printer_attached) printer_running = false; break; // ESE ends column transfer
 		case 0x4: // REMAN acknowledges matrix or line-feed event.
 			matrix_request = false;
-			if (printer_running && !printer_feeding) printer_columns_left = 7;
+			if (printer_attached && printer_running && !printer_feeding) printer_columns_left = 7;
 			break;
 		case 0x5: column_request = button_request = false; break; // RECON
 		case 0x6: pippo_request = false; break; // REPIN
@@ -145,6 +146,7 @@ struct p6066_goino_state
 	std::uint16_t lamp_known_shift = 0xffff, lamps_known = 0xffff;
 	std::uint8_t lamp_bits = 0;
 	std::uint32_t lamp_strobes = 0;
+	bool running_lamp(bool blink_on) const { return (lamps & 0x80) || blink_on; }
 	std::uint32_t display_strobes = 0; // diagnostic, not a hardware register
 	std::array<std::uint8_t, 224> display{};
 	std::array<std::uint8_t, 224> display_known{};
@@ -160,8 +162,11 @@ struct p6066_goino_state
 		if (level == 2 && owned2)
 		{
 			printer_column = value & 0x7f;
-			if (printer_columns_left) --printer_columns_left;
-			++printer_columns_discarded;
+			if (printer_attached)
+			{
+				if (printer_columns_left) --printer_columns_left;
+				++printer_columns_discarded;
+			}
 			column_request = false;
 			return true;
 		}
