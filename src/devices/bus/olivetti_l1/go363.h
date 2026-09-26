@@ -37,6 +37,9 @@ private:
 	void timer_w(unsigned channel, u8 data);
 	void timer_control_w(u8 data);
 	void update_vi();
+	void hdc_command_w(u8 data);
+	void load_id_buffer();
+	void verify_id_w(offs_t offset);
 
 	required_device<upd7261_device> m_hdc;
 	optional_device_array<harddisk_image_device, 2> m_drive;
@@ -79,6 +82,34 @@ private:
 	bool m_board_vi_request = false;
 	u16 m_timer_count[2]{};
 	u8 m_timer_write_phase[2]{};
+
+	// System DMA count (counter 2, 16-byte units) and the board buffer that
+	// board command 0x0e00 loads with the FORMAT/VERIFY ID list.
+	u16 m_dma_count = 0;
+	u8 m_dma_count_phase = 0;
+	u8 m_id_buffer[512]{};
+	bool m_id_buffer_valid = false;
+	bool m_id_path = false;
+
+	// uPD7261 parameters forwarded by the board.
+	u8 m_hdc_param[8]{};
+	u8 m_hdc_param_count = 0;
+	u16 m_pcn[2]{};
+	u8 m_etn = 0;
+	u8 m_esn = 0;
+
+	// ID list of the last formatted track, and the VERIFY ID position.
+	bool m_format_valid = false;
+	u8 m_format_unit = 0;
+	u16 m_format_cylinder = 0;
+	u8 m_format_head = 0;
+	u16 m_format_count = 0;
+	u8 m_format_ids[512]{};
+	bool m_verify_translate = false;
+	u16 m_verify_cylinder = 0;
+	u8 m_verify_head = 0;
+	u8 m_verify_sector = 0;
+	u16 m_verify_index = 0;
 };
 
 DECLARE_DEVICE_TYPE(OLIVETTI_L1_GO363, olivetti_l1_go363_device)
