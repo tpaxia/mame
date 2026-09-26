@@ -50156,6 +50156,9 @@ monymony
 monymony2
 monymony3
 
+@source:zilog/plasmo.cpp
+plasmo
+
 @source:zilog/s8k.cpp
 s8000
 s8000v1
