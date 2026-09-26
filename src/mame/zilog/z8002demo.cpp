@@ -172,22 +172,22 @@ void z8002demo_state::sio_w(offs_t offset, u16 data, u16 mem_mask)
 
 u16 z8002demo_state::ata_cs0_r(offs_t offset, u16 mem_mask)
 {
-	return m_ata->cs0_r(offset, mem_mask);
+	return m_ata->cs0_r(offset);
 }
 
 void z8002demo_state::ata_cs0_w(offs_t offset, u16 data, u16 mem_mask)
 {
-	m_ata->cs0_w(offset, data, mem_mask);
+	m_ata->cs0_w(offset, data);
 }
 
 u16 z8002demo_state::ata_cs1_r(offs_t offset, u16 mem_mask)
 {
-	return m_ata->cs1_r(offset, mem_mask);
+	return m_ata->cs1_r(offset);
 }
 
 void z8002demo_state::ata_cs1_w(offs_t offset, u16 data, u16 mem_mask)
 {
-	m_ata->cs1_w(offset, data, mem_mask);
+	m_ata->cs1_w(offset, data);
 }
 
 u16 z8002demo_state::switch_r(offs_t offset, u16 mem_mask)
