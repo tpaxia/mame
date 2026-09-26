@@ -38,8 +38,12 @@ void olivetti_l1_go363_device::device_start()
 {
 	m_command_timer = timer_alloc(FUNC(olivetti_l1_go363_device::command_done), this);
 	m_board_timer = timer_alloc(FUNC(olivetti_l1_go363_device::board_timer_done), this);
+	m_dma_timer = timer_alloc(FUNC(olivetti_l1_go363_device::dma_service), this);
 
 	save_item(NAME(m_dma_address));
+	save_item(NAME(m_hdc_dma_address));
+	save_item(NAME(m_hdc_dma_offset));
+	save_item(NAME(m_hdc_command));
 	save_item(NAME(m_transfer_head));
 	save_item(NAME(m_transfer_count));
 	save_item(NAME(m_transfer_cylinder));
@@ -51,22 +55,23 @@ void olivetti_l1_go363_device::device_start()
 	save_item(NAME(m_start_low));
 	save_item(NAME(m_status));
 	save_item(NAME(m_result));
-	save_item(NAME(m_diagnostic_control));
-	save_item(NAME(m_diagnostic_data));
-	save_item(NAME(m_diagnostic_fifo));
-	save_item(NAME(m_diagnostic_fifo_count));
-	save_item(NAME(m_diagnostic_fifo_index));
-	save_item(NAME(m_diagnostic_fifo_read));
+	save_item(NAME(m_board_command));
+	save_item(NAME(m_board_data));
+	save_item(NAME(m_board_fifo));
+	save_item(NAME(m_board_fifo_count));
+	save_item(NAME(m_board_fifo_index));
+	save_item(NAME(m_board_fifo_read));
 	save_item(NAME(m_selected_unit));
 	save_item(NAME(m_vector));
 	save_item(NAME(m_vector_loaded));
 	save_item(NAME(m_interrupt));
 	save_item(NAME(m_hdc_interrupt));
+	save_item(NAME(m_hdc_vi));
 	save_item(NAME(m_timer_interrupt));
 	save_item(NAME(m_timer_interrupt_enabled));
-	save_item(NAME(m_diagnostic_interrupt));
-	save_item(NAME(m_diagnostic_interrupt_enabled));
-	save_item(NAME(m_diagnostic_vi));
+	save_item(NAME(m_board_interrupt_pending));
+	save_item(NAME(m_board_vi_enabled));
+	save_item(NAME(m_board_vi_request));
 	save_item(NAME(m_timer_count));
 	save_item(NAME(m_timer_write_phase));
 }
@@ -74,6 +79,9 @@ void olivetti_l1_go363_device::device_start()
 void olivetti_l1_go363_device::device_reset()
 {
 	m_dma_address = 0;
+	m_hdc_dma_address = 0;
+	m_hdc_dma_offset = 0;
+	m_hdc_command = 0;
 	m_transfer_head = 0;
 	m_transfer_count = 0;
 	m_transfer_cylinder = 0;
@@ -85,25 +93,27 @@ void olivetti_l1_go363_device::device_reset()
 	m_start_low = 0;
 	m_status = 0x04;
 	m_result = 0xffff;
-	m_diagnostic_control = 0;
-	m_diagnostic_data = 0;
-	std::fill(std::begin(m_diagnostic_fifo), std::end(m_diagnostic_fifo), 0);
-	m_diagnostic_fifo_count = 0;
-	m_diagnostic_fifo_index = 0;
-	m_diagnostic_fifo_read = false;
+	m_board_command = 0;
+	m_board_data = 0;
+	std::fill(std::begin(m_board_fifo), std::end(m_board_fifo), 0);
+	m_board_fifo_count = 0;
+	m_board_fifo_index = 0;
+	m_board_fifo_read = false;
 	m_selected_unit = 0;
 	m_vector = 0;
 	m_vector_loaded = false;
 	m_interrupt = false;
 	m_hdc_interrupt = false;
+	m_hdc_vi = false;
 	m_timer_interrupt = false;
 	m_timer_interrupt_enabled = false;
-	m_diagnostic_interrupt = false;
-	m_diagnostic_interrupt_enabled = false;
-	m_diagnostic_vi = false;
+	m_board_interrupt_pending = false;
+	m_board_vi_enabled = false;
+	m_board_vi_request = false;
 	std::fill(std::begin(m_timer_count), std::end(m_timer_count), 0);
 	std::fill(std::begin(m_timer_write_phase), std::end(m_timer_write_phase), 0);
 	m_board_timer->adjust(attotime::never);
+	m_dma_timer->adjust(attotime::never);
 	update_vi();
 }
 
@@ -123,11 +133,11 @@ u8 olivetti_l1_go363_device::io_r(offs_t offset)
 	case 0xc2: data = m_timer->read(2); break;
 	case 0xc3: data = m_timer->read(3); break;
 	case 0x01:
-		if (m_diagnostic_fifo_read && m_diagnostic_fifo_index < m_diagnostic_fifo_count)
+		if (m_board_fifo_read && m_board_fifo_index < m_board_fifo_count)
 		{
-			data = m_diagnostic_fifo[m_diagnostic_fifo_index++];
-			if (m_diagnostic_fifo_index == m_diagnostic_fifo_count)
-				m_diagnostic_fifo_read = false;
+			data = m_board_fifo[m_board_fifo_index++];
+			if (m_board_fifo_index == m_board_fifo_count)
+				m_board_fifo_read = false;
 		}
 		else
 			data = m_hdc->read(0);
@@ -135,9 +145,15 @@ u8 olivetti_l1_go363_device::io_r(offs_t offset)
 	case 0x10:
 	case 0x11: data = m_hdc->read(1); break;
 	case 0x42:
-	case 0x43:
 	case 0x4a: data = 0x00; break;
-	case 0x4b: data = (m_diagnostic_interrupt || m_hdc_interrupt || m_timer_interrupt) ? 0x28 : 0x00; break;
+	case 0x43:
+		// For each attached unit, the low status byte reports presence,
+		// readiness and no hardware fault.  S24W25 checks bits 0, 4 and 2
+		// respectively for PU 0.
+		data = (m_drive[0] && m_drive[0]->exists() ? 0x15 : 0x00)
+			| (m_drive[1] && m_drive[1]->exists() ? 0x2a : 0x00);
+		break;
+	case 0x4b: data = (m_board_interrupt_pending || m_hdc_interrupt || m_timer_interrupt) ? 0x28 : 0x00; break;
 	case 0x80: data = m_result >> 8; break;
 	case 0x81: data = m_result; break;
 	case 0x90: data = 0x00; break;
@@ -171,79 +187,109 @@ void olivetti_l1_go363_device::io_w(offs_t offset, u8 data)
 	case 0xc3: timer_control_w(data); break;
 	case 0x01:
 		m_hdc->write(0, data);
-		if (m_diagnostic_fifo_count < std::size(m_diagnostic_fifo))
-			m_diagnostic_fifo[m_diagnostic_fifo_count++] = data;
+		if (m_board_fifo_count < std::size(m_board_fifo))
+			m_board_fifo[m_board_fifo_count++] = data;
 		break;
 	case 0x4a: m_vector = data; break;
-	case 0x48: m_diagnostic_data = (m_diagnostic_data & 0x00ff) | (u16(data) << 8); break;
+	case 0x48: m_board_data = (m_board_data & 0x00ff) | (u16(data) << 8); break;
 	case 0x49:
-		m_diagnostic_data = (m_diagnostic_data & 0xff00) | data;
+		m_board_data = (m_board_data & 0xff00) | data;
 		if (data == 0x02)
 		{
-			m_diagnostic_vi = false;
+			m_board_vi_request = false;
 			// HDC505 uses 0002 for polled timer completion and ff02 when
 			// terminal count is also to set the board's VI request latch.
-			m_timer_interrupt_enabled = (m_diagnostic_data & 0xff00) == 0xff00;
+			m_timer_interrupt_enabled = (m_board_data & 0xff00) == 0xff00;
 		}
 		else if (data == 0x40)
 		{
 			m_timer_interrupt = false;
 			m_timer_interrupt_enabled = false;
-			m_diagnostic_vi = false;
+			m_board_vi_request = false;
 			m_board_timer->adjust(attotime::never);
 		}
 		update_vi();
 		break;
-	case 0x4c: m_diagnostic_control = (m_diagnostic_control & 0x00ff) | (u16(data) << 8); break;
+	case 0x4c: m_board_command = (m_board_command & 0x00ff) | (u16(data) << 8); break;
 	case 0x4d:
-		m_diagnostic_control = (m_diagnostic_control & 0xff00) | data;
-		if (m_diagnostic_control == 0x0b00)
+		m_board_command = (m_board_command & 0xff00) | data;
+		if (m_board_command == 0x0b00)
 		{
-			m_diagnostic_interrupt = true;
-			m_diagnostic_vi = m_diagnostic_interrupt_enabled;
+			m_board_interrupt_pending = true;
+			m_board_vi_request = m_board_vi_enabled;
 			update_vi();
 		}
-		else if (m_diagnostic_control == 0x0400)
+		else if (m_board_command == 0x0400)
 		{
-			m_diagnostic_interrupt_enabled = (m_diagnostic_data == 0x0003);
+			m_board_vi_enabled = (m_board_data == 0x0003);
 			update_vi();
 		}
-		else if (m_diagnostic_control == 0x3900)
+		else if (m_board_command == 0x0e00)
 		{
-			m_diagnostic_interrupt = false;
-			m_diagnostic_interrupt_enabled = false;
-			m_diagnostic_vi = false;
+			m_command_timer->adjust(attotime::from_msec(1));
+		}
+		else if (m_board_command == 0x2100)
+		{
+			m_board_interrupt_pending = false;
+			m_board_vi_request = false;
+			update_vi();
+		}
+		else if (m_board_command == 0x3900)
+		{
+			m_board_interrupt_pending = false;
+			m_board_vi_enabled = false;
+			m_board_vi_request = false;
 			m_interrupt = false;
 			m_hdc_interrupt = false;
+			m_hdc_vi = false;
 			m_timer_interrupt = false;
 			m_timer_interrupt_enabled = false;
 			m_board_timer->adjust(attotime::never);
-			m_diagnostic_fifo_count = 0;
-			m_diagnostic_fifo_index = 0;
-			m_diagnostic_fifo_read = false;
+			m_board_fifo_count = 0;
+			m_board_fifo_index = 0;
+			m_board_fifo_read = false;
 			update_vi();
 		}
-		else if (m_diagnostic_control == 0x4000 || m_diagnostic_control == 0x4100)
+		else if (m_board_command == 0x4000 || m_board_command == 0x4100)
 		{
 			LOGMASKED(LOG_REGISTERS, "timer command %04x count0=%04x count1=%04x\n",
-				m_diagnostic_control, m_timer_count[0], m_timer_count[1]);
+				m_board_command, m_timer_count[0], m_timer_count[1]);
 		}
-		else if (m_diagnostic_control == 0x4500)
+		else if (m_board_command == 0x4500)
 		{
-			m_diagnostic_fifo_index = 0;
-			m_diagnostic_fifo_read = true;
+			m_board_fifo_index = 0;
+			m_board_fifo_read = true;
 		}
 		break;
 	case 0x10:
 		m_hdc->write(1, data);
 		if (data & 0x03)
 		{
-			m_diagnostic_fifo_count = 0;
-			m_diagnostic_fifo_index = 0;
-			m_diagnostic_fifo_read = false;
+			m_board_fifo_count = 0;
+			m_board_fifo_index = 0;
+			m_board_fifo_read = false;
 		}
 		break;
-	case 0x11: m_hdc->write(1, data); break;
+	case 0x11:
+		m_hdc_command = data;
+		m_hdc->write(1, data);
+		break;
+	case 0x42:
+		m_hdc_dma_address = (m_hdc_dma_address & 0xffff00ffU) | (u32(data) << 8);
+		m_hdc_dma_offset = 0;
+		break;
+	case 0x43:
+		m_hdc_dma_address = (m_hdc_dma_address & 0xffffff00U) | data;
+		m_hdc_dma_offset = 0;
+		break;
+	case 0x44:
+		m_hdc_dma_address = (m_hdc_dma_address & 0x00ffffffU) | (u32(data) << 24);
+		m_hdc_dma_offset = 0;
+		break;
+	case 0x45:
+		m_hdc_dma_address = (m_hdc_dma_address & 0xff00ffffU) | (u32(data) << 16);
+		m_hdc_dma_offset = 0;
+		break;
 	case 0x20: m_transfer_latch = (m_transfer_latch & 0x00ff) | (u16(data) << 8); break;
 	case 0x21:
 	{
@@ -377,6 +423,13 @@ void olivetti_l1_go363_device::start_command()
 
 TIMER_CALLBACK_MEMBER(olivetti_l1_go363_device::command_done)
 {
+	if (m_board_command == 0x0e00)
+	{
+		m_board_interrupt_pending = true;
+		m_interrupt = m_board_vi_enabled;
+		update_vi();
+		return;
+	}
 	m_status = 0x06;
 	m_interrupt = true;
 	update_vi();
@@ -404,7 +457,7 @@ void olivetti_l1_go363_device::timer_w(unsigned channel, u8 data)
 	{
 		// The board's 20 MHz oscillator clocks counter 0, whose output clocks
 		// counter 1.  Loading counter 1 starts the cascade; the later private
-		// diagnostic command only reports its result.  Schedule terminal count
+		// board command reports its result.  Schedule terminal count
 		// as one event to avoid millions of unobservable PIT callbacks.
 		m_timer_interrupt = false;
 		m_interrupt = false;
@@ -419,36 +472,72 @@ void olivetti_l1_go363_device::timer_w(unsigned channel, u8 data)
 
 TIMER_CALLBACK_MEMBER(olivetti_l1_go363_device::board_timer_done)
 {
+	// DCOS HDC505 exposes timer expiry as PRIN0 for the 0x40/0x41
+	// timer-test commands.  Normal disk commands use the timer as a
+	// watchdog and must not leave a successful completion pending.
+	if (m_board_command != 0x4000 && m_board_command != 0x4100)
+		return;
+
 	m_timer_interrupt = true;
 	if (m_timer_interrupt_enabled)
 		m_interrupt = true;
-	LOGMASKED(LOG_REGISTERS, "timer done command=%04x vi=%u\n", m_diagnostic_control, m_interrupt);
+	LOGMASKED(LOG_REGISTERS, "timer done command=%04x vi=%u\n", m_board_command, m_interrupt);
 	update_vi();
 }
 
 void olivetti_l1_go363_device::hdc_dreq_w(int state)
 {
-	// The GO363 gate arrays transfer the controller data phase through 8 KiB
-	// of local SRAM before performing word-addressed DMA on the L1 bus.
+	// The controller's data phase goes through the GO363 DMA address counter.
+	// Service it outside the uPD7261 callback so its state timer can advance
+	// after the last byte of each sector.
+	if (state && ((m_hdc_command & 0xf0) == 0x80 || (m_hdc_command & 0xf0) == 0x90 || (m_hdc_command & 0xf0) == 0xb0 || (m_hdc_command & 0xf0) == 0xe0 || (m_hdc_command & 0xf0) == 0xf0))
+		m_dma_timer->adjust(attotime::zero);
+}
+
+TIMER_CALLBACK_MEMBER(olivetti_l1_go363_device::dma_service)
+{
+	unsigned const unit = m_hdc_command & 0x01;
+	if (!m_drive[unit] || !m_drive[unit]->exists())
+		return;
+
+	bool const read_id = (m_hdc_command & 0xf0) == 0x90;
+	bool const verify_id = (m_hdc_command & 0xf0) == 0x80;
+	u32 const sector_bytes = (read_id || verify_id) ? 4 : m_drive[unit]->get_info().sectorbytes;
+	u32 const start = (m_hdc_dma_address << 1) & 0xffffff;
+	bool const read = read_id || (m_hdc_command & 0xf0) == 0xb0;
+	LOGMASKED(LOG_TRANSFER, "uPD7261 %s DMA unit=%u bytes=%u address=%06x\n",
+		read_id ? "read id" : verify_id ? "verify id" : read ? "read" : "write", unit, sector_bytes, (start + m_hdc_dma_offset) & 0xffffff);
+	for (u32 i = 0; i < sector_bytes; i++)
+	{
+		u32 const address = (start + m_hdc_dma_offset++) & 0xffffff;
+		if (read)
+			physical_w(address, m_hdc->read(0));
+		else
+			m_hdc->write(0, physical_r(address));
+	}
 }
 
 void olivetti_l1_go363_device::hdc_int_w(int state)
 {
 	m_hdc_interrupt = bool(state);
+	m_hdc_vi = bool(state);
 	update_vi();
 }
 
 void olivetti_l1_go363_device::update_vi()
 {
-	vi_w(m_interrupt || (m_diagnostic_interrupt_enabled && m_hdc_interrupt) || m_diagnostic_vi);
+	vi_w(m_interrupt || (m_board_vi_enabled && m_hdc_vi) || m_board_vi_request);
 }
 
 u16 olivetti_l1_go363_device::viack_r()
 {
-	LOGMASKED(LOG_REGISTERS, "VI acknowledge vector 0x%02x timer=%u diagnostic=%u hdc=%u (%s)\n",
-		m_vector, m_timer_interrupt, m_diagnostic_interrupt, m_hdc_interrupt, machine().describe_context());
+	LOGMASKED(LOG_REGISTERS, "VI acknowledge vector 0x%02x timer=%u board=%u hdc=%u (%s)\n",
+		m_vector, m_timer_interrupt, m_board_interrupt_pending, m_hdc_interrupt, machine().describe_context());
 	m_interrupt = false;
-	m_hdc_interrupt = false;
+	// Acknowledge ends the VI request, while PRIN0 remains set until the
+	// uPD7261 interrupt line drops.  The S24W25 installer reads PRIN0 after
+	// acknowledging VI to check that SPECIFY completed.
+	m_hdc_vi = false;
 	update_vi();
 	return m_vector;
 }
