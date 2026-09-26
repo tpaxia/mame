@@ -74,6 +74,27 @@ void olivetti_l1_go363_device::device_start()
 	save_item(NAME(m_board_vi_request));
 	save_item(NAME(m_timer_count));
 	save_item(NAME(m_timer_write_phase));
+	save_item(NAME(m_dma_count));
+	save_item(NAME(m_dma_count_phase));
+	save_item(NAME(m_id_buffer));
+	save_item(NAME(m_id_buffer_valid));
+	save_item(NAME(m_id_path));
+	save_item(NAME(m_hdc_param));
+	save_item(NAME(m_hdc_param_count));
+	save_item(NAME(m_pcn));
+	save_item(NAME(m_etn));
+	save_item(NAME(m_esn));
+	save_item(NAME(m_format_valid));
+	save_item(NAME(m_format_unit));
+	save_item(NAME(m_format_cylinder));
+	save_item(NAME(m_format_head));
+	save_item(NAME(m_format_count));
+	save_item(NAME(m_format_ids));
+	save_item(NAME(m_verify_translate));
+	save_item(NAME(m_verify_cylinder));
+	save_item(NAME(m_verify_head));
+	save_item(NAME(m_verify_sector));
+	save_item(NAME(m_verify_index));
 }
 
 void olivetti_l1_go363_device::device_reset()
@@ -112,6 +133,14 @@ void olivetti_l1_go363_device::device_reset()
 	m_board_vi_request = false;
 	std::fill(std::begin(m_timer_count), std::end(m_timer_count), 0);
 	std::fill(std::begin(m_timer_write_phase), std::end(m_timer_write_phase), 0);
+	m_dma_count = 0;
+	m_dma_count_phase = 0;
+	m_id_buffer_valid = false;
+	m_id_path = false;
+	m_hdc_param_count = 0;
+	std::fill(std::begin(m_pcn), std::end(m_pcn), 0);
+	m_format_valid = false;
+	m_verify_translate = false;
 	m_board_timer->adjust(attotime::never);
 	m_dma_timer->adjust(attotime::never);
 	update_vi();
@@ -179,7 +208,10 @@ void olivetti_l1_go363_device::io_w(offs_t offset, u8 data)
 	{
 	case 0x46: timer_w(0, data); break;
 	case 0x47: timer_w(1, data); break;
-	case 0x56: m_timer->write(2, data); break;
+	case 0x56:
+		m_timer->write(2, data);
+		m_dma_count = m_dma_count_phase++ ? ((m_dma_count & 0x00ff) | (u16(data) << 8)) : data;
+		break;
 	case 0x57: timer_control_w(data); break;
 	case 0xc0: timer_w(0, data); break;
 	case 0xc1: timer_w(1, data); break;
@@ -189,11 +221,21 @@ void olivetti_l1_go363_device::io_w(offs_t offset, u8 data)
 		m_hdc->write(0, data);
 		if (m_board_fifo_count < std::size(m_board_fifo))
 			m_board_fifo[m_board_fifo_count++] = data;
+		if (m_hdc_param_count < std::size(m_hdc_param))
+			m_hdc_param[m_hdc_param_count++] = data;
+		break;
+	case 0x41:
+		// DCOS writes the full head number here before each command (shared
+		// runtime 0x2191dc).  The uPD7261 has only HS2-HS0, so the board
+		// supplies the extra head select bit for the ninth WREN2 head.
+		m_hdc->head_w(data & 0x0f);
 		break;
 	case 0x4a: m_vector = data; break;
 	case 0x48: m_board_data = (m_board_data & 0x00ff) | (u16(data) << 8); break;
 	case 0x49:
 		m_board_data = (m_board_data & 0xff00) | data;
+		if (m_board_data == 0x002b)
+			m_id_path = true;
 		if (data == 0x02)
 		{
 			m_board_vi_request = false;
@@ -226,6 +268,7 @@ void olivetti_l1_go363_device::io_w(offs_t offset, u8 data)
 		}
 		else if (m_board_command == 0x0e00)
 		{
+			load_id_buffer();
 			m_command_timer->adjust(attotime::from_msec(1));
 		}
 		else if (m_board_command == 0x2100)
@@ -262,6 +305,7 @@ void olivetti_l1_go363_device::io_w(offs_t offset, u8 data)
 		}
 		break;
 	case 0x10:
+		hdc_command_w(data);
 		m_hdc->write(1, data);
 		if (data & 0x03)
 		{
@@ -272,11 +316,13 @@ void olivetti_l1_go363_device::io_w(offs_t offset, u8 data)
 		break;
 	case 0x11:
 		m_hdc_command = data;
+		hdc_command_w(data);
 		m_hdc->write(1, data);
 		break;
 	case 0x42:
 		m_hdc_dma_address = (m_hdc_dma_address & 0xffff00ffU) | (u32(data) << 8);
 		m_hdc_dma_offset = 0;
+		m_id_path = false;
 		break;
 	case 0x43:
 		m_hdc_dma_address = (m_hdc_dma_address & 0xffffff00U) | data;
@@ -441,6 +487,8 @@ void olivetti_l1_go363_device::timer_control_w(u8 data)
 	unsigned const channel = data >> 6;
 	if (channel < 2)
 		m_timer_write_phase[channel] = 0;
+	else if (channel == 2)
+		m_dma_count_phase = 0;
 }
 
 void olivetti_l1_go363_device::timer_w(unsigned channel, u8 data)
@@ -507,6 +555,12 @@ TIMER_CALLBACK_MEMBER(olivetti_l1_go363_device::dma_service)
 	bool const read = read_id || (m_hdc_command & 0xf0) == 0xb0;
 	LOGMASKED(LOG_TRANSFER, "uPD7261 %s DMA unit=%u bytes=%u address=%06x\n",
 		read_id ? "read id" : verify_id ? "verify id" : read ? "read" : "write", unit, sector_bytes, (start + m_hdc_dma_offset) & 0xffffff);
+	if (verify_id && m_id_path && m_id_buffer_valid)
+	{
+		verify_id_w(m_hdc_dma_offset);
+		m_hdc_dma_offset += 4;
+		return;
+	}
 	for (u32 i = 0; i < sector_bytes; i++)
 	{
 		u32 const address = (start + m_hdc_dma_offset++) & 0xffffff;
@@ -514,6 +568,115 @@ TIMER_CALLBACK_MEMBER(olivetti_l1_go363_device::dma_service)
 			physical_w(address, m_hdc->read(0));
 		else
 			m_hdc->write(0, physical_r(address));
+	}
+}
+
+void olivetti_l1_go363_device::hdc_command_w(u8 data)
+{
+	// Track the uPD7261 parameters the board forwards, so the board can relate
+	// its FORMAT and VERIFY ID lists to the controller's position.
+	u8 const opcode = data >> 4;
+	if (!opcode)
+	{
+		if (data & 0x03)
+			m_hdc_param_count = 0;
+		return;
+	}
+
+	unsigned const unit = data & 0x01;
+	u8 const *const p = m_hdc_param;
+	switch (opcode)
+	{
+	case 0x2: // specify
+		if (m_hdc_param_count >= 5)
+		{
+			m_etn = p[3];
+			m_esn = p[4];
+		}
+		break;
+	case 0x5: // recalibrate
+		m_pcn[unit] = 0;
+		break;
+	case 0x6: // seek
+		if (m_hdc_param_count >= 2)
+			m_pcn[unit] = (u16(p[0]) << 8) | p[1];
+		break;
+	case 0x7: // format: remember the ID list written to this track
+		if (m_id_path && m_id_buffer_valid && m_hdc_param_count >= 2)
+		{
+			m_format_valid = true;
+			m_format_unit = unit;
+			m_format_cylinder = m_pcn[unit];
+			m_format_head = p[0];
+			m_format_count = std::min<u16>(p[1], std::size(m_format_ids) / 4);
+			std::copy_n(m_id_buffer, m_format_count * 4, m_format_ids);
+			LOGMASKED(LOG_TRANSFER, "format IDs unit=%u C=%u H=%u count=%u first=%02x%02x%02x%02x\n",
+				unit, m_format_cylinder, m_format_head, m_format_count,
+				m_format_ids[0], m_format_ids[1], m_format_ids[2], m_format_ids[3]);
+		}
+		break;
+	case 0x8: // verify id
+		if (m_hdc_param_count >= 1)
+		{
+			m_verify_cylinder = m_pcn[unit];
+			m_verify_head = p[0];
+			m_verify_sector = 0;
+			m_verify_index = 0;
+			m_verify_translate = m_format_valid && m_format_unit == unit
+				&& m_format_cylinder == m_verify_cylinder && m_format_head == m_verify_head;
+		}
+		break;
+	}
+	m_hdc_param_count = 0;
+}
+
+void olivetti_l1_go363_device::load_id_buffer()
+{
+	// Board command 0x0e00 moves a block from system memory into the board
+	// buffer that FORMAT and VERIFY ID use.  Counter 2 counts 16-byte units.
+	u32 const start = (m_hdc_dma_address << 1) & 0xffffff;
+	u32 const bytes = std::min<u32>((u32(m_dma_count) + 1) * 16, std::size(m_id_buffer));
+	for (u32 i = 0; i < bytes; i++)
+		m_id_buffer[i] = physical_r((start + i) & 0xffffff);
+	m_id_buffer_valid = true;
+	LOGMASKED(LOG_TRANSFER, "ID buffer load address=%06x bytes=%u\n", start, bytes);
+}
+
+void olivetti_l1_go363_device::verify_id_w(offs_t offset)
+{
+	u8 id[4];
+	for (unsigned i = 0; i < 4; i++)
+		id[i] = (offset + i < std::size(m_id_buffer)) ? m_id_buffer[offset + i] : 0xff;
+
+	// The CHD has no ID fields, and the uPD7261 compares against IDs made from
+	// its cylinder, head and sector.  For the last formatted track, compare
+	// against the list FORMAT wrote and give the controller its own ID when
+	// they agree, or a differing one when they do not.
+	if (m_verify_translate && m_verify_index < m_format_count)
+	{
+		u8 const *const written = &m_format_ids[m_verify_index * 4];
+		bool const match = std::equal(id, id + 4, written);
+		id[0] = m_verify_cylinder >> 8;
+		id[1] = m_verify_cylinder;
+		id[2] = m_verify_head;
+		id[3] = m_verify_sector;
+		if (!match)
+			id[0] ^= 0xff;
+	}
+
+	for (unsigned i = 0; i < 4; i++)
+		m_hdc->write(0, id[i]);
+
+	m_verify_index++;
+	if (m_verify_sector++ == m_esn)
+	{
+		m_verify_sector = 0;
+		m_verify_translate = false;
+		if (m_verify_head++ == m_etn)
+		{
+			m_verify_head = 0;
+			m_verify_cylinder++;
+		}
 	}
 }
 

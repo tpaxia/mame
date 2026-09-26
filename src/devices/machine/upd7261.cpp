@@ -31,6 +31,8 @@
 unsigned constexpr BUF_SIZE = 4096;
 // NEC uPD7261A/B, printed page 6-21: buffered ST506 steps are approximately 50 us apart.
 unsigned constexpr BUFFERED_STEP_US = 50;
+// NEC uPD7261A/B, printed page 6-17: ST506 MFM data rates up to 6 MHz.
+unsigned constexpr ST506_MAX_DATA_RATE = 6'000'000;
 
 enum state : u32
 {
@@ -611,7 +613,14 @@ attotime upd7261_device::state_step(s32 param)
 		if (!m_drive[m_ua] && m_drive[m_ua]->exists())
 			m_est |= EST_NR;
 
-		if (m_transfer.scnt && !m_est)
+		if (m_transfer.scnt && !m_est && !param)
+		{
+			// The data field is read serially from the disk, so it cannot be
+			// available before it has passed the head at the fastest data rate.
+			m_state_timer->adjust(attotime::from_ticks(u64(m_specify.dtl()) * 8, ST506_MAX_DATA_RATE), 1);
+			return attotime::never;
+		}
+		else if (m_transfer.scnt && !m_est)
 		{
 			// HACK: The MG-1 has an additional external head select bit, and
 			// expects the controller to report "no data" when the sector to be
@@ -782,7 +791,13 @@ attotime upd7261_device::state_step(s32 param)
 		if (!m_drive[m_ua] && m_drive[m_ua]->exists())
 			m_est |= EST_NR;
 
-		if (m_transfer.scnt && !m_est)
+		if (m_transfer.scnt && !m_est && !param)
+		{
+			// The buffered data field is written serially to the disk.
+			m_state_timer->adjust(attotime::from_ticks(u64(m_specify.dtl()) * 8, ST506_MAX_DATA_RATE), 1);
+			return attotime::never;
+		}
+		else if (m_transfer.scnt && !m_est)
 		{
 			// HACK: as above for reading
 			if (m_transfer.lhn == ((m_head & ~7) | (m_transfer.lhn & 7)))
@@ -851,7 +866,13 @@ attotime upd7261_device::state_step(s32 param)
 
 		if (m_transfer.scnt && !m_est && !(m_status & S_NCI))
 		{
-			if (m_buf_index == 0)
+			if (m_buf_index == 0 && !param)
+			{
+				// As for reading, the data field has to pass the head first.
+				m_state_timer->adjust(attotime::from_ticks(u64(m_specify.dtl()) * 8, ST506_MAX_DATA_RATE), 1);
+				return attotime::never;
+			}
+			else if (m_buf_index == 0)
 			{
 				if (m_transfer.lhn != ((m_head & ~7) | (m_transfer.lhn & 7)))
 				{
