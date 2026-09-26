@@ -29,6 +29,7 @@ protected:
 private:
 	TIMER_CALLBACK_MEMBER(command_done);
 	TIMER_CALLBACK_MEMBER(board_timer_done);
+	TIMER_CALLBACK_MEMBER(dma_service);
 	void start_command();
 	void start_transfer();
 	void hdc_dreq_w(int state);
@@ -42,8 +43,12 @@ private:
 	required_device<pit8253_device> m_timer;
 	emu_timer *m_command_timer = nullptr;
 	emu_timer *m_board_timer = nullptr;
+	emu_timer *m_dma_timer = nullptr;
 
 	u32 m_dma_address = 0;
+	u32 m_hdc_dma_address = 0;
+	u32 m_hdc_dma_offset = 0;
+	u8 m_hdc_command = 0;
 	u16 m_transfer_head = 0;
 	u16 m_transfer_count = 0;
 	u16 m_transfer_cylinder = 0;
@@ -55,22 +60,23 @@ private:
 	u8 m_start_low = 0;
 	u8 m_status = 0;
 	u16 m_result = 0;
-	u16 m_diagnostic_control = 0;
-	u16 m_diagnostic_data = 0;
-	u8 m_diagnostic_fifo[8]{};
-	u8 m_diagnostic_fifo_count = 0;
-	u8 m_diagnostic_fifo_index = 0;
-	bool m_diagnostic_fifo_read = false;
+	u16 m_board_command = 0;
+	u16 m_board_data = 0;
+	u8 m_board_fifo[8]{};
+	u8 m_board_fifo_count = 0;
+	u8 m_board_fifo_index = 0;
+	bool m_board_fifo_read = false;
 	u8 m_selected_unit = 0;
 	u8 m_vector = 0;
 	bool m_vector_loaded = false;
 	bool m_interrupt = false;
 	bool m_hdc_interrupt = false;
+	bool m_hdc_vi = false;
 	bool m_timer_interrupt = false;
 	bool m_timer_interrupt_enabled = false;
-	bool m_diagnostic_interrupt = false;
-	bool m_diagnostic_interrupt_enabled = false;
-	bool m_diagnostic_vi = false;
+	bool m_board_interrupt_pending = false;
+	bool m_board_vi_enabled = false;
+	bool m_board_vi_request = false;
 	u16 m_timer_count[2]{};
 	u8 m_timer_write_phase[2]{};
 };

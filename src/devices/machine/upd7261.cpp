@@ -29,6 +29,8 @@
 #include "logmacro.h"
 
 unsigned constexpr BUF_SIZE = 4096;
+// NEC uPD7261A/B, printed page 6-21: buffered ST506 steps are approximately 50 us apart.
+unsigned constexpr BUFFERED_STEP_US = 50;
 
 enum state : u32
 {
@@ -36,6 +38,9 @@ enum state : u32
 
 	EXECUTE_READ,
 	EXECUTE_WRITE,
+	EXECUTE_VERIFY,
+	EXECUTE_READ_ID,
+	EXECUTE_VERIFY_ID,
 
 	SEEK_POLLED0,  // recalibrate/seek with polling
 	SEEK_POLLED1,  // recalibrate/seek with polling
@@ -213,7 +218,8 @@ void upd7261_device::set_dreq(int state)
 		if (state)
 		{
 			m_status |= S_DRQ;
-			m_buf_count = m_specify.dtl();
+			if (m_state != EXECUTE_READ_ID && m_state != EXECUTE_VERIFY_ID)
+				m_buf_count = m_specify.dtl();
 		}
 		else
 		{
@@ -256,7 +262,10 @@ u8 upd7261_device::data_r()
 		LOGMASKED(LOG_REGR, "data_r 0x%02x (%s)\n", data, machine().describe_context());
 
 	if ((m_status & S_DRQ) && (m_buf_index == m_buf_count))
+	{
+		set_dreq(false);
 		m_state_timer->adjust(attotime::zero);
+	}
 
 	return data;
 }
@@ -271,10 +280,19 @@ void upd7261_device::data_w(u8 data)
 	if (m_buf_index == BUF_SIZE)
 		fatalerror("%s: buffer overrun\n", tag());
 
-	m_buf[m_buf_index++] = data;
+	if ((m_state == EXECUTE_VERIFY || m_state == EXECUTE_VERIFY_ID) && (m_status & S_DRQ))
+	{
+		if (data != m_buf[m_buf_index++])
+			m_status |= S_NCI;
+	}
+	else
+		m_buf[m_buf_index++] = data;
 
 	if ((m_status & S_DRQ) && (m_buf_index == m_buf_count))
+	{
+		set_dreq(false);
 		m_state_timer->adjust(attotime::zero);
+	}
 }
 
 u8 upd7261_device::status_r()
@@ -293,7 +311,7 @@ void upd7261_device::command_w(u8 data)
 
 	if (BIT(data, 4, 4))
 	{
-		m_status &= ~(S_CEH | S_CEL);
+		m_status &= ~(S_CEH | S_CEL | S_NCI);
 		m_status |= S_CB;
 
 		m_ua = BIT(data, 0, (m_specify.mode & SM_SSEC) ? 2 : 3);
@@ -376,14 +394,16 @@ void upd7261_device::command_w(u8 data)
 					m_buf[m_buf_count++] = IST_SEN | m_ua;
 					m_state = COMPLETE;
 
-					m_state_timer->adjust(attotime::from_ticks(m_specify.stp(m_pcn[m_ua]), clock()));
+					m_state_timer->adjust(BIT(data, 3)
+						? attotime::from_usec(BUFFERED_STEP_US * m_pcn[m_ua])
+						: attotime::from_ticks(m_specify.stp(m_pcn[m_ua]), clock()));
 					m_pcn[m_ua] = 0;
 				}
 				else
 				{
 					// polled mode
 					m_state = SEEK_POLLED0;
-					m_state_timer->adjust(execute, 0);
+					m_state_timer->adjust(execute, BIT(data, 3) ? 0x10000 : 0);
 				}
 			}
 			break;
@@ -404,24 +424,70 @@ void upd7261_device::command_w(u8 data)
 					m_buf[m_buf_count++] = IST_SEN | m_ua;
 					m_state = COMPLETE;
 
-					m_state_timer->adjust(attotime::from_ticks(m_specify.stp((pcn > m_pcn[m_ua]) ? pcn - m_pcn[m_ua] : m_pcn[m_ua] - pcn), clock()));
+					unsigned const cylinders = (pcn > m_pcn[m_ua]) ? pcn - m_pcn[m_ua] : m_pcn[m_ua] - pcn;
+					m_state_timer->adjust(BIT(data, 3)
+						? attotime::from_usec(BUFFERED_STEP_US * cylinders)
+						: attotime::from_ticks(m_specify.stp(cylinders), clock()));
 					m_pcn[m_ua] = pcn;
 				}
 				else
 				{
 					m_state = SEEK_POLLED0;
-					m_state_timer->adjust(execute, pcn);
+					m_state_timer->adjust(execute, pcn | (BIT(data, 3) ? 0x10000 : 0));
 				}
 			}
 			break;
 		case 0x7: // format
-			LOGMASKED(LOG_COMMAND, "format (not emulated)\n");
+			// Track formatting is a media no-op, but the command still returns
+			// EST and the remaining sector count and signals completion.
+			LOGMASKED(LOG_COMMAND, "format (media no-op)\n");
+			m_transfer.scnt = 0;
+			m_buf_index = 0;
+			m_buf_count = 0;
+			m_state = RESULTS_789;
+			m_state_timer->adjust(execute);
 			break;
 		case 0x8: // verify id
-			LOGMASKED(LOG_COMMAND, "verify id (not emulated)\n");
+			if (m_specify.mode & SM_SSEC)
+			{
+				m_transfer.phn = m_buf[0];
+				m_transfer.scnt = m_buf[1];
+				m_transfer.lcnh = m_pcn[m_ua] >> 8;
+				m_transfer.lcnl = m_pcn[m_ua] & 0xff;
+				m_transfer.lhn = m_transfer.phn;
+				m_transfer.lsn = 0;
+
+				m_buf_index = 0;
+				m_buf_count = 0;
+
+				LOGMASKED(LOG_COMMAND, "verify id head 0x%02x scnt 0x%02x\n",
+					m_transfer.phn, m_transfer.scnt);
+
+				m_state = EXECUTE_VERIFY_ID;
+				m_state_timer->adjust(execute);
+			}
 			break;
 		case 0x9: // read id
-			LOGMASKED(LOG_COMMAND, "read id (not emulated)\n");
+			if (m_specify.mode & SM_SSEC)
+			{
+				// Soft-sector READ ID starts at the first ID field after index.
+				// PHN and SCNT are supplied before the command; PSN is not used.
+				m_transfer.phn = m_buf[0];
+				m_transfer.scnt = m_buf[1];
+				m_transfer.lcnh = m_pcn[m_ua] >> 8;
+				m_transfer.lcnl = m_pcn[m_ua] & 0xff;
+				m_transfer.lhn = m_transfer.phn;
+				m_transfer.lsn = 0;
+
+				m_buf_index = 0;
+				m_buf_count = 0;
+
+				LOGMASKED(LOG_COMMAND, "read id head 0x%02x scnt 0x%02x\n",
+					m_transfer.phn, m_transfer.scnt);
+
+				m_state = EXECUTE_READ_ID;
+				m_state_timer->adjust(execute);
+			}
 			break;
 		case 0xa: // read diagnostic
 			LOGMASKED(LOG_COMMAND, "read diagnostic (not emulated)\n");
@@ -453,7 +519,21 @@ void upd7261_device::command_w(u8 data)
 			LOGMASKED(LOG_COMMAND, "scan (not emulated)\n");
 			break;
 		case 0xe: // verify data
-			LOGMASKED(LOG_COMMAND, "verify data (not emulated)\n");
+			if (m_specify.mode & SM_SSEC)
+			{
+				m_transfer.phn = m_buf[0];
+				m_transfer.lcnh = m_buf[1];
+				m_transfer.lcnl = m_buf[2];
+				m_transfer.lhn = m_buf[3];
+				m_transfer.lsn = m_buf[4];
+				m_transfer.scnt = m_buf[5];
+
+				m_buf_index = 0;
+				m_buf_count = 0;
+
+				m_state = EXECUTE_VERIFY;
+				m_state_timer->adjust(execute);
+			}
 			break;
 		case 0xf: // write data
 			if (m_specify.mode & SM_SSEC)
@@ -544,9 +624,15 @@ attotime upd7261_device::state_step(s32 param)
 				harddisk_image_device &hid(*m_drive[m_ua]);
 				hard_disk_file::info const &i = hid.get_info();
 
-				u32 const lba = ((m_transfer.lcn() * i.heads) + m_transfer.lhn) * i.sectors + m_transfer.lsn;
+				u32 const lba = ((u32(m_pcn[m_ua]) * i.heads) + m_transfer.lhn) * i.sectors + m_transfer.lsn;
 
-				hid.read(lba, m_buf.get());
+				if (!hid.read(lba, m_buf.get()))
+				{
+					m_est = EST_ND;
+					m_state = RESULTS_bcdef;
+					m_buf_index = 0;
+					break;
+				}
 				m_buf_index = 0;
 
 				m_transfer.scnt--;
@@ -585,6 +671,112 @@ attotime upd7261_device::state_step(s32 param)
 		set_dreq(m_state == EXECUTE_READ);
 		break;
 
+	case EXECUTE_READ_ID:
+		if (!m_drive[m_ua] || !m_drive[m_ua]->exists())
+			m_est |= EST_NR;
+
+		if (m_transfer.scnt && !m_est)
+		{
+			harddisk_image_device &hid(*m_drive[m_ua]);
+			hard_disk_file::info const &i = hid.get_info();
+
+			// Factory and diagnostic tracks may lie beyond the user cylinders
+			// represented by the mounted sector image.  READ ID reports the
+			// selected physical position without requiring a data-sector read.
+			if (m_transfer.lhn >= i.heads || m_transfer.lsn >= i.sectors || m_specify.dtl() < 4)
+			{
+				m_est = EST_ND;
+				m_state = RESULTS_789;
+				break;
+			}
+
+			// A soft-sector ID is four bytes (LCNH, LCNL, LHN, LSN).  Assert
+			// DREQ for one ID at a time so the host can DMA exactly four bytes.
+			m_buf_index = 0;
+			m_buf_count = 4;
+			m_buf[0] = m_transfer.lcnh;
+			m_buf[1] = m_transfer.lcnl;
+			m_buf[2] = m_transfer.lhn;
+			m_buf[3] = m_transfer.lsn;
+
+			m_transfer.scnt--;
+			if (m_transfer.lsn++ == m_specify.esn)
+			{
+				m_transfer.lsn = 0;
+				if (m_transfer.lhn++ == m_specify.etn)
+				{
+					m_transfer.lhn = 0;
+					m_transfer.lcnl++;
+					if (m_transfer.lcnl == 0)
+						m_transfer.lcnh++;
+				}
+			}
+
+			set_dreq(true);
+			delay = attotime::never;
+		}
+		else
+		{
+			m_state = RESULTS_789;
+			m_buf_index = 0;
+		}
+		break;
+
+	case EXECUTE_VERIFY_ID:
+		if (!m_drive[m_ua] || !m_drive[m_ua]->exists())
+			m_est |= EST_NR;
+
+		if (m_transfer.scnt && !m_est && !(m_status & S_NCI))
+		{
+			if (m_buf_index == 0)
+			{
+				harddisk_image_device &hid(*m_drive[m_ua]);
+				hard_disk_file::info const &i = hid.get_info();
+				if (m_transfer.lhn >= i.heads || m_transfer.lsn >= i.sectors || m_specify.dtl() < 4)
+				{
+					m_est = EST_ND;
+					m_state = RESULTS_789;
+					break;
+				}
+
+				// Compare each DMA-supplied ID with the same virtual ID sequence
+				// returned by READ ID; the CHD has no physical ID fields.
+				m_buf_index = 0;
+				m_buf_count = 4;
+				m_buf[0] = m_transfer.lcnh;
+				m_buf[1] = m_transfer.lcnl;
+				m_buf[2] = m_transfer.lhn;
+				m_buf[3] = m_transfer.lsn;
+
+				set_dreq(true);
+				delay = attotime::never;
+			}
+			else
+			{
+				m_buf_index = 0;
+				m_transfer.scnt--;
+				if (m_transfer.lsn++ == m_specify.esn)
+				{
+					m_transfer.lsn = 0;
+					if (m_transfer.lhn++ == m_specify.etn)
+					{
+						m_transfer.lhn = 0;
+						m_transfer.lcnl++;
+						if (m_transfer.lcnl == 0)
+							m_transfer.lcnh++;
+					}
+				}
+				if (!m_transfer.scnt)
+					m_state = RESULTS_789;
+			}
+		}
+		else
+		{
+			m_state = RESULTS_789;
+			m_buf_index = 0;
+		}
+		break;
+
 	case EXECUTE_WRITE:
 		// check unit address is valid
 		if (!m_drive[m_ua] && m_drive[m_ua]->exists())
@@ -599,9 +791,15 @@ attotime upd7261_device::state_step(s32 param)
 				harddisk_image_device &hid(*m_drive[m_ua]);
 				hard_disk_file::info const &i = hid.get_info();
 
-				u32 const lba = ((m_transfer.lcn() * i.heads) + m_transfer.lhn) * i.sectors + m_transfer.lsn;
+				u32 const lba = ((u32(m_pcn[m_ua]) * i.heads) + m_transfer.lhn) * i.sectors + m_transfer.lsn;
 
-				hid.write(lba, m_buf.get());
+				if (!hid.write(lba, m_buf.get()))
+				{
+					m_est = EST_ND;
+					m_state = RESULTS_bcdef;
+					m_buf_index = 0;
+					break;
+				}
 				m_buf_index = 0;
 
 				m_transfer.scnt--;
@@ -647,16 +845,79 @@ attotime upd7261_device::state_step(s32 param)
 		set_dreq(m_state == EXECUTE_WRITE);
 		break;
 
+	case EXECUTE_VERIFY:
+		if (!m_drive[m_ua] || !m_drive[m_ua]->exists())
+			m_est |= EST_NR;
+
+		if (m_transfer.scnt && !m_est && !(m_status & S_NCI))
+		{
+			if (m_buf_index == 0)
+			{
+				if (m_transfer.lhn != ((m_head & ~7) | (m_transfer.lhn & 7)))
+				{
+					m_est = EST_ND;
+					m_state = RESULTS_bcdef;
+					break;
+				}
+
+				harddisk_image_device &hid(*m_drive[m_ua]);
+				hard_disk_file::info const &i = hid.get_info();
+				u32 const lba = ((u32(m_pcn[m_ua]) * i.heads) + m_transfer.lhn) * i.sectors + m_transfer.lsn;
+				if (!hid.read(lba, m_buf.get()))
+				{
+					m_est = EST_ND;
+					m_state = RESULTS_bcdef;
+					break;
+				}
+
+				set_dreq(true);
+				delay = attotime::never;
+			}
+			else
+			{
+				m_buf_index = 0;
+				m_transfer.scnt--;
+				if (m_transfer.lsn++ == m_specify.esn)
+				{
+					m_transfer.lsn = 0;
+					if (m_transfer.lhn++ == m_specify.etn)
+					{
+						m_transfer.lhn = 0;
+						m_transfer.lcnl++;
+						if (m_transfer.lcnl == 0)
+							m_transfer.lcnh++;
+						if (m_transfer.scnt)
+							m_est |= EST_ENC;
+					}
+				}
+				if (!m_transfer.scnt || m_est)
+					m_state = RESULTS_bcdef;
+			}
+		}
+		else
+		{
+			m_state = RESULTS_bcdef;
+			m_buf_index = 0;
+		}
+		break;
+
 	case SEEK_POLLED0:
+	{
+		// Timer parameter carries the target cylinder and command buffered-mode bit.
+		u16 const pcn = param & 0xffff;
+		unsigned const cylinders = (pcn > m_pcn[m_ua]) ? pcn - m_pcn[m_ua] : m_pcn[m_ua] - pcn;
 		m_status &= ~S_CB;
 		m_status |= S_CEH;
 		m_state = SEEK_POLLED1;
 
-		delay = attotime::from_ticks(m_specify.stp(std::abs(m_pcn[m_ua] - param)), clock());
-		m_pcn[m_ua] = param;
+		delay = BIT(param, 16)
+			? attotime::from_usec(BUFFERED_STEP_US * cylinders)
+			: attotime::from_ticks(m_specify.stp(cylinders), clock());
+		m_pcn[m_ua] = pcn;
 
 		set_int(true);
 		break;
+	}
 
 	case SEEK_POLLED1:
 		m_ist |= IST_SEN | m_ua;
@@ -697,7 +958,7 @@ attotime upd7261_device::state_step(s32 param)
 		break;
 
 	case COMPLETE:
-		if (m_est)
+		if (m_est || (m_status & S_NCI))
 			m_status |= S_CEL;
 		else
 			m_status |= S_CEH;
