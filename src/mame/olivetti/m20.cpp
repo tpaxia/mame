@@ -331,14 +331,14 @@ B/W, 128K cards, 3 cards => 512K of memory:
 void m20_state::m20_program_mem(address_map &map)
 {
 	map.unmap_value_high();
-	map(0x40000, 0x41fff).rom().region("maincpu", 0x00000);
+	map(0x40000, 0x43fff).rom().region("maincpu", 0x00000);
 	map(0x7f0000, 0x7fffff).r(FUNC(m20_state::segment_r));
 }
 
 void m20_state::m20_data_mem(address_map &map)
 {
 	map.unmap_value_high();
-	map(0x40000, 0x41fff).rom().region("maincpu", 0x00000);
+	map(0x40000, 0x43fff).rom().region("maincpu", 0x00000);
 	map(0x7f0000, 0x7fffff).r(FUNC(m20_state::segment_r));
 }
 
@@ -862,13 +862,17 @@ void m20_state::m20(machine_config &config)
 }
 
 ROM_START(m20)
-	ROM_REGION(0x2000,"maincpu", 0)
+	ROM_REGION(0x4000,"maincpu", ROMREGION_ERASEFF)
 	ROM_SYSTEM_BIOS( 0, "m20", "M20 1.0" )
 	ROMX_LOAD("m20.bin", 0x0000, 0x2000, CRC(5c93d931) SHA1(d51025e087a94c55529d7ee8fd18ff4c46d93230), ROM_BIOS(0))
 	ROM_SYSTEM_BIOS( 1, "m20-20d", "M20 2.0d" )
 	ROMX_LOAD("m20-20d.bin", 0x0000, 0x2000, CRC(cbe265a6) SHA1(c7cb9d9900b7b5014fcf1ceb2e45a66a91c564d0), ROM_BIOS(1))
 	ROM_SYSTEM_BIOS( 2, "m20-20f", "M20 2.0f" )
 	ROMX_LOAD("m20-20f.bin", 0x0000, 0x2000, CRC(db7198d8) SHA1(149d8513867081d31c73c2965dabb36d5f308041), ROM_BIOS(2))
+	// Local: BIOS 2.0x = 2.0f + ROM monitor, 16KB (M20/monitor, make mame-install).  The
+	// image changes with every build; MAME warns about the placeholder checksum.
+	ROM_SYSTEM_BIOS( 3, "m20-20x", "M20 2.0x: 2.0f + monitor (16KB)" )
+	ROMX_LOAD("m20-20x.bin", 0x0000, 0x4000, CRC(e83b2915) SHA1(3ce53a819f6a9558cb8daa8fcc64a6f129566895), ROM_BIOS(3))
 ROM_END
 
 ROM_START(m40)
