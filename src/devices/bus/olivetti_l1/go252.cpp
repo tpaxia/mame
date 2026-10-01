@@ -279,6 +279,22 @@ void olivetti_l1_go252_device::io_w(offs_t offset, u8 data)
 	case 0x00:
 		m_kdc_ctrl = data;
 		m_kdc_data_armed = false;
+		// Software drives this register with MC6850 control words; 03 is the
+		// ACIA master reset, which empties the receiver.  FE#I issues it
+		// before enabling receive, and 1KYB then takes the next byte as a
+		// status reply: a reply left unread by an earlier requester (the HD
+		// boot stage sends command 02 and never reads FB/config) must not
+		// survive it.  The keyboard itself is not reset, so before command 00
+		// its start-up FC reappears on the next announce tick.
+		if ((data & 0x03) == 0x03)
+		{
+			m_kbd_head = 0;
+			m_kbd_tail = 0;
+			m_kbd_count = 0;
+			m_kdc_pending = false;
+			m_kbd_ident_reply = false;
+			m_kbd_poll_status = false;
+		}
 		// Data can have been queued while receive interrupts were disabled (most
 		// notably the firmware's startup FC).  Enabling RX must expose it now.
 		if (!m_kbd_ident_reply && m_kbd_count && (BIT(m_kdc_ctrl, 7) || m_kbd_irq_mode))
