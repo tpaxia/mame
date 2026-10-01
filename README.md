@@ -14,7 +14,6 @@ Custom branches built on top of MAME, grouped by machine.
 - `M20_savestate`*: save state support.
 - `M20_HD`*: WD1000 hard disk controller (the last commit, format buffer init, is not merged).
 - `m20_hd_and_fixes`*: hard disk plus driver fixes (segment trap, marked working).
-- `mdos`: MDOS work with the WD1000 hard disk.
 
 ## Olivetti M40 / L1
 
@@ -22,6 +21,7 @@ Custom branches built on top of MAME, grouped by machine.
 - `olivetti_m40_hd`: experimental GO363 hard disk support.
 - `m40_z8010_sup_test`: GO363 hard disk work plus Z8010 MMU suppression tests.
 - `m40_debug_instrumentation`: debug instrumentation and Z8000 CPU fixes.
+- `mdos`: MDOS boot debugging on the M40 (probes and FDU/VRAM tracing), plus Z8000 CPU fixes.
 
 ## Zilog System 8000
 
