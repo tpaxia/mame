@@ -38,6 +38,8 @@ struct device_p6066_card_interface {
 struct p6066_goino_device:device_p6066_card_interface {
  bool m_keyboard_down=false,m_mode_down=false;
  u8 m_decimal_position=15;
+ struct ioport_stub {int read()const{return 1;}};
+ struct ioport_stub *m_buzzer_config=new ioport_stub;
  struct printer_device {void tick(p6066_goino_state &state){state.printer_tick();} u8 status(const p6066_goino_state &state)const{return (state.printer_running||state.printer_feeding)?0x10:0;}} printer;
  struct printer_slot {printer_device *card=nullptr;printer_device *get_card_device(){return card;}printer_slot *operator->(){return this;}} slot;
  printer_slot *m_printer_slot=&slot;

@@ -38,6 +38,14 @@ template<typename... T> void logerror(const char *,T...){}
 struct p6066_goino_device {
  void keyboard_command(unsigned, u16) {}
  p6066_goino_state m_state;
+ struct time_value {int us;static time_value from_usec(int v){return {v};}static time_value from_msec(int v){return {v*1000};}};
+ using attotime=time_value;
+ struct ioport_stub {int read()const{return 0;}} m_buzzer_config_obj;
+ struct beeper_stub {int state=0;void set_state(int v){state=v;}} m_beeper_obj;
+ struct timer_stub {int first=0,period=0;void adjust(attotime a,int=0,attotime b={0}){first=a.us;period=b.us;}} m_beep_timer_obj;
+ struct ioport_stub *m_buzzer_config=&m_buzzer_config_obj;
+ struct beeper_stub *m_beeper=&m_beeper_obj;
+ struct timer_stub *m_beep_timer=&m_beep_timer_obj;
  struct machine_stub {const char *describe_context(){return "fixture";}};
  machine_stub machine(){return {};}
  void update_outputs(){}

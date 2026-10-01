@@ -17,6 +17,7 @@
 #include "bus/p6066/rodma.h"
 #include "bus/p6066/difo.h"
 #include "p6066.lh"
+#include "p6066_printer.lh"
 #include "p6066_video.lh"
 #include "emuopts.h"
 
@@ -131,7 +132,13 @@ void p6066_state::p6066(machine_config &config)
 	screen.set_refresh_hz(60); screen.set_size(888,28); screen.set_visarea_full();
 	screen.set_screen_update(FUNC(p6066_state::screen_update));
 	const auto *video_option = config.options().find_slot_option("bus:video");
-	config.set_default_layout(video_option && video_option->value() == "go011" ? layout_p6066_video : layout_p6066);
+	const auto *printer_option = config.options().find_slot_option("bus:console:goino:options");
+	if (printer_option && printer_option->value() == "pr6610")
+		config.set_default_layout(layout_p6066_printer);
+	else if (video_option && video_option->value() == "go011")
+		config.set_default_layout(layout_p6066_video);
+	else
+		config.set_default_layout(layout_p6066);
 }
 
 static INPUT_PORTS_START(p6066)

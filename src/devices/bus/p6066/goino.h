@@ -13,8 +13,12 @@ class p6066_discard_printer_device : public device_t
 {
 public:
 	p6066_discard_printer_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
-	void tick(p6066_goino_state &state) { state.printer_tick(); }
-	u8 status(const p6066_goino_state &state) const { return (state.printer_running || state.printer_feeding) ? 0x10 : 0; }
+	p6066_discard_printer_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock);
+	// Functional pacing and status of the printer connector. Cards may
+	// override to observe the handshake state (e.g. render the output);
+	// they must still call state.printer_tick() themselves when overriding.
+	virtual void tick(p6066_goino_state &state) { state.printer_tick(); }
+	virtual u8 status(const p6066_goino_state &state) const { return (state.printer_running || state.printer_feeding) ? 0x10 : 0; }
 protected:
 	virtual void device_start() override { }
 };

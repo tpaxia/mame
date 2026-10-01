@@ -78,8 +78,11 @@ Bus slots, separate memory boards and functional external interrupt arbitration
 are implemented. FLODI's first read-command gate passes; controller writes,
 DMA and GISA2 are not implemented. GOINO/CONDY now has timer and button
 inputs, a keyboard signal interface, synchronized interrupts and owned service.
-The complete keyboard device, printer/decimal input wiring and specialization
-PROM remain incomplete; see the console notes. Save items include execution phase and
+The integrated printer connector is a card slot: the validated
+[discard-output printer](discard-printer.md) models the ESE handshake, and the
+[PR 6610 rendering card](pr6610.md) additionally draws the transferred columns
+and feeds onto a 210 dpi paper roll with a combined console layout. Specialization
+PROM remains incomplete; see the console notes. Save items include execution phase and
 architectural state, but save/restore integration remains untested. No complete
 hardware-conformance or ESE-startup gate has passed. The disk-to-firmware
 loader gate passes, as does the subsequent nine-command GOINO reset/release

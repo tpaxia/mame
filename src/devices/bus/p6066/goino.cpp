@@ -2,6 +2,7 @@
 // copyright-holders: Salvatore Paxia
 #include "emu.h"
 #include "goino.h"
+#include "pr6610.h"
 #include "speaker.h"
 
 DEFINE_DEVICE_TYPE(P6066_GOINO, p6066_goino_device, "p6066_goino", "Olivetti P6066 GOINO/CONDY (partial)")
@@ -11,10 +12,17 @@ DEFINE_DEVICE_TYPE(P6066_PRINTER_SLOT, p6066_printer_slot_device, "p6066_printer
 p6066_discard_printer_device::p6066_discard_printer_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
 	: device_t(mconfig, P6066_DISCARD_PRINTER, tag, owner, clock) { }
 
+p6066_discard_printer_device::p6066_discard_printer_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock)
+	: device_t(mconfig, type, tag, owner, clock) { }
+
 p6066_printer_slot_device::p6066_printer_slot_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
 	: device_t(mconfig, P6066_PRINTER_SLOT, tag, owner, clock), device_single_card_slot_interface<p6066_discard_printer_device>(mconfig, *this) { }
 
-static void printer_cards(device_slot_interface &device) { device.option_add("printer", P6066_DISCARD_PRINTER); }
+static void printer_cards(device_slot_interface &device)
+{
+	device.option_add("printer", P6066_DISCARD_PRINTER);
+	device.option_add("pr6610", P6066_PR6610);
+}
 
 p6066_goino_device::p6066_goino_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
 	: device_t(mconfig, P6066_GOINO, tag, owner, clock)

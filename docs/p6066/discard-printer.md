@@ -66,6 +66,8 @@ real PROM access during such service is not implemented or distinguished here.
 Production CPU/bus/GOINO integration checks active/idle status, column and matrix
 handshakes, feeding, nested service, incidental selector3 reads on a timer IRQ,
 and rejection of a direct level4 PROM read. Event and transport suites pass.
+The integrated tests additionally cover the console buzzer ioport gate that
+`data_w` now consults.
 
 The live regression sends CATALOG three times, then enters NEW / 10 DISP 12345 /
 20 END and RUN twice, without pressing NO PRINT. All three catalogue transfers
@@ -73,6 +75,9 @@ finish (3,216 discarded columns,300 feed events); both BASIC runs display12345
 and return READY. Final CPU is running at level4, with no subsequent printer
 commands. Observer, transcript and reproduction notes are in the outer repo at
 `analysis/mame-p6066/discard-printer/catalog-regression/`.
+
+The `tick`/`status` card methods are virtual so the [PR 6610 rendering
+card](pr6610.md) can subclass this model and observe the same handshake.
 
 The earlier PRINT-only test did not observe column transfer and was insufficient
 to establish CATALOG completion. Physical timing, status wiring, the command
