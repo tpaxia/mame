@@ -37,6 +37,7 @@ public:
 
 protected:
 	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
+	virtual const tiny_rom_entry *device_rom_region() const override ATTR_COLD;
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
 
@@ -52,6 +53,7 @@ private:
 	required_device<palette_device> m_palette;
 	required_device<screen_device> m_screen;
 	required_device<olivetti_l1_keyboard_device> m_keyboard;
+	required_region_ptr<u8> m_chargen;
 	emu_timer *m_kbd_boot_timer = nullptr;
 
 	std::unique_ptr<u8[]> m_vram;
