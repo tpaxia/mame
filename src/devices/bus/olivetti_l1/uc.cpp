@@ -69,7 +69,6 @@ void olivetti_l1_uc042_device::device_add_mconfig(machine_config &config)
 
 void olivetti_l1_uc042_device::device_start()
 {
-	m_arb_timer = timer_alloc(FUNC(olivetti_l1_uc042_device::arb_done), this);
 	m_earom_nvram->set_base(m_earom, sizeof(m_earom));
 
 	for (int const spacenum : { int(AS_PROGRAM), int(AS_DATA), int(z8001_device::AS_STACK) })
@@ -424,13 +423,10 @@ void olivetti_l1_uc042_device::arb_update()
 		if (BIT(m_arb_req, channel) && (!channel || BIT(m_arb_rel, channel - 1)))
 			grant |= 1 << channel;
 	m_arb_grant = grant;
-	if (grant)
-		m_arb_timer->adjust(attotime::from_usec(50));
-	else
-	{
-		m_arb_timer->adjust(attotime::never);
-		m_cpu->set_input_line(z8001_device::NVI_LINE, CLEAR_LINE);
-	}
+	// NVI follows the grant without a programmed delay: the MOS kernel requests
+	// its dispatcher with OUTB #FF8B / EI NVI / DI NVI and needs the request
+	// pending while the EI executes.
+	m_cpu->set_input_line(z8001_device::NVI_LINE, grant ? ASSERT_LINE : CLEAR_LINE);
 }
 
 void olivetti_l1_uc042_device::arb_w(offs_t offset, u16 data, u16 mem_mask)
@@ -460,12 +456,6 @@ void olivetti_l1_uc042_device::arb_w(offs_t offset, u16 data, u16 mem_mask)
 		m_arb_vieno = false;
 	arb_update();
 	update_vi();
-}
-
-TIMER_CALLBACK_MEMBER(olivetti_l1_uc042_device::arb_done)
-{
-	if (m_arb_grant)
-		m_cpu->set_input_line(z8001_device::NVI_LINE, ASSERT_LINE);
 }
 
 u16 olivetti_l1_uc042_device::nviack_r()

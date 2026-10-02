@@ -84,7 +84,6 @@ private:
 	u16 arb_r(offs_t offset);
 	void arb_w(offs_t offset, u16 data, u16 mem_mask = ~0);
 	void arb_update();
-	TIMER_CALLBACK_MEMBER(arb_done);
 
 	void masto_clear_w(u8 data) { m_masto = false; }
 	void masto_set_w(u8 data) { m_masto = true; }
@@ -114,7 +113,6 @@ private:
 	bool m_timer_out1 = false;
 	bool m_timer_pending = false;
 
-	emu_timer *m_arb_timer = nullptr;
 	u8 m_arb_req = 0;
 	u8 m_arb_grant = 0;
 	u8 m_arb_rel = 0; // NV2-NV4 enable latches
