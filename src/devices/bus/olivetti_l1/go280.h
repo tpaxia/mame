@@ -40,7 +40,6 @@ private:
 	void dma_dack1_w(int state);
 	void dma_dack2_w(int state);
 	TIMER_CALLBACK_MEMBER(dma_channel1_request);
-	TIMER_CALLBACK_MEMBER(dma_channel1_clear);
 	u8 dma_fdc_r();
 	void dma_fdc_w(u8 data);
 	u32 dma_phys(u16 word_address, unsigned byte);

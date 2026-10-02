@@ -364,7 +364,9 @@ void olivetti_l1_go280_device::dma_dack1_w(int state)
 	if (!state && m_dma_channel != 1)
 	{
 		m_dma_channel = 1;
-		machine().scheduler().synchronize(timer_expired_delegate(FUNC(olivetti_l1_go280_device::dma_channel1_clear), this));
+		// Drop the request now: a deferred callback can run after the AM9517
+		// has finished this cycle, which then repeats with the same word.
+		m_dmac->dreq1_w(0);
 		m_dmac->ready_w(0);
 		busreq_w(1);
 	}
@@ -398,12 +400,6 @@ void olivetti_l1_go280_device::dma_dack2_w(int state)
 TIMER_CALLBACK_MEMBER(olivetti_l1_go280_device::dma_channel1_request)
 {
 	m_dmac->dreq1_w(1);
-}
-
-
-TIMER_CALLBACK_MEMBER(olivetti_l1_go280_device::dma_channel1_clear)
-{
-	m_dmac->dreq1_w(0);
 }
 
 
