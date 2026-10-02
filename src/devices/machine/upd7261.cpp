@@ -163,6 +163,7 @@ void upd7261_device::device_start()
 
 	save_item(NAME(m_buf_index));
 	save_item(NAME(m_buf_count));
+	m_buf = std::make_unique<u8[]>(BUF_SIZE);
 	save_pointer(NAME(m_buf), BUF_SIZE);
 
 	save_item(NAME(m_dreq_state));
@@ -170,8 +171,6 @@ void upd7261_device::device_start()
 	save_item(NAME(m_tc_state));
 
 	m_state_timer = timer_alloc(timer_expired_delegate(FUNC(upd7261_device::state_timer), this));
-
-	m_buf = std::make_unique<u8[]>(BUF_SIZE);
 }
 
 void upd7261_device::device_reset()
