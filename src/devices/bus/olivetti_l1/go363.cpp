@@ -80,6 +80,7 @@ void olivetti_l1_go363_device::device_start()
 	save_item(NAME(m_id_buffer_valid));
 	save_item(NAME(m_id_path));
 	save_item(NAME(m_unit_status_enabled));
+	save_item(NAME(m_timer_expired));
 	save_item(NAME(m_hdc_param));
 	save_item(NAME(m_hdc_param_count));
 	save_item(NAME(m_pcn));
@@ -129,6 +130,7 @@ void olivetti_l1_go363_device::device_reset()
 	m_hdc_vi = false;
 	m_timer_interrupt = false;
 	m_timer_interrupt_enabled = false;
+	m_timer_expired = false;
 	m_board_interrupt_pending = false;
 	m_board_vi_enabled = false;
 	m_board_vi_request = false;
@@ -257,6 +259,7 @@ void olivetti_l1_go363_device::io_w(offs_t offset, u8 data)
 		else if (data == 0x40)
 		{
 			m_timer_interrupt = false;
+			m_timer_expired = false;
 			m_timer_interrupt_enabled = false;
 			m_board_vi_request = false;
 			m_board_timer->adjust(attotime::never);
@@ -301,6 +304,7 @@ void olivetti_l1_go363_device::io_w(offs_t offset, u8 data)
 			m_hdc_vi = false;
 			m_timer_interrupt = false;
 			m_timer_interrupt_enabled = false;
+			m_timer_expired = false;
 			m_board_timer->adjust(attotime::never);
 			m_board_fifo_count = 0;
 			m_board_fifo_index = 0;
@@ -311,6 +315,11 @@ void olivetti_l1_go363_device::io_w(offs_t offset, u8 data)
 		{
 			LOGMASKED(LOG_REGISTERS, "timer command %04x count0=%04x count1=%04x\n",
 				m_board_command, m_timer_count[0], m_timer_count[1]);
+			// Loading counter 1 starts the timer, so a short count has
+			// already expired when HDC505 issues 4100 (test 4 step 1).  An
+			// expiry already reported (interrupt case) is not reported again.
+			if (m_timer_expired && !m_timer_interrupt)
+				report_timer_expiry();
 		}
 		else if (m_board_command == 0x4500)
 		{
@@ -522,6 +531,7 @@ void olivetti_l1_go363_device::timer_w(unsigned channel, u8 data)
 		// board command reports its result.  Schedule terminal count
 		// as one event to avoid millions of unobservable PIT callbacks.
 		m_timer_interrupt = false;
+		m_timer_expired = false;
 		m_interrupt = false;
 		u64 const count0 = m_timer_count[0] ? m_timer_count[0] : 0x10000;
 		u64 const count1 = m_timer_count[1] ? m_timer_count[1] : 0x10000;
@@ -537,9 +547,19 @@ TIMER_CALLBACK_MEMBER(olivetti_l1_go363_device::board_timer_done)
 	// DCOS HDC505 exposes timer expiry as PRIN0 for the 0x40/0x41
 	// timer-test commands.  Normal disk commands use the timer as a
 	// watchdog and must not leave a successful completion pending.
-	if (m_board_command != 0x4000 && m_board_command != 0x4100)
+	// The expiry is latched either way.  With the interrupt enabled (ff02)
+	// it is reported at once: HDC505 test 4 issues 4000 only after the long
+	// count has expired and expects the interrupt meanwhile.  Otherwise it
+	// is reported only for 4000/4100, now or when that command is issued.
+	m_timer_expired = true;
+	if (!m_timer_interrupt_enabled && m_board_command != 0x4000 && m_board_command != 0x4100)
 		return;
 
+	report_timer_expiry();
+}
+
+void olivetti_l1_go363_device::report_timer_expiry()
+{
 	m_timer_interrupt = true;
 	if (m_timer_interrupt_enabled)
 		m_interrupt = true;
