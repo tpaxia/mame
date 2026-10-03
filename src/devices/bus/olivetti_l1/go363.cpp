@@ -79,6 +79,7 @@ void olivetti_l1_go363_device::device_start()
 	save_item(NAME(m_id_buffer));
 	save_item(NAME(m_id_buffer_valid));
 	save_item(NAME(m_id_path));
+	save_item(NAME(m_unit_status_enabled));
 	save_item(NAME(m_hdc_param));
 	save_item(NAME(m_hdc_param_count));
 	save_item(NAME(m_pcn));
@@ -137,6 +138,7 @@ void olivetti_l1_go363_device::device_reset()
 	m_dma_count_phase = 0;
 	m_id_buffer_valid = false;
 	m_id_path = false;
+	m_unit_status_enabled = false;
 	m_hdc_param_count = 0;
 	std::fill(std::begin(m_pcn), std::end(m_pcn), 0);
 	m_format_valid = false;
@@ -178,9 +180,14 @@ u8 olivetti_l1_go363_device::io_r(offs_t offset)
 	case 0x43:
 		// For each attached unit, the low status byte reports presence,
 		// readiness and no hardware fault.  S24W25 checks bits 0, 4 and 2
-		// respectively for PU 0.
-		data = (m_drive[0] && m_drive[0]->exists() ? 0x15 : 0x00)
-			| (m_drive[1] && m_drive[1]->exists() ? 0x2a : 0x00);
+		// respectively for PU 0.  The DCOS HDC5 status helper reads these
+		// only between auxiliary codes 0D and 0C on port 49; HDC505 test 2
+		// reads them without 0D and requires them clear.
+		if (m_unit_status_enabled)
+			data = (m_drive[0] && m_drive[0]->exists() ? 0x15 : 0x00)
+				| (m_drive[1] && m_drive[1]->exists() ? 0x2a : 0x00);
+		else
+			data = 0x00;
 		break;
 	case 0x4b: data = (m_board_interrupt_pending || m_hdc_interrupt || m_timer_interrupt) ? 0x28 : 0x00; break;
 	case 0x80: data = m_result >> 8; break;
@@ -236,6 +243,10 @@ void olivetti_l1_go363_device::io_w(offs_t offset, u8 data)
 		m_board_data = (m_board_data & 0xff00) | data;
 		if (m_board_data == 0x002b)
 			m_id_path = true;
+		if (data == 0x0d)
+			m_unit_status_enabled = true;
+		else if (data == 0x0c)
+			m_unit_status_enabled = false;
 		if (data == 0x02)
 		{
 			m_board_vi_request = false;
@@ -279,6 +290,9 @@ void olivetti_l1_go363_device::io_w(offs_t offset, u8 data)
 		}
 		else if (m_board_command == 0x3900)
 		{
+			// HDC505 test 2 issues 39 after writing 0D as GENINT data and then
+			// expects the unit status bits clear.
+			m_unit_status_enabled = false;
 			m_board_interrupt_pending = false;
 			m_board_vi_enabled = false;
 			m_board_vi_request = false;
