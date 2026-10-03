@@ -37,6 +37,7 @@ private:
 	void timer_w(unsigned channel, u8 data);
 	void timer_control_w(u8 data);
 	void update_vi();
+	void report_timer_expiry();
 	void hdc_command_w(u8 data);
 	void load_id_buffer();
 	void verify_id_w(offs_t offset);
@@ -91,6 +92,7 @@ private:
 	bool m_id_buffer_valid = false;
 	bool m_id_path = false;
 	bool m_unit_status_enabled = false;
+	bool m_timer_expired = false;
 
 	// uPD7261 parameters forwarded by the board.
 	u8 m_hdc_param[8]{};
