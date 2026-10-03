@@ -39,13 +39,33 @@ p6066_pr6610_device::p6066_pr6610_device(const machine_config &mconfig, const ch
 
 void p6066_pr6610_device::device_add_mconfig(machine_config &config)
 {
-	// 210 mm roll paper, 210 dpi; the tall live viewport keeps earlier lines
-	// above the print point. Continuous feed retires rows into PNG pages.
+	// The shared printer retains the physical roll and PNG archive. Its
+	// built-in screen remains at the default 384 rows; the PR 6610-specific
+	// screen below presents a taller window without changing other printers.
 	BITMAP_PRINTER(config, m_bitmap, PAPER_WIDTH, PAPER_HEIGHT, HDPI, VDPI);
-	m_bitmap->set_screen_height(PAPER_SCREEN_HEIGHT);
-	m_bitmap->set_draw_inch_marks_default(false); // viewer ruler is not PR 6610 output
 	m_bitmap->set_continuous_feed(true);
 	m_bitmap->set_printhead_size(2 * COLUMN_PITCH, 3 * DOT_ROWS, 1);
+
+	screen_device &paper(SCREEN(config, "paper"));
+	paper.set_refresh_hz(60);
+	paper.set_size(PAPER_WIDTH, PAPER_SCREEN_HEIGHT);
+	paper.set_visarea_full();
+	paper.set_screen_update(FUNC(p6066_pr6610_device::screen_update));
+}
+
+u32 p6066_pr6610_device::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect)
+{
+	// This is a view of the generic printer's stored roll, not a second
+	// paper buffer. The print point stays 50 rows above the viewer's bottom.
+	// Ruler and printhead overlays belong to the generic viewer and never
+	// enter the roll; this P6066-only screen displays neither by default.
+	for (int y = cliprect.min_y; y <= cliprect.max_y; ++y)
+	{
+		int const paper_row = y - (PAPER_SCREEN_HEIGHT - 50 - m_bitmap->m_ypos);
+		for (int x = cliprect.min_x; x <= cliprect.max_x; ++x)
+			bitmap.pix(y, x) = m_bitmap->get_pixel(x, paper_row);
+	}
+	return 0;
 }
 
 void p6066_pr6610_device::device_start()

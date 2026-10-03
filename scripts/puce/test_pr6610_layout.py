@@ -14,9 +14,9 @@ parser.add_argument("--binary", type=Path, help="also verify built MAME device s
 args = parser.parse_args()
 
 ROOT = Path(__file__).resolve().parents[2]
-PRINTER = "bus:console:goino:options:pr6610:bitmap:screen"
+PRINTER = "bus:console:goino:options:pr6610:paper"
 VIDEO = "bus:video:go011:framebuffer"
-# The printer screen and paper now use the same 1736x1271 bitmap.
+# The P6066-specific paper screen presents the shared roll at full resolution.
 NATIVE_ASPECT = {PRINTER: 1736 / 1271, VIDEO: 560 / 410}
 
 printer_config = (ROOT / "src/devices/bus/p6066/pr6610.h").read_text()
@@ -27,11 +27,11 @@ assert ring and int(ring.group(1)) > 1271 + 100, "paper storage ring must cover 
 assert "set_display_reduction" not in (ROOT / "src/devices/bus/p6066/pr6610.cpp").read_text()
 assert "m_display_reduction" not in (ROOT / "src/devices/machine/bitmap_printer.cpp").read_text()
 assert "preview_channel" not in (ROOT / "src/devices/machine/bitmap_printer.cpp").read_text()
-assert "set_dynamic_interactive_bounds(true)" in (ROOT / "src/mame/olivetti/p6066.cpp").read_text()
-render_input = (ROOT / "src/emu/render.cpp").read_text()
-assert "m_dynamic_interactive_bounds" in render_input and (
-    "item.bounds().includes(pointer.newpos.first, pointer.newpos.second)" in render_input
-), "responsive host buttons must hit-test their live bounds, not cached layout edges"
+driver = (ROOT / "src/mame/olivetti/p6066.cpp").read_text()
+assert "request_window_size" not in driver
+assert "set_dynamic_interactive_bounds" not in driver
+assert "target->set_view(index)" in driver
+assert "select_initial_output_view()" not in driver, "selection after window creation sizes for the wrong view"
 
 for filename in ("p6066_printer.lay", "p6066_video_printer.lay"):
     tree = ElementTree.parse(ROOT / "src/mame/layout" / filename)
@@ -53,6 +53,11 @@ for filename in ("p6066_printer.lay", "p6066_video_printer.lay"):
             ("OUTPUT_VIEW", mask) for mask in ("0x01", "0x02", "0x04")
         } | {("bus:console:goino:options:pr6610:MANUAL_FEED", "0x01")}
         assert console.find("./group[@ref='output_controls']") is not None
+        default = tree.find("./view[@name='Video, Printer and Console']")
+        assert default is not None
+        hidden = default.find("./screen[@tag='bus:console:goino:options:pr6610:bitmap:screen']")
+        assert hidden is not None and hidden.find("color").get("alpha") == "0", (
+            "auto view must include all screens without showing the shared printer overlays")
         buttons = [item.find("bounds") for item in controls.findall("./element") if item.get("inputtag")]
         assert [(float(b.get("x")), float(b.get("y")), float(b.get("width")), float(b.get("height")))
                 for b in buttons] == [
@@ -73,14 +78,12 @@ for filename in ("p6066_printer.lay", "p6066_video_printer.lay"):
                 f"{selected}: console must keep its native aspect ratio")
             assert abs(float(panel.get("x")) + float(panel.get("width")) / 2 - layout_width / 2) < 0.001, (
                 f"{selected}: console should be horizontally centered")
-        assert "param == 3 ? reference_width : reference_width / 2" in source, (
-            "single-output host window must be half the combined width at the same height")
-        assert "was_both ? target->width() : target->width() * 2" in source, (
-            "the two-pane view should expand from the current single-pane width")
-        assert "if (old_view == name)" in source, "re-selecting a view must leave the window unchanged"
-        assert "if (!was_single || param == 3)" in source, (
-            "switching VIDEO/PRINTER must not request a host-window resize")
+        assert "if (target->view() != index)" in source, (
+            "re-selecting a view must not alter the current view")
     else:
+        default = tree.find("./view[@name='Console and Printer']")
+        hidden = default.find("./screen[@tag='bus:console:goino:options:pr6610:bitmap:screen']")
+        assert hidden is not None and hidden.find("color").get("alpha") == "0"
         controls = groups["feed_control"]
         assert [(item.get("inputtag"), item.get("inputmask"))
                 for item in controls.findall("./element") if item.get("inputtag")] == [
@@ -112,7 +115,8 @@ for filename in ("p6066.lay", "p6066_video.lay"):
 
 if args.binary:
     for device, expected_tag, expected_height in (
-        ("p6066_pr6610", ":bitmap:screen", 1271),
+        ("p6066_pr6610", ":paper", 1271),
+        ("p6066_pr6610", ":bitmap:screen", 384),
         ("bitmap_printer", ":screen", 384),
     ):
         xml = subprocess.run(
@@ -126,4 +130,4 @@ if args.binary:
             f"expected {expected_height}"
         )
 
-print("PASS: PR6610/GO011 pixel aspect and output-dependent host controls")
+print("PASS: PR6610/GO011 pixel aspect, driver-only view switching and output-dependent controls")

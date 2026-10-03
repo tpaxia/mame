@@ -133,8 +133,11 @@ copyright-holders: Salvatore Paxia
 <element ref="paper_background"><bounds x="0" y="73.2142857" width="200" height="36.9857143"/></element>
 <element ref="divider"><bounds x="0" y="73.2142857" width="200" height="0.3"/></element>
 <screen tag="bus:video:go011:framebuffer"><bounds x="0" y="0" width="100" height="73.2142857"/></screen>
+<!-- The shared printer owns this internal viewer. Include it transparently
+     so MAME's auto view sees all four screens; only PR 6610 paper is visible. -->
+<screen tag="bus:console:goino:options:pr6610:bitmap:screen"><bounds x="100" y="0" width="100" height="73.2142857"/><color alpha="0"/></screen>
 <!-- 1736x1271 paper pixels now fill the pane at the same square-pixel aspect as video. -->
-<screen tag="bus:console:goino:options:pr6610:bitmap:screen"><bounds x="100" y="0" width="100" height="73.2142857"/></screen>
+<screen tag="bus:console:goino:options:pr6610:paper"><bounds x="100" y="0" width="100" height="73.2142857"/></screen>
 <!-- Keep the 112:44 panel at uniform 0.8 scale; spare width is side padding. -->
 <group ref="console"><bounds x="55.2" y="75" width="89.6" height="35.2"/></group>
 </view>
@@ -145,14 +148,14 @@ copyright-holders: Salvatore Paxia
 </view>
 <view name="Printer and Console">
 <element ref="paper_background"><bounds x="0" y="0" width="100" height="110.2"/></element>
-<screen tag="bus:console:goino:options:pr6610:bitmap:screen"><bounds x="0" y="0" width="100" height="73.2142857"/></screen>
+<screen tag="bus:console:goino:options:pr6610:paper"><bounds x="0" y="0" width="100" height="73.2142857"/></screen>
 <group ref="console"><bounds x="5.2" y="75" width="89.6" height="35.2"/></group>
 </view>
 <view name="Console">
 <group ref="console"><bounds x="0" y="0" width="112" height="44"/></group>
 </view>
 <view name="Printer">
-<screen tag="bus:console:goino:options:pr6610:bitmap:screen"><bounds x="0" y="0" width="100" height="73.2142857"/></screen>
+<screen tag="bus:console:goino:options:pr6610:paper"><bounds x="0" y="0" width="100" height="73.2142857"/></screen>
 </view>
 <view name="Video">
 <screen tag="bus:video:go011:framebuffer"><bounds x="0" y="0" width="100" height="73.2142857"/></screen>

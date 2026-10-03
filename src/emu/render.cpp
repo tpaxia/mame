@@ -1287,12 +1287,7 @@ void render_target::update_pointer_fields()
 		for (unsigned ptr = 0; m_pointers.size() > ptr; ++ptr)
 		{
 			pointer_info const &pointer(m_pointers[ptr]);
-			// The edge list is computed when a view is selected. A responsive
-			// layout can move buttons on every host resize without recomputing
-			// that list; its current bounds below are authoritative instead.
-			bool const prefilter(m_dynamic_interactive_bounds
-					? !BIT(obscured, ptr)
-					: BIT(~obscured & inbounds, ptr));
+			bool const prefilter(BIT(~obscured & inbounds, ptr));
 			if (!prefilter || !BIT(pointer.newbuttons, 0) || !item.bounds().includes(pointer.newpos.first, pointer.newpos.second))
 			{
 				hit &= ~(u64(1) << ptr);

@@ -27,6 +27,7 @@ protected:
 	virtual ioport_constructor device_input_ports() const override;
 
 private:
+	u32 screen_update(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect);
 	// Rendering geometry: 210 dpi both axes. Column and dot pitch are
 	// 1/70" (three pixels, the 7x7 matrix in a 1/10" character cell).
 	// One paper-feed step is 1/60" = 3.5 pixels, tracked in half-pixels
