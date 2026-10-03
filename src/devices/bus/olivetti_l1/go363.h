@@ -90,6 +90,7 @@ private:
 	u8 m_id_buffer[512]{};
 	bool m_id_buffer_valid = false;
 	bool m_id_path = false;
+	bool m_unit_status_enabled = false;
 
 	// uPD7261 parameters forwarded by the board.
 	u8 m_hdc_param[8]{};
