@@ -721,6 +721,25 @@ void sdl_window_info::update()
 	// if we're visible and running and not in the middle of a resize, draw
 	if (target() != nullptr)
 	{
+		// Unlike a video mode change, this comes from an explicit host-side
+		// artwork button. Fit the chosen view by sizing the host window,
+		// rather than leaving bars around an aspect-correct render target.
+		if (!m_fullscreen)
+		{
+			u64 const request = target()->consume_window_size_request();
+			if (request)
+			{
+				int const maximum_width = (request >> 32) & 0xffff;
+				int const height = (request >> 16) & 0xffff;
+				int const width = request & 0xffff;
+				osd_rect const work = monitor()->usuable_position_size();
+				float const scale = std::min({ 1.0f,
+						float(work.width() - wnd_extra_width()) / maximum_width,
+						float(work.height() - wnd_extra_height()) / height });
+				resize(std::max(MIN_WINDOW_DIM, int(std::round(width * scale))),
+						std::max(MIN_WINDOW_DIM, int(std::round(height * scale))));
+			}
+		}
 		int tempwidth, tempheight;
 
 		// see if the games video mode has changed

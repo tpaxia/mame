@@ -51,6 +51,7 @@
 #include "interface/uievents.h"
 
 #include <cmath>
+#include <atomic>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -523,10 +524,23 @@ public:
 	void set_max_update_rate(float updates_per_second) { m_max_refresh = updates_per_second; }
 	void set_orientation(int orientation) { m_orientation = orientation; }
 	void set_view(unsigned viewindex);
+	// An emulated system's host-only artwork control may request a window
+	// size; OSD backends can consume it on their window thread.
+	void request_window_size(u16 width, u16 height, u16 maximum_width)
+	{
+		// maximum_width is the widest view in this group. Applying the same
+		// monitor-fit scale to narrower views keeps common artwork unchanged.
+		m_window_size_request.store((u64(maximum_width) << 32) | (u64(height) << 16) | width,
+				std::memory_order_release);
+	}
+	u64 consume_window_size_request() { return m_window_size_request.exchange(0, std::memory_order_acq_rel); }
 	void set_max_texture_size(int maxwidth, int maxheight);
 	void set_transform_container(bool transform_container) { m_transform_container = transform_container; }
 	void set_keepaspect(bool keepaspect) { m_keepaspect = keepaspect; }
 	void set_scale_mode(int scale_mode) { m_scale_mode = scale_mode; }
+	// Artwork with live bounds callbacks needs hit tests against the current
+	// item bounds, not the edge list cached when the view was selected.
+	void set_dynamic_interactive_bounds(bool dynamic) { m_dynamic_interactive_bounds = dynamic; }
 
 	// pointer input handling
 	void pointer_updated(osd::ui_event_handler::pointer type, u16 ptrid, u16 device, s32 x, s32 y, u32 buttons, u32 pressed, u32 released, s16 clicks);
@@ -630,6 +644,7 @@ private:
 	view_mask_vector        m_views;                    // views we consider
 	unsigned                m_curview;                  // current view index
 	u32                     m_flags;                    // creation flags
+	std::atomic<u64>        m_window_size_request{0};  // packed reference width/height/view width
 	render_primitive_list   m_primlist[NUM_PRIMLISTS];  // list of primitives
 	int                     m_listindex;                // index of next primlist to use
 	s32                     m_width;                    // width in pixels
@@ -646,6 +661,7 @@ private:
 	render_layer_config     m_layerconfig;              // layer configuration
 	pointer_info_vector     m_pointers;                 // state of pointers over this target
 	hit_test_vector         m_clickable_items;          // for tracking clicked elements
+	bool                    m_dynamic_interactive_bounds = false;
 	layout_view *           m_base_view;                // the view at the time of first frame
 	int                     m_base_orientation;         // the orientation at the time of first frame
 	render_layer_config     m_base_layerconfig;         // the layer configuration at the time of first frame

@@ -40,6 +40,11 @@ INPUT_PORTS_START(bitmap_printer)
 	PORT_CONFSETTING(0x1, "with marks")
 	PORT_CONFSETTING(0x2, "with numbers")
 
+	PORT_START("DRAWHEAD")
+	PORT_CONFNAME(0x1, 0x1, "Show Printhead")
+	PORT_CONFSETTING(0x0, "Off")
+	PORT_CONFSETTING(0x1, "On")
+
 	PORT_START("TOPMARGIN")
 	PORT_ADJUSTER_16MASK(18, "Printer Top Margin")
 	PORT_MINMAX(0,500)
@@ -50,10 +55,23 @@ INPUT_PORTS_START(bitmap_printer)
 
 INPUT_PORTS_END
 
+INPUT_PORTS_START(bitmap_printer_no_marks)
+	PORT_INCLUDE(bitmap_printer)
+	PORT_MODIFY("DRAWMARKS")
+	PORT_CONFNAME(0x3, 0x00, "Draw Inch Marks")
+	PORT_CONFSETTING(0x0, "Off")
+	PORT_CONFSETTING(0x1, "with marks")
+	PORT_CONFSETTING(0x2, "with numbers")
+	PORT_MODIFY("DRAWHEAD")
+	PORT_CONFNAME(0x1, 0x0, "Show Printhead")
+	PORT_CONFSETTING(0x0, "Off")
+	PORT_CONFSETTING(0x1, "On")
+INPUT_PORTS_END
+
 
 ioport_constructor bitmap_printer_device::device_input_ports() const
 {
-	return INPUT_PORTS_NAME(bitmap_printer);
+	return m_draw_inch_marks_default ? INPUT_PORTS_NAME(bitmap_printer) : INPUT_PORTS_NAME(bitmap_printer_no_marks);
 }
 
 //-------------------------------------------------
@@ -66,12 +84,25 @@ void bitmap_printer_device::device_add_mconfig(machine_config &config)
 	screen_device &screen(SCREEN(config, m_screen));
 	screen.set_refresh_hz(60);
 	screen.set_vblank_time(ATTOSECONDS_IN_USEC(0));
-	screen.set_size(m_paper_width, PAPER_SCREEN_HEIGHT);
-	screen.set_visarea(0, m_paper_width - 1, 0, PAPER_SCREEN_HEIGHT - 1);
+	screen.set_size(m_paper_width, m_screen_height);
+	screen.set_visarea(0, m_paper_width - 1, 0, m_screen_height - 1);
 	screen.set_screen_update(FUNC(bitmap_printer_device::screen_update_bitmap));
 
 	STEPPER(config, m_pf_stepper, (uint8_t) 0xa);
 	STEPPER(config, m_cr_stepper, (uint8_t) 0xa);
+}
+
+void bitmap_printer_device::set_screen_height(int height)
+{
+	assert(height > 0);
+	m_screen_height = height;
+	// A parent device can configure the viewport after BITMAP_PRINTER has
+	// already created its child screen. Keep both geometries in sync.
+	if (screen_device *const screen = subdevice<screen_device>("screen"))
+	{
+		screen->set_size(m_paper_width, height);
+		screen->set_visarea(0, m_paper_width - 1, 0, height - 1);
+	}
 }
 
 //**************************************************************************
@@ -89,6 +120,7 @@ bitmap_printer_device::bitmap_printer_device(const machine_config &mconfig, devi
 	m_top_margin_ioport(*this, "TOPMARGIN"),
 	m_bottom_margin_ioport(*this, "BOTTOMMARGIN"),
 	m_draw_marks_ioport(*this, "DRAWMARKS"),
+	m_draw_head_ioport(*this, "DRAWHEAD"),
 	m_printhead_color(0x00EE00),
 	m_printhead_bordercolor(0xEE0000),
 	m_printhead_bordersize(2),
@@ -357,7 +389,8 @@ uint32_t bitmap_printer_device::screen_update_bitmap(screen_device &screen,
 		bitmap.plot_box(0, bitmap.height() - m_distfrombottom - m_ypos + m_paper_height + 2, m_paper_width, m_distfrombottom, coverup_color);
 	}
 
-	draw_printhead(bitmap, std::max(m_xpos, 0) , bitmap.height() - m_distfrombottom);
+	if (m_draw_head_ioport->read())
+		draw_printhead(bitmap, std::max(m_xpos, 0), bitmap.height() - m_distfrombottom);
 
 	draw_inch_marks(bitmap);
 
@@ -638,7 +671,7 @@ bool bitmap_printer_device::check_new_page()
 
 		// clear page down to visible area, starting from the top of page
 		m_clear_pos = 0;
-		clear_to_pos(m_paper_height - 1 - PAPER_SCREEN_HEIGHT),
+		clear_to_pos(m_paper_height - 1 - m_screen_height),
 
 		m_ypos = get_top_margin();  // lock to the top of page until we seek horizontally
 		m_pf_stepper->set_absolute_position(get_top_margin() / m_pf_stepper_ratio0 * m_pf_stepper_ratio1);
@@ -697,4 +730,3 @@ void bitmap_printer_device::set_cr_stepper_ratio(int ratio0, int ratio1)
 	m_cr_stepper_ratio0 = ratio0;
 	m_cr_stepper_ratio1 = ratio1;
 }
-

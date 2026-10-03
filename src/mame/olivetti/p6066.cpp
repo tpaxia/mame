@@ -19,7 +19,10 @@
 #include "p6066.lh"
 #include "p6066_printer.lh"
 #include "p6066_video.lh"
+#include "p6066_video_printer.lh"
 #include "emuopts.h"
+#include "render.h"
+#include "rendlay.h"
 
 namespace {
 class p6066_state : public driver_device
@@ -29,6 +32,119 @@ public:
 		: driver_device(mconfig,type,tag), m_maincpu(*this,"maincpu"), m_bus(*this,"bus"), m_console(*this,"bus:console:goino"), m_floppy(*this,"bus:floppy:flodi"), m_hdu(*this,"bus:hdu:difo"), m_activity(*this,"disk_activity%u",0U) { }
 	void p6066(machine_config &config);
 	INPUT_CHANGED_MEMBER(restart) { if (newval) machine().schedule_soft_reset(); }
+	// Layout groups are flattened by MAME. Give each of their items a live
+	// bounds callback so the lower panel can keep its height-based pixel scale
+	// while the window (and its side padding) changes width.
+	struct responsive_item
+	{
+		render_target &target;
+		render_bounds original;
+		bool console;
+		bool screen;
+		float aspect;
+		float panel_width;
+
+		render_bounds bounds() const
+		{
+			if (!target.width() || !target.height())
+				return original;
+			float const fit = float(target.height()) * aspect / float(target.width());
+			render_bounds result = original;
+			if (console)
+			{
+				// A console is 89.6 units wide in either view, regardless of
+				// the number of output panes above it.
+				float const scale = std::min(fit, 1.0f / panel_width);
+				result.x0 = 0.5f + (original.x0 - 0.5f) * scale;
+				result.x1 = 0.5f + (original.x1 - 0.5f) * scale;
+				if (scale < fit) // window too narrow to fit the panel
+				{
+					float const shrink = scale / fit;
+					result.y0 = 1.0f - (1.0f - original.y0) * shrink;
+					result.y1 = 1.0f - (1.0f - original.y1) * shrink;
+				}
+			}
+			else if (screen)
+			{
+				// Scale the upper panes uniformly to the available width or
+				// height, and center them in their row when width-limited.
+				float const scale = std::min(1.0f, fit);
+				float const height_scale = std::min(1.0f, 1.0f / fit);
+				result.x0 = 0.5f + (original.x0 - 0.5f) * scale;
+				result.x1 = 0.5f + (original.x1 - 0.5f) * scale;
+				float constexpr top_height = 73.2142857f / 110.2f;
+				result.y0 = (top_height * (1.0f - height_scale) / 2.0f) + original.y0 * height_scale;
+				result.y1 = (top_height * (1.0f - height_scale) / 2.0f) + original.y1 * height_scale;
+			}
+			return result;
+		}
+	};
+
+	void install_responsive_view(render_target &target)
+	{
+		std::string_view const name = target.current_view().name();
+		if (name != "Video, Printer and Console" && name != "Video and Console" && name != "Printer and Console")
+			return;
+		// The target is the host window, not MAME's separate snapshot target.
+		target.set_keepaspect(false); // our callbacks fit the individual panes
+		target.set_scale_mode(SCALE_FRACTIONAL);
+		target.set_dynamic_interactive_bounds(true);
+		unsigned const index = target.view();
+		if (!m_responsive_views.insert(index).second)
+			return;
+		auto &view = target.current_view();
+		for (auto &item : view.items())
+		{
+			render_bounds const b = item.bounds();
+			bool const lower = b.y0 >= 75.0f / 110.2f - 0.0001f;
+			if (!lower && !item.screen())
+				continue;
+			auto responsive = std::make_unique<responsive_item>(responsive_item{
+					target, b, lower, bool(item.screen()), view.effective_aspect(),
+					89.6f / (name == "Video, Printer and Console" ? 200.0f : 100.0f) });
+			item.set_bounds_callback(layout_view_item::bounds_delegate(&responsive_item::bounds, responsive.get()));
+			m_responsive_items.push_back(std::move(responsive));
+		}
+	}
+	INPUT_CHANGED_MEMBER(select_output_view)
+	{
+		if (!newval) return;
+		render_target *const target = machine().render().target_by_index(0);
+		if (!target) return;
+		// Keep the user's chosen height when changing views. The responsive
+		// layout fits the paper/video row and the console independently.
+		std::string_view const old_view = target->current_view().name();
+		bool const was_both = old_view == "Video, Printer and Console";
+		bool const was_single = old_view == "Video and Console" || old_view == "Printer and Console";
+		int reference_width = 1278;
+		int height = 704;
+		if ((was_both || was_single) && target->width() && target->height())
+		{
+			reference_width = was_both ? target->width() : target->width() * 2;
+			height = std::clamp(int(target->height()), 200, 32767);
+			reference_width = std::clamp(reference_width, 200, 32767);
+		}
+		// Keep the console and host control strip on screen when switching
+		// outputs. The bare "Video"/"Printer" views intentionally lack the
+		// console; "Video" can also match MAME's auto-generated screen view.
+		const char *const name = param == 1 ? "Video and Console" : param == 2 ? "Printer and Console" : "Video, Printer and Console";
+		for (unsigned index = 0; const char *const view = target->view_name(index); ++index)
+			if (name == std::string_view(view))
+			{
+				if (old_view == name)
+					return;
+				target->set_view(index);
+				install_responsive_view(*target);
+				// VIDEO and PRINTER occupy the same single-pane footprint.
+				// Do not resize when switching between them; only change the
+				// window on a one-pane/two-pane transition.
+				if (!was_single || param == 3)
+					target->request_window_size(param == 3 ? reference_width : reference_width / 2,
+							height, reference_width);
+				m_initial_window_sized = true;
+				return;
+			}
+	}
 private:
 	virtual void machine_start() override
 	{
@@ -40,6 +156,20 @@ private:
 	void activity_outputs() { for (unsigned i=0;i<4;++i) m_activity[i]=m_activity_state[i]; }
 	TIMER_CALLBACK_MEMBER(activity_tick)
 	{
+		// One-time sizing after the OSD target exists. The two-output layout
+		// has twice the width of either single-output view at the same height.
+		if (!m_initial_window_sized)
+			if (render_target *const target = machine().render().target_by_index(0))
+			{
+				std::string_view const view = target->current_view().name();
+				if (view == "Video, Printer and Console" || view == "Video and Console" ||
+						view == "Printer and Console" || view == "Console and Printer")
+				{
+					install_responsive_view(*target);
+					target->request_window_size(view == "Video, Printer and Console" ? 1278 : 639, 704, 1278);
+					m_initial_window_sized = true;
+				}
+			}
 		// Functional panel, not a model of physical drive lamps. Hold for 100 ms.
 		for (unsigned i=0;i<4;++i)
 		{
@@ -56,6 +186,9 @@ private:
 	optional_device<p6066_difo_device> m_hdu;
 	output_finder<4> m_activity;
 	std::array<u8,4> m_activity_hold{},m_activity_state{};
+	bool m_initial_window_sized = false;
+	std::unordered_set<unsigned> m_responsive_views;
+	std::vector<std::unique_ptr<responsive_item>> m_responsive_items;
 
 	void memory_map(address_map &map) { map(0x0000,0xffff).rw(m_bus,FUNC(p6066_bus_device::memory_r),FUNC(p6066_bus_device::memory_w)); }
 	u32 screen_update(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect)
@@ -133,7 +266,9 @@ void p6066_state::p6066(machine_config &config)
 	screen.set_screen_update(FUNC(p6066_state::screen_update));
 	const auto *video_option = config.options().find_slot_option("bus:video");
 	const auto *printer_option = config.options().find_slot_option("bus:console:goino:options");
-	if (printer_option && printer_option->value() == "pr6610")
+	if (printer_option && printer_option->value() == "pr6610" && video_option && video_option->value() == "go011")
+		config.set_default_layout(layout_p6066_video_printer);
+	else if (printer_option && printer_option->value() == "pr6610")
 		config.set_default_layout(layout_p6066_printer);
 	else if (video_option && video_option->value() == "go011")
 		config.set_default_layout(layout_p6066_video);
@@ -144,6 +279,11 @@ void p6066_state::p6066(machine_config &config)
 static INPUT_PORTS_START(p6066)
 	PORT_START("PANEL")
 	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Restart machine") PORT_CODE(KEYCODE_ESC) PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_state::restart), 0)
+	// Host display selection only; these buttons are absent from single-output layouts.
+	PORT_START("OUTPUT_VIEW")
+	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Show video") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_state::select_output_view), 1)
+	PORT_BIT(0x02, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Show printer") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_state::select_output_view), 2)
+	PORT_BIT(0x04, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Show video and printer") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_state::select_output_view), 3)
 INPUT_PORTS_END
 
 ROM_START(p6066)

@@ -7,6 +7,16 @@
 
 DEFINE_DEVICE_TYPE(P6066_PR6610, p6066_pr6610_device, "p6066_pr6610", "Olivetti PR 6610 thermal printer (functional rendering)")
 
+static INPUT_PORTS_START(pr6610)
+	PORT_START("MANUAL_FEED")
+	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PR 6610 paper feed") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(p6066_pr6610_device::manual_feed), 0)
+INPUT_PORTS_END
+
+ioport_constructor p6066_pr6610_device::device_input_ports() const
+{
+	return INPUT_PORTS_NAME(pr6610);
+}
+
 //**************************************************************************
 //  PR 6610 thermal printer
 //**************************************************************************
@@ -29,9 +39,11 @@ p6066_pr6610_device::p6066_pr6610_device(const machine_config &mconfig, const ch
 
 void p6066_pr6610_device::device_add_mconfig(machine_config &config)
 {
-	// 210 mm roll paper, 210 dpi; continuous feed retires visited rows to
-	// PNG pages so long listings keep working without an endless bitmap.
+	// 210 mm roll paper, 210 dpi; the tall live viewport keeps earlier lines
+	// above the print point. Continuous feed retires rows into PNG pages.
 	BITMAP_PRINTER(config, m_bitmap, PAPER_WIDTH, PAPER_HEIGHT, HDPI, VDPI);
+	m_bitmap->set_screen_height(PAPER_SCREEN_HEIGHT);
+	m_bitmap->set_draw_inch_marks_default(false); // viewer ruler is not PR 6610 output
 	m_bitmap->set_continuous_feed(true);
 	m_bitmap->set_printhead_size(2 * COLUMN_PITCH, 3 * DOT_ROWS, 1);
 }
@@ -74,15 +86,16 @@ void p6066_pr6610_device::resync_counters()
 void p6066_pr6610_device::render_column(u8 column)
 {
 	// Seven resistive elements at 1/70" pitch heat one matrix column; each
-	// dot renders as a 2x2 pixel block. Bit-to-element orientation (which
-	// level-2 bit is the top element) is provisional.
+	// dot renders as a 2x2 pixel block. The firmware font and CONDY
+	// display use bit 0 at the top; keep that ordering for printed columns.
+	// Physical printhead wiring remains unverified.
 	const int x = m_bitmap->m_xpos;
 	const int y = m_bitmap->m_ypos;
 	for (int i = 0; i != 7; ++i)
 		if (BIT(column, i))
 			for (int dy = 0; dy != 2; ++dy)
 				for (int dx = 0; dx != 2; ++dx)
-					m_bitmap->draw_pixel(x + dx, y + (6 - i) * 3 + dy, 0x000000);
+					m_bitmap->draw_pixel(x + dx, y + i * 3 + dy, 0x000000);
 }
 
 void p6066_pr6610_device::advance_feed()
@@ -95,6 +108,17 @@ void p6066_pr6610_device::advance_feed()
 	m_bitmap->m_ypos += rows;
 	m_bitmap->check_new_page();
 	m_feed_rows_total += rows;
+}
+
+INPUT_CHANGED_MEMBER(p6066_pr6610_device::manual_feed)
+{
+	if (!newval) return;
+	// Host-operated paper advance: one 1/6" text line, with no ESE transfer,
+	// guest command, printhead movement or fabricated printer handshake.
+	for (int step = 0; step != 10; ++step)
+		advance_feed();
+	m_feed_rows = m_feed_rows_total;
+	m_head_y = m_bitmap->m_ypos;
 }
 
 void p6066_pr6610_device::tick(p6066_goino_state &state)
@@ -121,10 +145,11 @@ void p6066_pr6610_device::tick(p6066_goino_state &state)
 		m_feed_events_cached = state.printer_feed_events;
 	}
 
-	// Transfer end (command 1, observed polarity) lifts the head and
-	// returns the carriage; feeding then advances the interline. The
-	// handshake state machine has already cleared printer_running.
-	if (!state.printer_running && !state.printer_feeding && m_bitmap->m_xpos != LEFT_MARGIN)
+	// On transfer end, return the carriage even while the interline feed is
+	// active. GOINO printed p.17 orders FISTN before FAINN; waiting for
+	// feeding to stop can miss the entire return interval when a new
+	// transfer starts immediately after FINTN.
+	if (!state.printer_running && m_bitmap->m_xpos != LEFT_MARGIN)
 	{
 		m_bitmap->m_xpos = LEFT_MARGIN;
 	}

@@ -97,3 +97,17 @@ printer-condition branch. The empty slot now supplies bit 6 as a functional
 `OPTON` model; the exact DISL006 electrical mapping remains unverified. The
 documented `PRINT`/`CONTINUE` fallback still needs a verified printer-free
 configured system disk and independent integration coverage.
+
+## No-printer CATALOG observation (2026-10-01)
+
+In an interactive run of a disposable GTL3.2 disk copy with both
+`-bus:video ""` and `-bus:console:goino:options ""`, the user switched on
+PRINT ALL and entered CATALOG. The RUNNING lamp flashed while output appeared
+to stop, but pressing the console CONTINUE button repeatedly displayed the
+catalog pages through to the end. A passive observer recorded the PRINT ALL
+lamp and full display-frame transfers, followed by further display transfers
+after interaction; the CPU remained running. The first apparent stall was
+therefore page-by-page console output, not proof of a printer IRQ deadlock.
+This establishes that CATALOG can use the console in this particular run; it
+does not establish the separate `PRINT` statement's documented fallback, the
+disk's saved CONFIGURE settings, or physical printer behavior.

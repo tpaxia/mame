@@ -18,11 +18,13 @@ public:
 	p6066_pr6610_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 
 	virtual void tick(p6066_goino_state &state) override;
+	INPUT_CHANGED_MEMBER(manual_feed);
 
 protected:
 	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset_after_children() override;
+	virtual ioport_constructor device_input_ports() const override;
 
 private:
 	// Rendering geometry: 210 dpi both axes. Column and dot pitch are
@@ -31,7 +33,8 @@ private:
 	// so the 1/6" interline (35 px) and 1/10" plotter feed (21 px) are
 	// exact after their 10 and 6 steps.
 	static constexpr int PAPER_WIDTH  = 1736; // 210 mm roll
-	static constexpr int PAPER_HEIGHT = 630;  // 3 inch ring; continuous feed retires rows to PNG pages
+	static constexpr int PAPER_HEIGHT = 1890; // 9 inch storage ring; continuous feed retires rows to PNG pages
+	static constexpr int PAPER_SCREEN_HEIGHT = 1271; // 6 inch live view; fits full combined pane at square pixels
 	static constexpr int HDPI = 210, VDPI = 210;
 	static constexpr int LEFT_MARGIN   = 28;
 	static constexpr int COLUMN_PITCH  = 3;   // 1/70" per matrix column

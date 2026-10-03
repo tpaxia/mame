@@ -61,6 +61,8 @@ public:
 	void set_cr_stepper_ratio(int ratio0, int ratio1);
 
 	void set_continuous_feed(bool continuous) { m_continuous_feed = continuous; }
+	void set_screen_height(int height);
+	void set_draw_inch_marks_default(bool enabled) { m_draw_inch_marks_default = enabled; }
 
 	int m_cr_direction; // direction of carriage
 	int m_xpos;
@@ -85,11 +87,12 @@ private:
 	required_ioport m_top_margin_ioport;
 	required_ioport m_bottom_margin_ioport;
 	required_ioport m_draw_marks_ioport;
+	required_ioport m_draw_head_ioport;
 
 	bitmap_rgb32 m_page_bitmap; // page bitmap
 	bitmap_rgb32 m_roll_bitmap; // continuous feed: rows retired from the page bitmap, held until a lap is ready to write
 
-	static constexpr int PAPER_SCREEN_HEIGHT = 384; // match the height of the apple II driver
+	static constexpr int DEFAULT_SCREEN_HEIGHT = 384; // match the height of the apple II driver
 	static constexpr int m_distfrombottom = 50;  // print position from bottom of screen
 	static constexpr int MAX_LEDS = 5;
 	static constexpr u32 paper_color = 0xffffff;
@@ -102,11 +105,13 @@ private:
 	int m_page_dirty;
 	int m_paper_width;
 	int m_paper_height;
+	int m_screen_height = DEFAULT_SCREEN_HEIGHT;
 	int m_hdpi;
 	int m_vdpi;
 	int m_clear_pos;
 	int m_newpage_flag;  // used to keep printhead at the top of page until actual printing
 	bool m_continuous_feed;
+	bool m_draw_inch_marks_default = true;
 	int m_feed_hi;  // continuous feed: roll coordinates of the paper already
 	int m_feed_lo;  // visited, never more than a paper length apart
 	bool m_roll_dirty;

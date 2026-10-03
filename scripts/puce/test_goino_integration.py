@@ -144,6 +144,17 @@ int main(){
   g.m_decimal_position=position;c.m_core.l[2]=0x9000;c.instruction(0xfb28);
   assert(c.m_core.a(2)==(0x40|position));
  }
+ // No printer or video: PRINT ALL is still a console input, not a
+ // synthetic printer attachment or a replacement for guest fallback.
+ g.m_state.input_select=0;g.m_state.buttons_w(0x40);
+ c.m_core.l[2]=0;c.instruction(0xfb28);
+ assert(c.m_core.a(2)==1 && g.m_state.button_request);
+ g.m_state.input_select=1;c.m_core.l[2]=0x9000;c.instruction(0xfb28);
+ assert(c.m_core.a(2)==(0x40|g.m_decimal_position));
+ g.m_state.buttons_w(0);g.m_state.command(5);
+ c.command(0xff00);g.tick();g.m_state.synchronize(12);
+ assert(!g.m_state.printer_running&&!g.m_state.matrix_request&&!g.m_state.column_request);
+ c.m_core.l[2]=0x9000; // next DEA must probe status, not the PROM mux left by FF
  g.m_decimal_position=3;g.slot.card=&g.printer;g.device_reset();
  assert(g.m_state.printer_attached && g.m_decimal_position==3);
  g.m_state.select(0);g.m_state.input_select=1;assert(g.input_data_r(4)==3);
