@@ -19,11 +19,14 @@ python3 tools/p6066_hdu_image.py info /path/to/disk.chd
 ```
 
 The tool uses the local `mame/chdman`, creates uncompressed writable CHD, fills
-sectors with FF, and refuses to overwrite files. No physical formatting is
-required. For the recovered 064/068 generation procedure, add `--ese-geometry`
-to seed the ten geometry bytes at CY0/ST7 before generation. This is the
-explicitly authorized preparation workaround, not a complete Olivetti label.
-Logical initialization and installation of ESE are still necessary.
+sectors with FF, and refuses to overwrite files. CHD does not store magnetic
+sector markers. For original preparation, create a blank image without
+`--ese-geometry`, run HDI E9 from the recovered utilities floppy, then run DKS
+with generator064 and master068 for logical initialization and installation.
+HDI writes geometry, ERMAP and service/check records in the sector payloads.
+The historical `--ese-geometry` option seeds only eleven startup bytes and
+is retained for earlier experiments; it is not complete HDI preparation.
+See outer `analysis/hardware/hdu/README.md` for the verified procedure/evidence.
 
 Add to a normal MAME launch:
 
@@ -33,8 +36,10 @@ Add to a normal MAME launch:
 
 Use `-hard2` for the second drive. MAME's standard hard-disk image device handles
 CHD storage and differencing images. Incorrect geometry and raw images are
-rejected. The generated 064/068 installation with geometry prepared before
-generation has cold-booted to READY; see outer `analysis/hardware/hdu/boot-chd`.
+rejected. Original HDI followed by064/068 DKS has generated a pair that cold-boots to
+READY in current MAME with PR 6610 attached, without host input. Use reset
+BASIC mode, unshifted alphabetic keys and main END OF LINE for DKS; see outer
+`analysis/hardware/hdu/install-current-keyboard` and `boot-current-keyboard`.
 
 ## Healthy-medium abstraction
 
@@ -44,7 +49,9 @@ ST = head × 48 + slot. The 49th rotational slot has no normal sector ID and
 stores no CHD payload. Both service cylinders remain addressable.
 
 Successful reads supply good CRC status. Host read/write failures propagate.
-Ordinary format commands with canonical IDs fill sectors with FF; raw CRC,
+Format commands with canonical IDs fill sectors with FF, including HDI's
+ID-only template (data marker FF) followed by ordinary data writes. Data
+markers are implicit in this abstraction. Raw CRC,
 relocated IDs, defective sectors and incomplete-format states are not stored.
 Malformed/noncanonical format templates are rejected. Controller transfer
 errors are still reported, but an interrupted write does not leave a persistent

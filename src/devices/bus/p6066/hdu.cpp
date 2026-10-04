@@ -55,7 +55,9 @@ bool p6066_hdu_device::record_format(unsigned head,unsigned slot,const std::arra
  if(slot==SECTORS) return std::all_of(data.begin(),data.end(),[](u8 v){return v==0xff;});
  // Ordinary physical formatting is allowed but unnecessary. CHD cannot
  // represent relocated/malformed IDs or guest-supplied raw CRC templates.
- if(data[5]!=0x55 || data[17]!=0x55 || data[6]!=m_cylinder || data[7]!=head*SECTORS+slot) return false;
+ // HDI formats canonical IDs first, leaving the data marker FF until WRITE.
+ // Data markers are implicit in the healthy-CHD model, so accept that form.
+ if(data[5]!=0x55 || (data[17]!=0x55 && data[17]!=0xff) || data[6]!=m_cylinder || data[7]!=head*SECTORS+slot) return false;
  std::array<u8,256> blank;blank.fill(0xff);
  return write(lba(head,slot),blank.data());
 }

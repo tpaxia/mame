@@ -68,10 +68,18 @@ int main(){
   assert(d.record_data(h,slot,data,true));s=d.sector(h,slot);
   assert(s.data==data&&s.cylinder==c&&s.sector==h*48+slot&&s.id_crc_valid);
   assert(d.file[((c*4+h)*48+slot)*256]==data[0]);
+  t[17]=0xff;assert(d.record_format(h,slot,t,true));
+  s=d.sector(h,slot);assert(s.data_crc_valid);
+  assert(std::all_of(s.data.begin(),s.data.end(),[](u8 v){return v==255;}));
+  t[17]=0x54;assert(!d.record_format(h,slot,t,true));t[17]=0xff;
   t[7]^=1;assert(!d.record_format(h,slot,t,true));
  }
  d.fail=true;std::array<u8,256>data{};assert(!d.record_data(0,0,data,true));
- assert(!d.sector(0,0).data_present);d.call_unload();assert(!d.sector(0,0).id_present);
+ std::array<u8,20>t;t.fill(255);t[5]=0x55;t[6]=201;t[7]=0;
+ assert(!d.record_format(0,0,t,true));assert(!d.sector(0,0).data_present);d.fail=false;
+ assert(!d.record_format(0,0,t,false));t[5]=0xff;assert(!d.record_format(0,0,t,true));
+ t[5]=0x55;t[6]=200;assert(!d.record_format(0,0,t,true));
+ d.call_unload();assert(!d.sector(0,0).id_present);t[6]=201;assert(!d.record_format(0,0,t,true));
  p6066_hdu_device bad;bad.geometry.cylinders=200;assert(bad.call_load().first&&!bad.ready());
  p6066_hdu_device raw;raw.m_chd=false;assert(raw.call_load().first&&!raw.ready());
  puts("PASS: production CHD geometry, sector IDs, addressing, service cylinders, read/write, format and errors");
