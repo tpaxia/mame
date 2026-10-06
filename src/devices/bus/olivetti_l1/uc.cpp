@@ -133,7 +133,8 @@ void olivetti_l1_uc042_device::ready_fault()
 bool olivetti_l1_uc042_device::memory_claims(offs_t address) const
 {
 	address &= 0xffffff;
-	return address < 0x4000 || (address >= EAROM_BASE && address <= EAROM_END);
+	// PD23/PD24 are two 27128 EPROMs: 16K words on the two byte lanes.
+	return address < 0x8000 || (address >= EAROM_BASE && address <= EAROM_END);
 }
 
 u8 olivetti_l1_uc042_device::memory_r(offs_t address)
