@@ -363,8 +363,10 @@ u16 olivetti_l1_uc042_device::nmiack_r()
 
 void olivetti_l1_uc042_device::pit_out1_w(int state)
 {
-	// OUT1 is edge-latched as the UC timer VI source and gated by VIENO.
-	if (state && !m_timer_out1)
+	// OUT1 drives the UC timer VI request, gated by VIENO.
+	if (!state)
+		m_timer_pending = false;
+	else if (!m_timer_out1)
 		m_timer_pending = true;
 	m_timer_out1 = bool(state);
 	update_vi();
