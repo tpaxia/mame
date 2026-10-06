@@ -140,7 +140,7 @@ namespace {
 //**************************************************************************
 
 ROM_START( m40 )
-	ROM_REGION16_BE( 0x4000, "cpu:uc042:maincpu", 0 )
+	ROM_REGION16_BE( 0x8000, "cpu:uc042:maincpu", ROMREGION_ERASEFF )
 	ROM_DEFAULT_BIOS( "m40-60" )
 	ROM_SYSTEM_BIOS( 0, "m40-81", "M40 15.dec.81" )
 	ROMX_LOAD( "m40rom-15-dec-81", 0x0000, 0x2000, CRC(e8e7df84) SHA1(e86018043bf5a23ff63434f9beef7ce2972d8153), ROM_BIOS(0) )
@@ -150,6 +150,8 @@ ROM_START( m40 )
 	ROMX_LOAD( "m40rom-4.1", 0x0000, 0x2000, CRC(cf55681c) SHA1(fe4ae14a6751fef5d7bde49439286f1da3689437), ROM_BIOS(2) )
 	ROM_SYSTEM_BIOS( 3, "m40-60", "M40 6.0" )
 	ROMX_LOAD( "m40rom-6.0.bin", 0x0000, 0x4000, CRC(8114ebec) SHA1(4e2c65b95718c77a87dbee0288f323bd1c8837a3), ROM_BIOS(3) )
+	ROM_SYSTEM_BIOS( 4, "m40-a5", "M40 A.5 (16 Apr 1985)" )
+	ROMX_LOAD( "m40-rom-a.5", 0x0000, 0x8000, CRC(6f23d455) SHA1(e9b19f66013d1839c57d2654c190732727b7c4c3), ROM_BIOS(4) )
 ROM_END
 
 ROM_START( m44 )
