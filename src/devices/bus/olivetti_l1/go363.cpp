@@ -201,6 +201,12 @@ u8 olivetti_l1_go363_device::io_r(offs_t offset)
 			|| !m_drive[m_selected_unit - 1] || !m_drive[m_selected_unit - 1]->exists())
 			data |= 0x01;
 		break;
+	case 0xf9:
+	case 0xfb:
+		// Healthy-board approximation for the native A.5/B.1 boot helpers.
+		// TODO: recover the complete common-register protocol.
+		data = 0x00;
+		break;
 	case 0xff: data = 0x65; break;
 	}
 
