@@ -15,10 +15,7 @@ Custom branches built on top of MAME, grouped by machine.
 
 ## Olivetti M20
 
-- `M20_kbd_serial`*: keyboard bell and serial fixes.
-- `M20_savestate`*: save state support.
-- `M20_HD`*: WD1000 hard disk controller (the last commit, format buffer init, is not merged).
-- `m20_hd_and_fixes`*: hard disk plus driver fixes (segment trap, marked working).
+- `m20_hd_and_fixes`*: WD1000 hard disk, keyboard bell and serial fixes, save states and driver fixes (segment trap, marked working).
 - `m20_biosx`: local BIOS 2.0x (2.0f plus ROM monitor, 16 KB).
 
 ## Olivetti M40 / L1
