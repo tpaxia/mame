@@ -4,9 +4,15 @@ Custom branches built on top of MAME, grouped by machine.
 
 `*` = already merged upstream into mamedev/mame (PR #15866 and PR #15883).
 
-## Zilog Z8000 test rig
+## Zilog Z8000 CPU and test rig
 
 - `z8k_test_harness`: Z8000 instruction test rig (`z8ktest01` Z8001, `z8ktest02` Z8002 machines).
+- `z8001_pcseg_bit15`: keep bit 15 of the PC segment word as loaded, on top of the M40 work.
+
+## Zilog Z8002 homebrew machines
+
+- `z8002-demo`: Z8002-demo CP/M machine.
+- `z8002-plasmo`: Plasmo homebrew Z8002 machine.
 
 ## Olivetti M20
 
@@ -14,23 +20,23 @@ Custom branches built on top of MAME, grouped by machine.
 - `M20_savestate`*: save state support.
 - `M20_HD`*: WD1000 hard disk controller (the last commit, format buffer init, is not merged).
 - `m20_hd_and_fixes`*: hard disk plus driver fixes (segment trap, marked working).
+- `m20_biosx`: local BIOS 2.0x (2.0f plus ROM monitor, 16 KB).
 
 ## Olivetti M40 / L1
 
 - `olivetti_m40`: M40 driver.
-- `olivetti_m40_hd`: experimental GO363 hard disk support.
 - `m40_z8010_sup_test`: GO363 hard disk work plus Z8010 MMU suppression tests.
-- `m40_debug_instrumentation`: debug instrumentation and Z8000 CPU fixes.
-- `mdos`: MDOS boot debugging on the M40 (probes and FDU/VRAM tracing), plus Z8000 CPU fixes.
+
+## Olivetti P6066
+
+- `P6066`: P6066 driver, with console, printer and hard disk work and notes under `docs/p6066`.
+- `m40_p6066`: P6066 work combined with the M40 branch.
 
 ## Zilog System 8000
 
 - `s8000_fixes`*: general fixes.
 - `s8000_h19`: H19 as the console terminal.
-- `s8000_smdc_interrupt_handshake`: keep the queued SMDC completion interrupt handshake.
-- `z8010_bus_interface`: Z8010 MMU bus interface.
-- `sadie`: SADIE diagnostics, SMDC emulation and Z80 SCC loopback fix.
-- `z8010_sadie_stack`: same as `sadie`.
+- `sadie`: SADIE diagnostics, SMDC emulation and Z80 SCC loopback fix (mamedev/mame PR #16342).
 
 ## Zilog MCZ
 
