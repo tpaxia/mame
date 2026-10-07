@@ -4,10 +4,9 @@ Custom branches built on top of MAME, grouped by machine.
 
 `*` = already merged upstream into mamedev/mame (PR #15866 and PR #15883).
 
-## Zilog Z8000 CPU and test rig
+## Zilog Z8000 test rig
 
 - `z8k_test_harness`: Z8000 instruction test rig (`z8ktest01` Z8001, `z8ktest02` Z8002 machines).
-- `z8001_pcseg_bit15`: keep bit 15 of the PC segment word as loaded, on top of the M40 work.
 
 ## Zilog Z8002 homebrew machines
 
