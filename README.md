@@ -2,7 +2,7 @@
 
 Custom branches built on top of MAME, grouped by machine.
 
-`*` = already merged upstream into mamedev/mame (PR #15866 and PR #15883).
+`*` = already merged upstream into mamedev/mame (PR #15866, PR #15883 and PR #16342).
 
 ## Zilog Z8000 test rig
 
@@ -32,7 +32,7 @@ Custom branches built on top of MAME, grouped by machine.
 
 - `s8000_fixes`*: general fixes.
 - `s8000_h19`: H19 as the console terminal.
-- `sadie`: SADIE diagnostics, SMDC emulation and Z80 SCC loopback fix (mamedev/mame PR #16342).
+- `sadie`*: SADIE diagnostics, SMDC emulation and Z80 SCC loopback fix (mamedev/mame PR #16342).
 
 ## Zilog MCZ
 
