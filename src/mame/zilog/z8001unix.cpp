@@ -144,6 +144,7 @@ TIMER_DEVICE_CALLBACK_MEMBER(z8001unix_state::tick)
 u8 z8001unix_state::byte_r(u16 port)
 {
 	switch(port) {
+	case 0xb0: return m_pages[62];
 	case 0xf0: { u8 v=0; if(m_rxin!=m_rxout) v=m_rx[(m_rxout++)&255]; update_vi(); return v; }
 	case 0xf2: return 1|(m_rxin!=m_rxout?2:0);
 	case 0x1f1: return m_error;
@@ -154,7 +155,7 @@ u8 z8001unix_state::byte_r(u16 port)
 void z8001unix_state::byte_w(u16 port,u8 value)
 {
 	switch(port) {
-	case 0xf0: m_terminal->write(value); break;
+	case 0xf0: m_terminal->write(value & 0x7f); break;
 	case 0x1f2: m_sc=value; break;
 	case 0x1f3: m_sn=value; break;
 	case 0x1f4: m_cl=value; break;
@@ -194,6 +195,7 @@ u16 z8001unix_state::io_r(offs_t off,u16 mask)
 	if(mask!=0xffff) return mask==0xff00?u16(byte_r(port))<<8:byte_r(port+1);
 	switch(port) {
 	case 0xb2: return SWAP_BYTES/512;
+	case 0xb6: return m_disk->exists() ? std::min<u64>(u64(m_disk->get_info().cylinders)*m_disk->get_info().heads*m_disk->get_info().sectors,65535) : 0;
 	case 0xba: return m_ram->size()/2048;
 	case 0xc0: return m_fault;
 	case 0xc2: return m_fseg;
