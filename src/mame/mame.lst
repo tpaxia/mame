@@ -50202,8 +50202,8 @@ iq151
 @source:zvt/pp01.cpp
 pp01
 
-@source:zilog/z8001unix.cpp
+@source:homebrew/unixv7_z8001.cpp
 z8001unix
 
-@source:zilog/z8002unix.cpp
+@source:homebrew/unixv7_z8002.cpp
 z8002unix
