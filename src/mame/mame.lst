@@ -50204,3 +50204,6 @@ pp01
 
 @source:zilog/z8001unix.cpp
 z8001unix
+
+@source:zilog/z8002unix.cpp
+z8002unix
