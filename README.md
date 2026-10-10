@@ -16,7 +16,7 @@ Custom branches built on top of MAME, grouped by machine.
 ## Unix V7 demonstration machines
 
 - `unixv7_demo`: both `z8001unix` (Z8001) and `z8002unix` (Z8002), with custom paged MMUs, separate instruction/data spaces and disk-loaded Unix V7. Replaces the separate `z8001_unix` and `z8002_unix` branches.
-- The machines share console, clock and disk interfaces and run the same user executables; each uses its own kernel and boot ROM. Drivers currently remain in separate source files.
+- The machines share console, clock and disk interfaces and run the same user executables; each uses its own kernel and boot ROM. A shared board implementation and separate CPU-specific files live under `src/mame/homebrew/`; the `unixv7_demo` executable contains both machines.
 - Kernel, firmware, disk preparation and build/run instructions are maintained in [z8000_unix](https://github.com/tpaxia/z8000_unix); Z8002 bring-up is on its `z8002-mmu` branch.
 - Always launch either machine with `-window`.
 
