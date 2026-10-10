@@ -13,6 +13,13 @@ Custom branches built on top of MAME, grouped by machine.
 - `z8002-demo`: Z8002-demo CP/M machine.
 - `z8002-plasmo`: Plasmo homebrew Z8002 machine.
 
+## Unix V7 demonstration machines
+
+- `unixv7_demo`: both `z8001unix` (Z8001) and `z8002unix` (Z8002), with custom paged MMUs, separate instruction/data spaces and disk-loaded Unix V7. Replaces the separate `z8001_unix` and `z8002_unix` branches.
+- The machines share console, clock and disk interfaces and run the same user executables; each uses its own kernel and boot ROM. Drivers currently remain in separate source files.
+- Kernel, firmware, disk preparation and build/run instructions are maintained in [z8000_unix](https://github.com/tpaxia/z8000_unix); Z8002 bring-up is on its `z8002-mmu` branch.
+- Always launch either machine with `-window`.
+
 ## Olivetti M20
 
 - `m20_hd_and_fixes`*: WD1000 hard disk, keyboard bell and serial fixes, save states and driver fixes (segment trap, marked working).
